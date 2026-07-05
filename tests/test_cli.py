@@ -291,3 +291,41 @@ def test_publish_command_failure_surfaces_stderr(tmp_path, monkeypatch, capsys):
 
     assert main(["publish", str(html)]) == 1
     assert "wrangler deploy failed" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# publish setup (Phase 5 Task 5): only --dry-run is exercised through the
+# real CLI entry point (a non-dry-run run needs interactive stdin and a
+# real/mock Wrangler -- that path is covered directly against run_setup()
+# in tests/test_setup.py instead). The key thing to prove here is wiring:
+# `jimemo publish setup --dry-run` reaches jimemo.publish.setup.run_setup
+# and never touches config loading, even with no config present at all.
+# ---------------------------------------------------------------------------
+
+def test_publish_setup_dry_run_dispatches_and_needs_no_config(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "does-not-exist.toml"))
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+
+    assert main(["publish", "setup", "--dry-run"]) == 0
+
+    out = capsys.readouterr().out
+    assert "jimemo publish setup" in out
+    assert "[dry-run]" in out
+    assert "TOMBSTONES" in out
+    assert not (tmp_path / "does-not-exist.toml").exists()
+
+
+def test_publish_setup_without_dry_run_flag_defaults_false(monkeypatch):
+    # Sanity check on argparse wiring: --dry-run must default to False so
+    # a bare `jimemo publish setup` attempts the real (non-dry-run) path
+    # rather than silently behaving like --dry-run.
+    seen_dry_run = None
+
+    def fake_run_setup(dry_run, wrangler, config_path, io):
+        nonlocal seen_dry_run
+        seen_dry_run = dry_run
+
+    monkeypatch.setattr("jimemo.publish.setup.run_setup", fake_run_setup)
+
+    assert main(["publish", "setup"]) == 0
+    assert seen_dry_run is False

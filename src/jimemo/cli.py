@@ -345,8 +345,24 @@ def cmd_info(args) -> int:
 
 
 def cmd_publish(args) -> int:
-    from .config import load_config
     from .errors import ConfigError, PublishError
+
+    # "setup" dispatches before load_config(): it's what PRODUCES
+    # ~/.jimemo/config.toml, so requiring a valid config first would make
+    # it impossible to ever run on a fresh machine.
+    if args.target == "setup":
+        from .config import config_path
+        from .publish.setup import RealIO, run_setup
+        from .publish.wrangler import Wrangler
+
+        try:
+            run_setup(args.dry_run, Wrangler(), config_path(), RealIO())
+        except PublishError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        return 0
+
+    from .config import load_config
     from .publish import get_publisher
 
     try:
@@ -356,13 +372,14 @@ def cmd_publish(args) -> int:
         return 1
 
     # "publish" doubles as a small command group: `jimemo publish <file>`
-    # publishes, while `purge`/`list`/`gc` as the first positional dispatch
-    # to the matching Publisher method (mirroring notes-publish's own
-    # top-level UX). This is a deliberate simplification over nested
+    # publishes, while `purge`/`list`/`gc`/`setup` as the first positional
+    # dispatch to the matching Publisher method (mirroring notes-publish's
+    # own top-level UX); `setup` itself is handled above, before
+    # load_config(). This is a deliberate simplification over nested
     # argparse subparsers, which can't cleanly mix a bare positional (the
     # file to publish) with subcommands in the same slot. The tradeoff: a
-    # file literally named "purge", "list", or "gc" (no extension) cannot
-    # be published this way -- an acceptable, documented edge case.
+    # file literally named "purge", "list", "gc", or "setup" (no extension)
+    # cannot be published this way -- an acceptable, documented edge case.
     target = args.target
     try:
         if target == "purge":
@@ -439,12 +456,16 @@ def main(argv=None) -> int:
     )
     publish_p.add_argument(
         "target", nargs="?",
-        help='HTML file to publish, or one of "purge", "list", "gc"',
+        help='HTML file to publish, or one of "purge", "list", "gc", "setup"',
     )
     publish_p.add_argument(
         "arg", nargs="?", help='hash or URL (only used with "purge")',
     )
     publish_p.add_argument("--title", help="title for the published page")
+    publish_p.add_argument(
+        "--dry-run", action="store_true",
+        help='with "setup": print the plan without executing or writing anything',
+    )
 
     args = parser.parse_args(argv)
 
