@@ -40,12 +40,19 @@ Concretely, this wizard:
     ``<state_dir>/_headers``, ``<state_dir>/index.html`` -- NOT a flat
     copy of ``publish/cloudflare/``, whose ``_middleware.js`` sits at its
     own root purely as a distributable source file.
-  - DOES drive ``pages_deploy`` against that same state directory (never
-    against ``publish/cloudflare/`` directly) for both the initial deploy
-    and, implicitly, every later ``publish()`` call. Wrangler creates the
-    Pages project automatically on this call if the account doesn't
-    already have one by that name, so no separate "create project" call
-    is needed.
+  - DOES drive ``pages_deploy``, for the initial deploy, against a
+    throwaway ALLOWLISTED copy of that state directory -- built via
+    cloudflare_backend.py's own ``_build_deploy_dir`` (imported, not
+    reimplemented), the exact same helper ``publish()``/``gc()`` use for
+    every later call. Never the raw state directory itself, and never
+    ``publish/cloudflare/`` directly: this wizard is exactly the place a
+    friend re-runs setup against a state directory they already synced
+    from another machine (see the single-machine section below), which
+    may already hold strays -- ``.git/``, ``.DS_Store``, sync-conflict
+    copies -- that must never be deployed. Wrangler creates the Pages
+    project automatically on this call if the account doesn't already
+    have one by that name, so no separate "create project" call is
+    needed.
   - Does NOT create a KV namespace or bind it to the Pages project as
     ``TOMBSTONES`` -- there is no wrangler-seam call for either. It
     prints the exact manual command / dashboard step for both, in every
@@ -82,6 +89,7 @@ call fail confusingly; wrangler resolves its own auth from that same
 environment variable.
 """
 import os
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -89,6 +97,7 @@ from ..config import valid_project_name
 from ..errors import PublishError
 from .cloudflare_backend import (
     CLOUDFLARE_ASSETS_DIR,
+    _build_deploy_dir,
     _default_state_dir,
     _install_state_dir_assets,
 )
@@ -376,8 +385,12 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
     (the SAME local state directory cloudflare_backend.py's
     CloudflarePublisher deploys on every future publish() call -- see
     module docstring for why this placement is load-bearing, not
-    cosmetic), deploys that directory, runs a best-effort post-deploy KV
-    check, and writes ~/.jimemo/config.toml.
+    cosmetic), deploys an allowlisted copy of that directory (built via
+    the same ``_build_deploy_dir`` helper ``publish()``/``gc()`` use --
+    never the raw state directory, which may already hold synced strays
+    if this is a re-run against a directory synced from another machine),
+    runs a best-effort post-deploy KV check, and writes
+    ~/.jimemo/config.toml.
 
     Raises PublishError if CLOUDFLARE_API_TOKEN is unset, wrangler/npx
     is unavailable, or (non-dry-run) a wrangler call fails or the
@@ -481,15 +494,26 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
 
     io.print(
         f"\nStep 3: deploy {state_dir} to Pages project {project!r}\n"
-        "(this also creates the project if your account doesn't have "
-        "one by that\nname yet)"
+        "(deploys an allowlisted copy -- only functions/_middleware.js, "
+        "_headers, index.html,\nand published hash directories -- never "
+        "the raw state directory itself, which may\nalready hold synced "
+        "strays like .git/ if this is a re-run against a state directory\n"
+        "synced from another machine; see cloudflare_backend.py's "
+        "_build_deploy_dir. This\nalso creates the project if your "
+        "account doesn't have one by that name yet)"
     )
-    deploy_argv = _deploy_argv(project, state_dir)
     if dry_run:
-        io.print(f"  [dry-run] would run: {deploy_argv}")
+        io.print(f"  [dry-run] would run: {_deploy_argv(project, state_dir)}")
     else:
-        io.print(f"  running: {deploy_argv}")
-        wrangler.pages_deploy(project, state_dir)
+        # Never deploy state_dir directly -- the SAME allowlist
+        # publish()/gc() use, via the shared helper, so a friend re-
+        # running setup against a state directory already synced from
+        # another machine (and possibly holding .git/, .DS_Store, etc.)
+        # can never leak those files. See _build_deploy_dir's docstring.
+        with tempfile.TemporaryDirectory(prefix="jimemo-deploy-") as tmp:
+            deploy_dir = _build_deploy_dir(state_dir, Path(tmp))
+            io.print(f"  running: {_deploy_argv(project, deploy_dir)}")
+            wrangler.pages_deploy(project, deploy_dir)
 
     _post_deploy_binding_check(wrangler, kv_namespace_id, base_url, io, dry_run)
 

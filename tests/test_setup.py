@@ -67,6 +67,29 @@ class UnavailableWrangler(MockWrangler):
         return False
 
 
+class TreeCapturingWrangler(MockWrangler):
+    """MockWrangler that also records each deployed directory's file tree
+    (sorted relative POSIX paths) in ``.deployed_trees`` AT DEPLOY TIME.
+    Setup's deploy step now hands wrangler a throwaway allowlisted build
+    dir that is deleted as soon as the deploy call returns, so a test can
+    only see what was actually deployed by capturing it during the call
+    (mirrors tests/test_cloudflare_backend.py's own TreeCapturingWrangler,
+    used the same way for publish()/gc())."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.deployed_trees = []
+
+    def pages_deploy(self, project, directory, branch="main"):
+        directory = Path(directory)
+        self.deployed_trees.append(sorted(
+            p.relative_to(directory).as_posix()
+            for p in directory.rglob("*")
+            if p.is_file()
+        ))
+        return super().pages_deploy(project, directory, branch)
+
+
 class BrokenKVWrangler(MockWrangler):
     """Simulates a KV namespace that silently discards writes (e.g. a
     typo'd namespace id, or a token missing the KV scope): kv_get never
@@ -237,13 +260,28 @@ def test_real_run_creates_kv_and_deploys_in_expected_order(tmp_path, monkeypatch
     ]
 
 
-def test_real_run_deploys_the_local_state_dir_not_the_repo_template(tmp_path, monkeypatch):
-    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+def test_real_run_deploys_an_allowlisted_copy_never_the_raw_state_dir_or_repo_template(
+    tmp_path, monkeypatch
+):
+    # Setup's deploy step goes through cloudflare_backend.py's own
+    # _build_deploy_dir -- the same allowlist publish()/gc() use -- so it
+    # hands wrangler a throwaway copy, never the raw state dir (which may
+    # already hold synced strays; see the stray-exclusion test below) and
+    # never this repo's own publish/cloudflare/ template dir.
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch, wrangler=TreeCapturingWrangler())
 
     expected_state_dir = _default_state_dir("friend-notes")
     deploy_call = next(c for c in wrangler.calls if c[0] == "pages_deploy")
-    assert deploy_call == ("pages_deploy", "friend-notes", str(expected_state_dir), "main")
+    assert deploy_call[1] == "friend-notes"
+    assert deploy_call[2] != str(expected_state_dir)
     assert deploy_call[2] != str(CLOUDFLARE_ASSETS_DIR)
+    assert deploy_call[3] == "main"
+    # The deployed content matches what's in the state dir (allowlisted):
+    # functions/_middleware.js, _headers, index.html -- installed by Step
+    # 2 just before this deploy, no hash directories yet.
+    assert wrangler.deployed_trees[-1] == sorted([
+        "functions/_middleware.js", "_headers", "index.html",
+    ])
 
 
 def test_real_run_installs_middleware_into_state_dir_functions_subdir(tmp_path, monkeypatch):
@@ -544,6 +582,56 @@ def test_real_run_accepts_a_valid_hyphenated_project_name(tmp_path, monkeypatch)
 
     config = load_config(cfg_path)
     assert config.publish.cloudflare.project == "a-valid-project-99"
+
+
+# ---------------------------------------------------------------------------
+# SECURITY: setup.py is exactly where a friend re-runs `jimemo publish
+# setup` against a state directory they already synced from another
+# machine (docs/publish-setup.md's single-machine section tells them to
+# sync it via git/Dropbox/Syncthing) -- which may already hold strays:
+# .git/, .DS_Store, sync-conflict copies. The deploy step must go through
+# the same allowlist cloudflare_backend.py's publish()/gc() use
+# (_build_deploy_dir), never the raw state dir, or setup would publish
+# all of that at guessable paths outside the unguessable hash namespace
+# (mirrors test_cloudflare_backend.py's own stray-exclusion tests).
+# ---------------------------------------------------------------------------
+
+def test_setup_deploy_excludes_synced_strays_from_a_pre_seeded_state_dir(tmp_path, monkeypatch):
+    _patch_home(monkeypatch, tmp_path)
+    state_dir = _default_state_dir("friend-notes")
+    state_dir.mkdir(parents=True)
+    (state_dir / ".git").mkdir()
+    (state_dir / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (state_dir / ".DS_Store").write_bytes(b"\x00Bud1")
+    (state_dir / "index (conflicted copy).html").write_text("<html>conflict</html>")
+
+    wrangler = TreeCapturingWrangler()
+    _run_real(tmp_path, monkeypatch, wrangler=wrangler)
+
+    # Deployed content is exactly the allowlist -- none of the pre-seeded
+    # strays made it into the deploy.
+    assert wrangler.deployed_trees[-1] == sorted([
+        "functions/_middleware.js", "_headers", "index.html",
+    ])
+    # Strays are excluded from the DEPLOY, never deleted from the synced
+    # state dir -- setup only ever installs/overwrites the three baseline
+    # files, same as _install_state_dir_assets's own contract.
+    assert (state_dir / ".git" / "HEAD").is_file()
+    assert (state_dir / ".DS_Store").is_file()
+    assert (state_dir / "index (conflicted copy).html").is_file()
+
+
+def test_setup_deploy_temp_dir_is_cleaned_up_after_deploy(tmp_path, monkeypatch):
+    captured = {}
+
+    class CapturingWrangler(MockWrangler):
+        def pages_deploy(self, project, directory, branch="main"):
+            captured["directory"] = Path(directory)
+            return super().pages_deploy(project, directory, branch)
+
+    _run_real(tmp_path, monkeypatch, wrangler=CapturingWrangler())
+
+    assert not captured["directory"].exists()
 
 
 # ---------------------------------------------------------------------------
