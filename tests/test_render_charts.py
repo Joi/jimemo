@@ -426,3 +426,57 @@ def test_cli_render_malformed_chart_data_exits_1_cleanly(
     err = capsys.readouterr().err
     assert "chart 'sales'" in err
     assert "Traceback" not in err
+
+
+# --- render auto: a chart's required data_slot drives the compat check ----
+
+PLAIN_MANIFEST = json.dumps({
+    "name": "plain-tpl",
+    "version": 1,
+    "title": "Plain",
+    "slots": {"title": {"type": "text", "required": True}},
+    "components": [],
+})
+
+PLAIN_TEMPLATE = """\
+{% extends "page.html.j2" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}{{ title }}{% endblock %}
+"""
+
+
+def test_cli_render_auto_skips_chart_template_missing_required_data(
+    tmp_path, monkeypatch, capsys
+):
+    # manifest.py requires every chart's data_slot to be a required slot
+    # (a chart with no data is nonsensical). That means content missing
+    # the chart data fails load_content for the chart template, so
+    # render auto's compat check -- which walks the ranked templates and
+    # picks the first whose manifest+content combination actually loads
+    # -- skips it and falls through to a compatible template instead of
+    # selecting the chart template and only failing later at render time.
+    templates_dir = tmp_path / "templates"
+    chart_manifest = json.loads(CHART_MANIFEST)
+    chart_manifest["suitability"] = {"keywords": ["sales", "quarterly"]}
+    make_chart_template_dir(
+        templates_dir, manifest_source=json.dumps(chart_manifest)
+    )
+    plain_dir = templates_dir / "plain-tpl"
+    plain_dir.mkdir(parents=True)
+    (plain_dir / "manifest.json").write_text(PLAIN_MANIFEST)
+    (plain_dir / "template.html.j2").write_text(PLAIN_TEMPLATE)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_dir])
+
+    # Matches chart-tpl's suitability keywords (so it outranks plain-tpl
+    # and is tried first) but carries no sales_data.
+    content_file = tmp_path / "content.yaml"
+    content_file.write_text('title: "Quarterly Sales Report"\n')
+    out_path = tmp_path / "out.html"
+
+    rc = cli.main(["render", "auto", str(content_file), "-o", str(out_path)])
+
+    err = capsys.readouterr().err
+    assert "auto: skipping chart-tpl (content does not fit)" in err
+    assert "auto-selected plain-tpl" in err
+    assert rc == 0
+    assert "Quarterly Sales Report" in out_path.read_text(encoding="utf-8")

@@ -12,8 +12,8 @@
       "type": "data",
       "items": {"label": "text", "value": "text", "delta": "text"}
     },
-    "chart_data_line": {"type": "data"},
-    "chart_data_bar": {"type": "data"},
+    "chart_data_line": {"type": "data", "required": true},
+    "chart_data_bar": {"type": "data", "required": true},
     "table": {"type": "data"},
     "notes": {"type": "markdown"}
   },

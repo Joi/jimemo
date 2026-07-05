@@ -27,7 +27,7 @@ VALID = {
         "date": {"type": "text"},
         "body": {"type": "markdown", "required": True},
         "sections": {"type": "data", "items": {"heading": "text", "body": "markdown"}},
-        "chart_data": {"type": "data"},
+        "chart_data": {"type": "data", "required": True},
     },
     "components": ["stat-tile", "card-grid"],
     "charts": [],
@@ -333,6 +333,29 @@ def test_chart_data_slot_must_not_have_items(tmp_path):
     template_dir = write_manifest(tmp_path, data)
     with pytest.raises(ManifestError, match="sections.*schema-free"):
         load_manifest(template_dir)
+
+
+def test_chart_data_slot_must_be_required_named(tmp_path):
+    # A chart with no data is nonsensical: the referenced data_slot must
+    # be marked required so a content file missing it fails cleanly at
+    # load_content time (which render auto's compat check already
+    # handles) rather than crashing later at render time.
+    data = dict(VALID)
+    data["slots"] = dict(VALID["slots"])
+    data["slots"]["chart_data"] = {"type": "data"}  # not required
+    data["charts"] = [dict(CHART)]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="chart_data.*must be a required slot"):
+        load_manifest(template_dir)
+
+
+def test_chart_data_slot_required_true_loads(tmp_path):
+    data = dict(VALID)
+    data["slots"] = dict(VALID["slots"])
+    data["slots"]["chart_data"] = {"type": "data", "required": True}
+    data["charts"] = [dict(CHART)]
+    template_dir = write_manifest(tmp_path, data)
+    assert load_manifest(template_dir)["charts"][0]["id"] == "sales-chart"
 
 
 def test_chart_duplicate_id_rejected(tmp_path):

@@ -160,8 +160,8 @@ def make_charted_template_dir(tmp_path: Path) -> Path:
         "slots": {
             "title": {"type": "text", "required": True},
             "body": {"type": "markdown", "required": True},
-            "sales_data": {"type": "data"},
-            "trend_data": {"type": "data"},
+            "sales_data": {"type": "data", "required": True},
+            "trend_data": {"type": "data", "required": True},
         },
         "components": ["page-header"],
         "charts": [

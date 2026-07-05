@@ -180,6 +180,18 @@ def load_manifest(template_dir: Path) -> Dict[str, Any]:
                 f"chart data is the freeform {{labels, series}} shape, not "
                 f"an itemized list"
             )
+        if not slots[data_slot].get("required"):
+            # A chart with no data is nonsensical, and making the slot
+            # required means missing chart data surfaces as a clean
+            # "missing required slot" ContentError at load_content time
+            # -- which `render auto`'s compatibility check already
+            # handles by skipping to the next template -- instead of a
+            # render-time crash after the template has already been
+            # chosen.
+            raise ManifestError(
+                f"manifest charts[{idx}] ({chart_id!r}) data_slot "
+                f"{data_slot!r} must be a required slot"
+            )
 
         if "title" in chart and not isinstance(chart["title"], str):
             raise ManifestError(
