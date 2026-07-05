@@ -1,0 +1,70 @@
+/* toc — a contents block between hairline rules, not a boxed sidebar.
+ * Top-level entries are numbered by CSS counter: a table of contents
+ * is genuinely ordered, so the numbers carry information. */
+
+.jm-toc {
+  margin-block: var(--jm-space-6);
+  padding-block: var(--jm-space-4);
+  border-block: 1px solid var(--jm-border);
+}
+
+.jm-toc__title {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+  margin-block-end: var(--jm-space-3);
+}
+
+.jm-toc__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.jm-toc__item {
+  padding-block: 0.3rem;
+}
+
+/* number only the top level */
+.jm-toc > .jm-toc__list {
+  counter-reset: jm-toc;
+}
+
+.jm-toc > .jm-toc__list > .jm-toc__item::before {
+  counter-increment: jm-toc;
+  content: counter(jm-toc);
+  display: inline-block;
+  min-width: 1.4em;
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--jm-accent);
+}
+
+/* nested levels indent past the number column */
+.jm-toc__list .jm-toc__list {
+  padding-inline-start: 1.4em;
+  margin-block-start: var(--jm-space-1);
+}
+
+.jm-toc__list .jm-toc__list .jm-toc__link {
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+}
+
+.jm-toc__link {
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-md);
+  color: var(--jm-text);
+  text-decoration: none;
+}
+
+.jm-toc__link:hover {
+  color: var(--jm-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}

@@ -1,0 +1,45 @@
+{#- photo-catalog: a card grid of photographed specimens, each with a
+    title, an optional caption, and an optional small fields table
+    (e.g. season, height). Built for plant surveys, gallery walks, and
+    any collection best browsed as mounted plates rather than prose.
+
+    Slots: title (text, required), subtitle (text), intro (markdown),
+    images (data, required; items: name text, image text, caption
+    markdown, fields markdown). Every per-item key is optional at the
+    content layer, so this template guards each one and drops cleanly
+    when absent -- a card with only an image and a name is valid. -#}
+{% extends "page.html.j2" %}
+{% import "macros.html.j2" as ui %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{{ ui.page_header(title,
+     subtitle=subtitle|default(none),
+     meta=[(images|length) ~ (" specimen" if images|length == 1 else " specimens")]) }}
+
+{% if intro|default(none) %}
+<div class="jm-prose">{{ intro }}</div>
+{% endif %}
+
+<div class="jm-card-grid">
+  {%- for item in images %}
+  <article class="jm-card-grid__item">
+    {% if item.image|default(none) %}
+    <img class="jm-card-grid__media" src="{{ item.image }}" alt="{{ item.name|default('') }}">
+    {% endif %}
+    <div class="jm-card-grid__body">
+      <h3 class="jm-card-grid__title">{{ item.name|default('Untitled specimen') }}</h3>
+      {% if item.caption|default(none) %}
+      <div class="jm-card-grid__text">{{ item.caption }}</div>
+      {% endif %}
+      {% if item.fields|default(none) %}
+      <div class="jm-prose">{{ item.fields }}</div>
+      {% endif %}
+    </div>
+  </article>
+  {%- endfor %}
+</div>
+{% endblock %}
+
+{% block footer %}Rendered with jimemo{% endblock %}

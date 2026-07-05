@@ -1,0 +1,30 @@
+{
+  "name": "timeline",
+  "version": 1,
+  "title": "Timeline",
+  "description": "A vertical timeline of dated events: masthead, optional intro, then a dated rail with optional badges and images.",
+  "slots": {
+    "title": {"type": "text", "required": true},
+    "subtitle": {"type": "text"},
+    "intro": {"type": "markdown"},
+    "events": {
+      "type": "data",
+      "required": true,
+      "items": {
+        "date": "text",
+        "title": "text",
+        "body": "markdown",
+        "badge": "text",
+        "image": "text"
+      }
+    }
+  },
+  "components": ["page-header", "timeline", "badge"],
+  "charts": [],
+  "suitability": {
+    "keywords": ["timeline", "history", "chronology", "log", "milestones", "roadmap"],
+    "content_kinds": ["chronological"],
+    "good_for": "A chronological sequence of dated events: a project history, changelog, or roadmap.",
+    "labeled_hash": "fedee0dbb8a80e08f49efa98ecc2f28ff2c2d3fc7c737cf307dd0a3ac96b0bc9"
+  }
+}

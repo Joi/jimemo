@@ -1,0 +1,70 @@
+/* data-table — a booktable: heavy rule above, hairline rows, no boxes,
+ * no zebra. Headers and cells speak in the apparatus voice; numeric
+ * columns align right with tabular figures. Wrap in __scroll so wide
+ * tables scroll inside their own container on narrow screens. */
+
+.jm-data-table__scroll {
+  margin-block: var(--jm-space-6);
+  overflow-x: auto;
+}
+
+.jm-data-table {
+  width: 100%;
+  border-block-start: 2px solid var(--jm-text);
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-sm);
+  line-height: 1.5;
+}
+
+.jm-data-table__caption {
+  caption-side: bottom;
+  text-align: start;
+  padding-block-start: var(--jm-space-3);
+  font-family: var(--jm-font-prose);
+  font-style: italic;
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+}
+
+.jm-data-table th {
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+  text-align: start;
+  padding: var(--jm-space-2) var(--jm-space-3);
+  border-block-end: 1px solid var(--jm-text);
+  white-space: nowrap;
+}
+
+.jm-data-table td {
+  padding: var(--jm-space-3);
+  border-block-end: 1px solid var(--jm-border);
+  vertical-align: top;
+}
+
+.jm-data-table th:first-child,
+.jm-data-table td:first-child {
+  padding-inline-start: 0;
+}
+
+.jm-data-table th:last-child,
+.jm-data-table td:last-child {
+  padding-inline-end: 0;
+}
+
+.jm-data-table__cell--num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+@media print {
+  .jm-data-table__scroll {
+    overflow-x: visible;
+  }
+
+  .jm-data-table tr {
+    break-inside: avoid;
+  }
+}

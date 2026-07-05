@@ -115,6 +115,17 @@ def test_fifo_is_reported_not_opened(tmp_path):
     assert any("special file not allowed" in p and "pkg/pipe.py" in p for p in problems)
 
 
+def test_malformed_line_is_reported_not_raised(tmp_path):
+    vendor = make_vendor(tmp_path)
+    with (vendor / "SHA256SUMS").open("a") as fh:
+        fh.write("junklinewithnowhitespace\n")
+    problems = verify_checksums(vendor)
+    assert any(
+        "malformed SHA256SUMS line" in p and "junklinewithnowhitespace" in p
+        for p in problems
+    )
+
+
 def test_missing_sums_file_is_reported(tmp_path):
     vendor = tmp_path / "vendor"
     vendor.mkdir()

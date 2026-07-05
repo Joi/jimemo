@@ -1,0 +1,33 @@
+/* badge — a small tracked label, outlined not filled. Square-ish
+ * corners; a pill would be a different product. */
+
+.jm-badge {
+  display: inline-block;
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  line-height: 1;
+  color: var(--jm-muted);
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-sm);
+  padding: 0.35em 0.55em 0.3em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.jm-badge--accent {
+  color: var(--jm-accent);
+  border-color: color-mix(in srgb, var(--jm-accent) 40%, transparent);
+}
+
+.jm-badge--positive {
+  color: var(--jm-positive);
+  border-color: color-mix(in srgb, var(--jm-positive) 40%, transparent);
+}
+
+.jm-badge--negative {
+  color: var(--jm-negative);
+  border-color: color-mix(in srgb, var(--jm-negative) 40%, transparent);
+}

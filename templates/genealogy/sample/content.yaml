@@ -1,0 +1,48 @@
+title: "The Watanabe Line"
+subtitle: "Four generations from the Nagano orchard to Yokohama and São Paulo."
+intro: |
+  Kenji Watanabe planted the first apple trees on the family's Nagano
+  plot in 1924. What follows traces his descendants through three more
+  generations, as the family scattered from the orchard to Osaka,
+  Yokohama, and beyond.
+root:
+  - name: "Kenji Watanabe"
+    years: "1901–1978"
+    note: "Founded the family orchard in Nagano."
+    children:
+      - name: "Haruko Watanabe"
+        years: "1925–2004"
+        note: "Kept the orchard's books for forty years."
+        children:
+          - name: "Akira Watanabe"
+            years: "1948–2020"
+            note: "Moved the family to Osaka in 1970."
+            children:
+              - name: "Mika Watanabe"
+                years: "b. 1975"
+              - name: "Sora Tanaka"
+                years: "b. 1978"
+                note: "Married into the Tanaka family, Yokohama."
+          - name: "Emiko Sato"
+            years: "1951–2015"
+            note: "Ran the family fruit stand until 2010."
+            children:
+              - name: "Yuki Sato"
+                years: "b. 1980"
+      - name: "Tomoko Ide"
+        years: "1928–2011"
+        note: "Married into the Ide silk business."
+        children:
+          - name: "Kenta Ide"
+            years: "b. 1955"
+            children:
+              - name: "Naomi Ide"
+                years: "b. 1983"
+              - name: "Ren Ide"
+                years: "b. 1986"
+      - name: "Ichiro Watanabe"
+        years: "1930–1999"
+        note: "Emigrated to Brazil in 1953; the line continues in São Paulo."
+        children:
+          - name: "Paulo Watanabe"
+            years: "b. 1960"

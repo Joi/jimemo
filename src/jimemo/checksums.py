@@ -4,22 +4,26 @@ import hashlib
 from pathlib import Path
 
 
-def verify_checksums(vendor_dir: Path) -> list:
+def verify_checksums(vendor_dir: Path) -> list[str]:
     sums_file = vendor_dir / "SHA256SUMS"
     if not sums_file.is_file():
         return [f"SHA256SUMS not found in {vendor_dir}"]
 
-    problems = []
-    listed = {}
+    problems: list[str] = []
+    listed: dict[Path, str] = {}
     for line in sums_file.read_text().splitlines():
         line = line.strip()
         if not line:
             continue
-        expected, rel = line.split(None, 1)
+        try:
+            expected, rel = line.split(None, 1)
+        except ValueError:
+            problems.append(f"malformed SHA256SUMS line: {line!r}")
+            continue
         listed[Path(rel.strip().lstrip("*"))] = expected
 
-    excluded = set()
-    real_files = {}
+    excluded: set[Path] = set()
+    real_files: dict[Path, Path] = {}
     for f in sorted(vendor_dir.rglob("*")):
         rel = f.relative_to(vendor_dir)
         if f.is_symlink():

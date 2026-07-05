@@ -1,0 +1,57 @@
+title: "Building jimemo"
+subtitle: "From a one-page spec to five seed templates, six weeks end to end."
+intro: |
+  jimemo turns a markdown or YAML content file into a single polished
+  HTML page — no server, no build step, nothing fetched at view time.
+  This is the project's own history, kept as a jimemo timeline.
+events:
+  - date: "2026-05-20"
+    title: "Design spec drafted"
+    body: |
+      First pass at the shape of the tool: a manifest describes a
+      template's slots, content fills them, and the renderer inlines
+      everything — CSS, images, fonts — into one file.
+  - date: "2026-06-01"
+    title: "Vendoring decided over pip install"
+    body: |
+      Runtime dependencies (Jinja2, MarkupSafe, python-Markdown,
+      PyYAML) would be vendored as pinned, checksummed pure-Python
+      copies, so `./jimemo` runs from a clone with nothing to install.
+  - date: "2026-06-09"
+    title: "Repo scaffold and CI merged"
+    badge: "milestone"
+    body: |
+      `--version`, `doctor`, and template discovery landed alongside a
+      GitHub Actions workflow pinned to full commit SHAs.
+  - date: "2026-06-20"
+    title: "Toolkit design system lands"
+    body: |
+      Tokens, base typography, and nine components — page-header,
+      stat-tile, card-grid, timeline, data-table, figure-block, badge,
+      toc, tree — each with a Jinja macro and light, dark, and print
+      support.
+  - date: "2026-06-28"
+    title: "Render pipeline ships"
+    body: |
+      `jimemo render` assembles a template and its content into one
+      HTML file: CSS inlined, local images converted to data URIs,
+      lint fails closed on any external script.
+  - date: "2026-07-01"
+    title: "Suggest and render auto"
+    body: |
+      A deterministic scorer, no LLM in the loop, reads a content
+      file's shape and ranks which template fits best, so `render
+      auto` can pick one on its own.
+  - date: "2026-07-04"
+    title: "Security hardening pass"
+    body: |
+      Markdown output now runs through an HTML sanitizer before it
+      reaches the page, and the lint step gained checks for inline
+      event handlers and script-scheme URLs.
+  - date: "2026-07-05"
+    title: "Five seed templates ship"
+    badge: "launch"
+    body: |
+      Briefing, photo-catalog, timeline, genealogy, and data-dashboard
+      land together, each with a golden test and a real sample —
+      ready to dogfood on an actual write-up.

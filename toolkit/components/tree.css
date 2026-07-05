@@ -1,0 +1,83 @@
+/* tree — genealogy and hierarchy as an indented outline with hairline
+ * connectors. Names in serif; years and notes in the apparatus voice.
+ * Pure CSS borders, so it prints exactly as it renders. */
+
+.jm-tree {
+  margin-block: var(--jm-space-6);
+  line-height: var(--jm-leading-snug);
+}
+
+.jm-tree__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.jm-tree__list .jm-tree__list {
+  padding-inline-start: var(--jm-space-3);
+}
+
+.jm-tree__item {
+  position: relative;
+}
+
+.jm-tree__node {
+  padding-block: 0.3rem;
+}
+
+/* connectors, on every level below the root */
+.jm-tree__list .jm-tree__list > .jm-tree__item {
+  padding-inline-start: 1.25rem;
+}
+
+.jm-tree__list .jm-tree__list > .jm-tree__item::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 0.95em;
+  width: 0.9rem;
+  height: 1px;
+  background: var(--jm-border);
+}
+
+.jm-tree__list .jm-tree__list > .jm-tree__item::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--jm-border);
+}
+
+.jm-tree__list .jm-tree__list > .jm-tree__item:last-child::after {
+  height: 0.95em;
+}
+
+.jm-tree__label {
+  font-family: var(--jm-font-prose);
+  font-weight: 600;
+}
+
+.jm-tree__meta {
+  margin-inline-start: 0.5em;
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  letter-spacing: 0.04em;
+  color: var(--jm-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.jm-tree__note {
+  display: block;
+  font-size: var(--jm-text-sm);
+  font-style: italic;
+  color: var(--jm-muted);
+}
+
+@media print {
+  .jm-tree__node {
+    break-inside: avoid;
+  }
+}
