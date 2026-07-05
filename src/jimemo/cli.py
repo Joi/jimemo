@@ -1,10 +1,16 @@
 import argparse
 import sys
+import webbrowser
+from pathlib import Path
 
 from . import __version__
 from ._vendor import VENDOR_DIR, add_vendor_to_path
 from .checksums import verify_checksums
+from .content import load_content
 from .discovery import default_search_dirs, find_templates
+from .errors import ContentError, ManifestError
+from .manifest import load_manifest
+from .render import render_page, write_output
 
 PYTHON_FLOOR = (3, 9)
 
@@ -54,6 +60,45 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_render(args) -> int:
+    if args.template == "auto":
+        print("render auto requires suggest (coming in this phase)", file=sys.stderr)
+        return 2
+
+    templates = dict(find_templates(default_search_dirs()))
+    template_dir = templates.get(args.template)
+    if template_dir is None:
+        print(f"unknown template: {args.template!r}", file=sys.stderr)
+        return 1
+
+    content_path = Path(args.content)
+    if not content_path.is_file():
+        print(f"content file not found: {content_path}", file=sys.stderr)
+        return 1
+
+    try:
+        manifest = load_manifest(template_dir)
+        content = load_content(content_path, manifest)
+        html = render_page(
+            template_dir,
+            content,
+            args.theme,
+            base_dir=content_path.resolve().parent,
+        )
+    except (ManifestError, ContentError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    out_path = Path(args.out) if args.out else Path("dist") / f"{content_path.stem}.html"
+    write_output(html, out_path)
+    print(f"wrote {out_path}")
+
+    if args.open:
+        webbrowser.open(out_path.resolve().as_uri())
+
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="jimemo",
@@ -65,12 +110,21 @@ def main(argv=None) -> int:
     sub.add_parser("doctor", help="check environment and vendor integrity")
     sub.add_parser("list", help="list available templates")
 
+    render_p = sub.add_parser("render", help="render a template + content file to HTML")
+    render_p.add_argument("template", help='template name, or "auto" to pick automatically')
+    render_p.add_argument("content", help="content file (.md, .json, or .yaml)")
+    render_p.add_argument("-o", "--out", help="output path (default: dist/<content-stem>.html)")
+    render_p.add_argument("--theme", help='pin "light" or "dark" (default: follow the OS)')
+    render_p.add_argument("--open", action="store_true", help="open the result in a browser")
+
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
         return cmd_doctor(args)
     if args.command == "list":
         return cmd_list(args)
+    if args.command == "render":
+        return cmd_render(args)
 
     parser.print_usage(sys.stderr)
     return 2
