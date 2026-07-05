@@ -434,6 +434,30 @@ def test_cli_render_unknown_template(tmp_path, monkeypatch):
     assert rc == 1
 
 
+def test_render_page_missing_template_file_raises_content_error(tmp_path):
+    # manifest.json present, but template.html.j2 was never written (or
+    # was deleted) -- must surface as a clean ContentError naming the
+    # template, not a raw jinja2.TemplateNotFound traceback.
+    template_dir = tmp_path / "no-template-tpl"
+    template_dir.mkdir()
+    (template_dir / "manifest.json").write_text(BASIC_MANIFEST)
+    content = {"title": "Hello", "body": Markup("<p>World</p>")}
+
+    with pytest.raises(ContentError, match=r"template\.html\.j2.*could not be loaded"):
+        render_page(template_dir, content)
+
+
+def test_render_page_template_syntax_error_raises_content_error(tmp_path):
+    broken_template = BASIC_TEMPLATE.replace(
+        "{% block content %}", "{% block content %}{% if %}"
+    )
+    template_dir = make_template_dir(tmp_path, "broken-tpl", broken_template)
+    content = {"title": "Hello", "body": Markup("<p>World</p>")}
+
+    with pytest.raises(ContentError, match=r"template\.html\.j2.*could not be loaded"):
+        render_page(template_dir, content)
+
+
 def test_render_page_undefined_template_value_raises_content_error(tmp_path):
     undefined_template = BASIC_TEMPLATE.replace(
         "{{ ui.stat_tile(\"42\", \"Answer\") }}", "{{ no_such_value }}"

@@ -48,7 +48,8 @@ def cmd_doctor(args) -> int:
         try:
             import jinja2  # noqa: F401
             import markdown  # noqa: F401
-            print("ok   vendored imports (jinja2, markdown)")
+            import yaml  # noqa: F401
+            print("ok   vendored imports (jinja2, markdown, yaml)")
         except ImportError as e:
             print(f"FAIL vendored imports: {e}")
             ok = False

@@ -14,7 +14,13 @@ from .lint import lint_html
 from .manifest import load_manifest
 
 add_vendor_to_path()
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, UndefinedError  # noqa: E402
+from jinja2 import (  # noqa: E402
+    Environment,
+    FileSystemLoader,
+    StrictUndefined,
+    TemplateError,
+    UndefinedError,
+)
 from markupsafe import Markup  # noqa: E402
 
 TOOLKIT_DIR = REPO_ROOT / "toolkit"
@@ -47,7 +53,16 @@ def render_page(
         autoescape=True,
         undefined=StrictUndefined,
     )
-    template = env.get_template(TEMPLATE_FILENAME)
+    try:
+        template = env.get_template(TEMPLATE_FILENAME)
+    except TemplateError as e:
+        # Missing template.html.j2, or one with a syntax error: surface
+        # as the domain error the CLI already prints cleanly, naming the
+        # template so the author knows what to fix.
+        raise ContentError(
+            f"template {TEMPLATE_FILENAME!r} in {template_dir} could not "
+            f"be loaded: {e}"
+        ) from e
 
     styles = Markup("<style>\n" + assemble_css(manifest, theme) + "\n</style>")
 
@@ -62,6 +77,11 @@ def render_page(
         # StrictUndefined raises on any unknown name; surface it as the
         # domain error the CLI already prints cleanly (no traceback).
         raise ContentError(f"template referenced an undefined value: {e}") from e
+    except TemplateError as e:
+        raise ContentError(
+            f"template {TEMPLATE_FILENAME!r} in {template_dir} failed to "
+            f"render: {e}"
+        ) from e
 
     html, img_warnings = inline_images(html, Path(base_dir) if base_dir else Path.cwd())
 

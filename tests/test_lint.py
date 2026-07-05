@@ -500,3 +500,23 @@ def test_meta_refresh_errors_plain_meta_fine():
     assert any("refresh" in e for e in errors)
     errors, _ = _lint('<meta charset="utf-8"><meta name="viewport" content="width=device-width">')
     assert errors == []
+
+
+def test_base_href_errors():
+    # <base href> re-roots every relative/#fragment URL on the page
+    # against a remote origin, defeating the self-contained allowlist.
+    errors, _ = _lint('<base href="https://evil.example/">')
+    assert any("base href" in e for e in errors)
+
+
+def test_base_target_without_href_is_fine():
+    errors, _ = _lint('<base target="_blank">')
+    assert errors == []
+
+
+def test_no_base_tag_is_fine():
+    errors, warnings = lint_html(
+        "<!doctype html><html><body><p>hello</p></body></html>", {"charts": []}
+    )
+    assert errors == []
+    assert warnings == []

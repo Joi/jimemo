@@ -169,6 +169,15 @@ class _Linter(HTMLParser):
                     "navigates away from the page at view time"
                 )
 
+        if tag == "base":
+            href = next((v for n, v in attrs if n.lower() == "href"), None)
+            if href is not None:
+                self.errors.append(
+                    f"<base href={href!r}> is not allowed: it rebases every "
+                    "relative and #fragment URL on the page against a "
+                    "remote origin, defeating the self-contained allowlist"
+                )
+
         for name, value in attrs:
             name = name.lower()
             if name.startswith("on"):
