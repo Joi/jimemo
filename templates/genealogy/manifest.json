@@ -1,0 +1,20 @@
+{
+  "name": "genealogy",
+  "version": 1,
+  "title": "Genealogy / family tree",
+  "description": "A family tree: masthead, optional intro, and a nested tree of ancestors and descendants (name, years, optional note) to any depth.",
+  "slots": {
+    "title": {"type": "text", "required": true},
+    "subtitle": {"type": "text"},
+    "intro": {"type": "markdown"},
+    "root": {"type": "data", "required": true}
+  },
+  "components": ["page-header", "tree"],
+  "charts": [],
+  "suitability": {
+    "keywords": ["genealogy", "family", "tree", "lineage", "ancestry", "hierarchy", "org"],
+    "content_kinds": ["hierarchical"],
+    "good_for": "Family trees and other strictly nested hierarchies: ancestors and descendants, org charts.",
+    "labeled_hash": "e56004e5a751c3bb74039e77f2549304b50722fa247f3db6d32465942233f76f"
+  }
+}
