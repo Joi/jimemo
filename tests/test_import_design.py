@@ -315,3 +315,57 @@ def test_embed_fonts_rejects_non_font_extension(tmp_path, monkeypatch):
 
     with pytest.raises(DesignImportError, match="unrecognized extension"):
         import_design(export_dir, name="evil3", embed_fonts=True)
+
+
+# -- security: font-metadata CSS injection (end-to-end) ------------------
+
+
+def _malicious_font_export(tmp_path: Path) -> Path:
+    """A manifest whose font weight breaks out of the @font-face block --
+    the reviewer's proof-of-concept, run through the whole importer."""
+    export_dir = tmp_path / "evil-export"
+    export_dir.mkdir()
+    manifest = {
+        "namespace": "Evil",
+        "tokens": [
+            {"name": "--ev-ink", "value": "#111111", "kind": "color"},
+            {"name": "--ev-font", "value": '"Evil", sans-serif', "kind": "font"},
+        ],
+        "fonts": [
+            {
+                "family": "Evil",
+                "weight": "400} body{display:none} @font-face{font-weight:400",
+                "style": "normal",
+                "files": ["assets/fonts/Evil.ttf"],
+            }
+        ],
+        "brandFonts": [{"family": "Evil", "status": "ok", "tokens": ["--ev-font"]}],
+        "globalCssPaths": [],
+        "themes": [],
+    }
+    (export_dir / "_ds_manifest.json").write_text(json.dumps(manifest))
+    font = export_dir / "assets" / "fonts" / "Evil.ttf"
+    font.parent.mkdir(parents=True)
+    font.write_bytes(b"FAKE")
+    return export_dir
+
+
+def test_import_design_blocks_font_metadata_injection(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _malicious_font_export(tmp_path)
+
+    with pytest.raises(DesignImportError, match="weight"):
+        import_design(export_dir, name="evil", embed_fonts=True)
+
+    # fail-closed: nothing was written
+    assert not (tmp_path / ".jimemo" / "themes" / "evil.css").exists()
+
+
+def test_cli_import_design_font_injection_returns_rc1_and_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _malicious_font_export(tmp_path)
+
+    rc = main(["import-design", str(export_dir), "--name", "evil", "--embed-fonts"])
+    assert rc == 1
+    theme = tmp_path / ".jimemo" / "themes" / "evil.css"
+    assert not theme.exists()

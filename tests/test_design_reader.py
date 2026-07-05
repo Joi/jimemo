@@ -146,6 +146,136 @@ def test_safe_token_value_accepted(tmp_path, safe_value):
     assert export.tokens[0].value == safe_value
 
 
+# -- security: font metadata sanitization ---------------------------------
+#
+# Font family/weight/style come straight from the untrusted manifest and
+# are interpolated UNESCAPED into generated CSS (importer @font-face
+# blocks; mapping role values). The reader is the trust boundary that must
+# reject injection-y values before any consumer sees them -- the
+# css_reference_errors self-check does NOT catch brace/declaration
+# injection, so these MUST fail here.
+
+
+def _manifest_with_font(tmp_path: Path, font: dict, *, brand_fonts=None) -> Path:
+    export_dir = tmp_path / "font-export"
+    export_dir.mkdir()
+    manifest = {
+        "namespace": "Evil",
+        "tokens": [
+            {"name": "--evil-token", "value": "#111111", "kind": "color"}
+        ],
+        "fonts": [font],
+        "brandFonts": brand_fonts or [],
+        "globalCssPaths": [],
+        "themes": [],
+    }
+    (export_dir / "_ds_manifest.json").write_text(json.dumps(manifest))
+    return export_dir
+
+
+def _manifest_with_brand_font(tmp_path: Path, brand_font: dict) -> Path:
+    export_dir = tmp_path / "brand-font-export"
+    export_dir.mkdir()
+    manifest = {
+        "namespace": "Evil",
+        "tokens": [
+            {"name": "--evil-token", "value": "#111111", "kind": "color"}
+        ],
+        "fonts": [],
+        "brandFonts": [brand_font],
+        "globalCssPaths": [],
+        "themes": [],
+    }
+    (export_dir / "_ds_manifest.json").write_text(json.dumps(manifest))
+    return export_dir
+
+
+def test_font_weight_css_injection_poc_rejected(tmp_path):
+    # The reviewer's exact proof-of-concept: a weight that closes the
+    # @font-face block and injects a sibling rule.
+    font = {
+        "family": "Evil",
+        "weight": "400} body{display:none} @font-face{font-weight:400",
+        "style": "normal",
+        "files": [],
+    }
+    export_dir = _manifest_with_font(tmp_path, font)
+    with pytest.raises(DesignImportError, match="weight"):
+        read_export(export_dir)
+
+
+def test_font_family_quote_breakout_rejected(tmp_path):
+    font = {
+        "family": '"} body{display:none} .x{font-family:"Y',
+        "weight": "400",
+        "style": "normal",
+        "files": [],
+    }
+    export_dir = _manifest_with_font(tmp_path, font)
+    with pytest.raises(DesignImportError, match="family"):
+        read_export(export_dir)
+
+
+@pytest.mark.parametrize("bad_family", ["Ev}il", "Ev;il", "Ev<il", "back\\slash", "url(x)", "javascript:alert(1)"])
+def test_font_family_unsafe_chars_rejected(tmp_path, bad_family):
+    font = {"family": bad_family, "weight": "400", "style": "normal", "files": []}
+    export_dir = _manifest_with_font(tmp_path, font)
+    with pytest.raises(DesignImportError, match="family"):
+        read_export(export_dir)
+
+
+@pytest.mark.parametrize("bad_weight", ["abc", "12x", "400 700", "-100", "1001", "0"])
+def test_font_weight_invalid_rejected(tmp_path, bad_weight):
+    font = {"family": "Legit", "weight": bad_weight, "style": "normal", "files": []}
+    export_dir = _manifest_with_font(tmp_path, font)
+    with pytest.raises(DesignImportError, match="weight"):
+        read_export(export_dir)
+
+
+@pytest.mark.parametrize("good_weight", ["400", "700", "1", "1000", "normal", "bold", "lighter", "bolder", ""])
+def test_font_weight_valid_accepted(tmp_path, good_weight):
+    font = {"family": "Legit", "weight": good_weight, "style": "normal", "files": []}
+    export_dir = _manifest_with_font(tmp_path, font)
+    export = read_export(export_dir)
+    assert export.fonts[0].weight == good_weight
+
+
+@pytest.mark.parametrize("bad_style", ["italic;x", "italic} body{x", "slanted", "italic<"])
+def test_font_style_invalid_rejected(tmp_path, bad_style):
+    font = {"family": "Legit", "weight": "400", "style": bad_style, "files": []}
+    export_dir = _manifest_with_font(tmp_path, font)
+    with pytest.raises(DesignImportError, match="style"):
+        read_export(export_dir)
+
+
+@pytest.mark.parametrize("good_style", ["normal", "italic", "oblique", "oblique 14deg"])
+def test_font_style_valid_accepted(tmp_path, good_style):
+    font = {"family": "Legit", "weight": "400", "style": good_style, "files": []}
+    export_dir = _manifest_with_font(tmp_path, font)
+    export = read_export(export_dir)
+    assert export.fonts[0].style == good_style
+
+
+def test_brand_font_family_injection_rejected(tmp_path):
+    # BrandFont.family flows into mapping's quoted role value, so it is
+    # validated at the same boundary as a FontFace family.
+    brand = {"family": '"} body{display:none} .x{font-family:"Y', "status": "ok", "tokens": ["--x-font"]}
+    export_dir = _manifest_with_brand_font(tmp_path, brand)
+    with pytest.raises(DesignImportError, match="family"):
+        read_export(export_dir)
+
+
+def test_chiba_fixture_fonts_still_import_cleanly():
+    # Every real font in the checked-in fixture is legit (Finder / Ro NOW
+    # Std, weights 300/400/500/700/900, style normal), so the fix must not
+    # regress it.
+    export = read_export(FIXTURE_DIR)
+    families = {f.family for f in export.fonts}
+    assert "Finder" in families
+    assert "Ro NOW Std" in families
+    assert {b.family for b in export.brand_fonts}  # brand fonts parsed, none rejected
+
+
 # -- parse-only guarantee --------------------------------------------------
 
 

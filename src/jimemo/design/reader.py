@@ -147,13 +147,18 @@ def _from_manifest(manifest: dict) -> DesignExport:
         if not isinstance(f, dict):
             continue
         files = [p for p in (f.get("files") or []) if isinstance(p, str)]
+        family = f.get("family")
+        family = family if isinstance(family, str) else ""
+        raw_weight = f.get("weight")
+        weight = "" if raw_weight is None else str(raw_weight)
+        raw_style = f.get("style")
+        style = raw_style if isinstance(raw_style, str) and raw_style else "normal"
+        # Trust boundary: family/weight/style are interpolated unescaped
+        # into generated CSS, so validate them before they reach any
+        # consumer (importer @font-face blocks, mapping role values).
+        _validate_font_metadata(family, weight, style)
         fonts.append(
-            FontFace(
-                family=f.get("family") or "",
-                weight=str(f.get("weight", "")),
-                style=f.get("style") or "normal",
-                files=files,
-            )
+            FontFace(family=family, weight=weight, style=style, files=files)
         )
 
     brand_fonts: List[BrandFont] = []
@@ -161,9 +166,15 @@ def _from_manifest(manifest: dict) -> DesignExport:
         if not isinstance(b, dict):
             continue
         referencing = [tn for tn in (b.get("tokens") or []) if isinstance(tn, str)]
+        family = b.get("family")
+        family = family if isinstance(family, str) else ""
+        # BrandFont.family flows into mapping._font_declaration's quoted
+        # `"<family>", <stack>` role value -- same interpolation risk as a
+        # FontFace family, so it gets the same validation here.
+        _validate_font_family(family)
         brand_fonts.append(
             BrandFont(
-                family=b.get("family") or "",
+                family=family,
                 referencing_token_names=referencing,
                 status=b.get("status") or "unknown",
             )
@@ -272,13 +283,14 @@ def _from_css_fallback(export_dir: Path) -> DesignExport:
             # manifest path's fonts[].files -- not opened/validated here
             # (that's a later task's embedding concern).
             files = [url for _q, url in _FONT_FACE_SRC_RE.findall(body)]
+            family = family_m.group(1).strip().strip("\"'")
+            weight = weight_m.group(1).strip() if weight_m else ""
+            style = style_m.group(1).strip() if style_m else "normal"
+            # Same trust boundary as the manifest path: these are
+            # interpolated unescaped downstream, so validate here too.
+            _validate_font_metadata(family, weight, style)
             fonts.append(
-                FontFace(
-                    family=family_m.group(1).strip().strip("\"'"),
-                    weight=(weight_m.group(1).strip() if weight_m else ""),
-                    style=(style_m.group(1).strip() if style_m else "normal"),
-                    files=files,
-                )
+                FontFace(family=family, weight=weight, style=style, files=files)
             )
 
     if not found_root_block or not tokens:
@@ -382,3 +394,113 @@ def validate_token_value(name: str, value: str) -> None:
             f"token {name!r} has unsafe value (contains ';', possible "
             f"declaration injection): {value!r}"
         )
+
+
+# -- font metadata sanitization -------------------------------------------
+#
+# Token VALUES go through validate_token_value above, but font METADATA
+# (FontFace.family/weight/style and BrandFont.family) is a separate,
+# equally untrusted channel: it comes straight from the manifest's
+# fonts[]/brandFonts[] (or the CSS fallback's @font-face rules) and is
+# interpolated UNESCAPED into generated CSS -- family into a quoted
+# `font-family: "<family>"` string (importer._font_face_block) and a
+# `"<family>", <stack>` role value (mapping._font_declaration); weight and
+# style into bare `font-weight: <weight>;` / `font-style: <style>;`
+# declarations inside the @font-face block. A hostile value like the
+# weight `400} body{...} @font-face{font-weight:400` breaks out of that
+# block and injects a sibling rule, and the css_reference_errors self-check
+# does NOT catch brace/declaration injection (only url()/@import). So these
+# fields are validated here at the reader trust boundary -- fail-closed:
+# any injection-y content aborts the import with a clear error rather than
+# being silently dropped -- which protects BOTH the importer and the
+# mapping consumers at once, since every downstream reads these same
+# already-validated dataclasses.
+
+# Control chars (incl. newline/CR/tab) and DEL: never valid in a family,
+# and a newline could start a fresh CSS line inside the interpolation.
+_FONT_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+# CSS font-weight allowlist: the four keywords, or an integer 1-1000
+# (400/700/... in practice); see _validate_font_weight.
+_FONT_WEIGHT_KEYWORDS = frozenset({"normal", "bold", "lighter", "bolder"})
+
+# CSS font-style allowlist: normal/italic/oblique, plus `oblique <angle>deg`
+# (a single trivial angle) -- see _validate_font_style.
+_FONT_STYLE_KEYWORDS = frozenset({"normal", "italic", "oblique"})
+_OBLIQUE_ANGLE_RE = re.compile(r"^oblique\s+-?\d+(?:\.\d+)?deg$", re.IGNORECASE)
+
+
+def _validate_font_family(family: str) -> None:
+    """Reject a font family name that isn't safe to interpolate into the
+    generated CSS, both inside a quoted `font-family: "<family>"` string
+    AND as a bare token in a `"<family>", <stack>` role value. A legit
+    family (letters, digits, spaces, hyphens -- e.g. ``Finder``,
+    ``Ro NOW Std``) contains none of the constructs rejected here.
+
+    An empty family is allowed (it's the reader's sentinel for a font
+    entry that named no family; it can't inject anything). Everything else
+    fails on a quote/backslash (would break out of the quoted string), a
+    ``<``/brace/``;`` (declaration/rule injection), a newline/control
+    char, or a ``url(``/``javascript:``/``expression(`` substring (none of
+    which belongs in a family name)."""
+    for bad in ('"', "\\", "<", "{", "}", ";"):
+        if bad in family:
+            raise DesignImportError(
+                f"font family {family!r} has an unsafe character {bad!r} in "
+                f"'family' -- refusing to interpolate it into CSS"
+            )
+    if _FONT_CONTROL_RE.search(family):
+        raise DesignImportError(
+            f"font family {family!r} has a newline/control character in "
+            f"'family' -- refusing to interpolate it into CSS"
+        )
+    lowered = family.lower()
+    for construct in ("url(", "javascript:", "expression("):
+        if construct in lowered:
+            raise DesignImportError(
+                f"font family {family!r} contains {construct!r} in 'family' "
+                f"-- refusing to interpolate it into CSS"
+            )
+
+
+def _validate_font_weight(family: str, weight: str) -> None:
+    """Allowlist a CSS font-weight: empty (unspecified -> the importer's
+    `weight or "normal"` handles it), a keyword in
+    {normal, bold, lighter, bolder}, or an integer 1-1000. Anything else
+    -- notably the PoC `400} body{...} @font-face{font-weight:400` -- is
+    rejected, since weight is dropped verbatim into `font-weight: <weight>;`
+    inside the @font-face block. (A variable-font range like `100 900` is
+    also rejected by this single-value allowlist; single weights are what
+    every design export seen carries, and fail-closed is the safer default
+    for this trust boundary.)"""
+    w = weight.strip()
+    if w == "" or w.lower() in _FONT_WEIGHT_KEYWORDS:
+        return
+    if w.isdigit() and 1 <= int(w) <= 1000:
+        return
+    raise DesignImportError(
+        f"font {family!r} has an invalid 'weight' {weight!r} -- expected a "
+        f"number 1-1000 or one of normal/bold/lighter/bolder"
+    )
+
+
+def _validate_font_style(family: str, style: str) -> None:
+    """Allowlist a CSS font-style: empty (-> the importer's
+    `style or "normal"`), a keyword in {normal, italic, oblique}, or
+    `oblique <angle>deg`. Anything else (e.g. `italic;x`) is rejected --
+    style is dropped verbatim into `font-style: <style>;`."""
+    s = style.strip()
+    if s == "" or s.lower() in _FONT_STYLE_KEYWORDS or _OBLIQUE_ANGLE_RE.match(s):
+        return
+    raise DesignImportError(
+        f"font {family!r} has an invalid 'style' {style!r} -- expected "
+        f"normal, italic, or oblique (optionally 'oblique <angle>deg')"
+    )
+
+
+def _validate_font_metadata(family: str, weight: str, style: str) -> None:
+    """Validate all three interpolated FontFace fields together (family,
+    weight, style) at the reader trust boundary."""
+    _validate_font_family(family)
+    _validate_font_weight(family, weight)
+    _validate_font_style(family, style)
