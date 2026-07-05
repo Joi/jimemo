@@ -90,7 +90,10 @@ def _charts_context(
         charts.append({
             "id": decl["id"],
             "type": decl["type"],
-            "title": decl.get("title"),
+            # Jinja's |default filter only fires on Undefined, not None,
+            # so a missing/empty title must fall back to the chart id
+            # here rather than relying on the template's default(c.id).
+            "title": decl.get("title") or decl["id"],
             "config_json": Markup(serialize_chart_config(config)),
         })
     return charts

@@ -126,6 +126,29 @@ def test_chart_config_round_trips_data_and_title(tmp_path):
     assert config["options"] == {}
 
 
+def test_missing_chart_title_falls_back_to_chart_id(tmp_path):
+    # Jinja's |default filter only fires on Undefined, not None, so a
+    # template's {{ c.title|default(c.id) }} would render the literal
+    # string "None" for a title-less declaration unless render.py's
+    # `charts` context itself substitutes the chart id.
+    manifest = CHART_MANIFEST.replace(
+        '    {"id": "sales", "type": "bar", "data_slot": "sales_data",\n'
+        '     "title": "Sales by quarter"}',
+        '    {"id": "sales", "type": "bar", "data_slot": "sales_data"}',
+    )
+    template = CHART_TEMPLATE.replace(
+        "{% for c in charts %}{{ ui.chart(c.id, c.config_json) }}{% endfor %}",
+        "{% for c in charts %}<h2>{{ c.title }}</h2>"
+        "{{ ui.chart(c.id, c.config_json) }}{% endfor %}",
+    )
+    template_dir = make_chart_template_dir(
+        tmp_path, manifest_source=manifest, template_source=template
+    )
+    html = render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})
+    assert "<h2>sales</h2>" in html
+    assert "None" not in html
+
+
 def test_two_charts_share_one_inlined_lib(tmp_path):
     manifest = CHART_MANIFEST.replace(
         '"sales_data": {"type": "data", "required": true}',

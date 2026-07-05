@@ -15,7 +15,12 @@ SLOT_TYPES = ("text", "markdown", "data")
 # with one of these names would be silently shadowed at render time.
 RESERVED_SLOT_NAMES = ("manifest", "styles", "theme")
 ITEM_TYPES = ("text", "markdown")
-CHART_TYPES = ("bar", "line", "pie", "doughnut", "radar", "scatter")
+# "scatter" is deliberately excluded: Chart.js scatter needs {x, y}
+# point objects on linear axes, but build_chart_config only ever emits
+# {labels, series} (string labels, not numeric x values) — a scatter
+# chart declared against that shape renders blank. Revisit if a
+# {x, y} data contract is added.
+CHART_TYPES = ("bar", "line", "pie", "doughnut", "radar")
 CHART_FIELDS = ("id", "type", "data_slot", "title")
 # ASCII-only so a chart id is always a safe DOM id / macro argument.
 # \A/\Z (not ^/$) so a trailing newline can't sneak past the anchor.

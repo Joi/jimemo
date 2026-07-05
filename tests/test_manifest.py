@@ -296,6 +296,16 @@ def test_chart_invalid_type_named(tmp_path):
         load_manifest(template_dir)
 
 
+def test_chart_scatter_type_rejected(tmp_path):
+    # scatter needs {x, y} point data; build_chart_config only ever
+    # emits {labels, series}, so scatter is not a supported chart type.
+    data = dict(VALID)
+    data["charts"] = [dict(CHART, type="scatter")]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="scatter"):
+        load_manifest(template_dir)
+
+
 def test_chart_data_slot_undeclared_named(tmp_path):
     data = dict(VALID)
     data["charts"] = [dict(CHART, data_slot="no_such_slot")]
