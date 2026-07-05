@@ -108,6 +108,11 @@ def load_config(path: Optional[Path] = None) -> Config:
         raise ConfigError(f"{cfg_path}: invalid TOML: {e}")
 
     publish_data = data.get("publish")
+    if publish_data is not None and not isinstance(publish_data, dict):
+        raise ConfigError(
+            f'{cfg_path}: [publish] must be a table (e.g. "[publish]" '
+            f'followed by "backend = ..."), got {type(publish_data).__name__}'
+        )
     publish = _parse_publish(publish_data, cfg_path) if publish_data is not None else None
     return Config(publish=publish)
 
@@ -126,10 +131,15 @@ def _parse_publish(data: Dict[str, Any], cfg_path: Path) -> PublishConfig:
 
     if backend == "command":
         command = data.get("command")
-        if not command:
+        # A hand-edited config.toml can set command to any TOML value --
+        # e.g. command = ["notes-publish"] (a list) is truthy, so a plain
+        # `if not command` check (as used to be here) lets it straight
+        # through, and it then TypeErrors deep in the command backend's
+        # subprocess call instead of failing here with a clear message.
+        if not isinstance(command, str) or not command:
             raise ConfigError(
-                f'{cfg_path}: [publish].command is required when backend="command" '
-                f'(e.g. "notes-publish")'
+                f'{cfg_path}: [publish].command must be a non-empty string when '
+                f'backend="command" (e.g. "notes-publish"), got {command!r}'
             )
         return PublishConfig(backend=backend, command=command)
 

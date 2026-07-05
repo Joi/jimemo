@@ -210,6 +210,35 @@ def test_non_string_cloudflare_field_raises_at_load(tmp_path):
     assert "account_id" in str(exc.value)
 
 
+def test_non_table_publish_section_raises_config_error(tmp_path):
+    """A hand-edited config.toml can write `publish = "cloudflare"` (a bare
+    key-value, not a `[publish]` table) -- data.get("backend") on a plain
+    string would otherwise blow up with an unrelated AttributeError deep
+    inside _parse_publish instead of a clear ConfigError here."""
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('publish = "cloudflare"\n')
+    with pytest.raises(ConfigError) as exc:
+        load_config(cfg_file)
+    assert "publish" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "command_line",
+    ['command = ["notes-publish"]', "command = 5", 'command = ""'],
+)
+def test_invalid_command_type_or_empty_raises_config_error(tmp_path, command_line):
+    # A list is truthy, so a hand-edited command = ["notes-publish"] used
+    # to pass load_config()'s old `if not command` check and only
+    # TypeError later, deep inside the command backend's subprocess call.
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(f'[publish]\nbackend = "command"\n{command_line}\n')
+    with pytest.raises(ConfigError) as exc:
+        load_config(cfg_file)
+    msg = str(exc.value)
+    assert "command" in msg
+    assert "backend" in msg
+
+
 def test_non_url_base_url_raises_at_load(tmp_path):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
+from .._paths import REPO_ROOT
 from ..config import PublishConfig
 from ..errors import PublishError
 from . import Publisher
@@ -36,6 +37,14 @@ from .staging import stage_page
 from .wrangler import NO_WRANGLER_MESSAGE, Wrangler
 
 _HASH_RE = re.compile(r"^[a-f0-9]{24}$")
+
+#: publish/cloudflare/ -- the middleware + _headers + index.html source
+#: installed into every project's local state directory, both by
+#: setup.py's wizard (unconditionally) and by this module's own publish()
+#: (self-heal, only when missing -- see _ensure_state_dir_assets). Defined
+#: here rather than in setup.py so both callers share one copy of the
+#: install logic instead of two implementations that could drift.
+CLOUDFLARE_ASSETS_DIR = REPO_ROOT / "publish" / "cloudflare"
 
 Clock = Callable[[], str]
 
@@ -70,6 +79,53 @@ def _extract_hash(hash_or_url: str) -> str:
 
 def _default_state_dir(project: str) -> Path:
     return Path.home() / ".jimemo" / "cloudflare" / project
+
+
+def _install_state_dir_assets(state_dir: Union[str, Path]) -> None:
+    """Copy CLOUDFLARE_ASSETS_DIR's middleware + _headers + index.html
+    into the persistent state directory, in the layout Cloudflare Pages
+    actually requires: Functions are only picked up from a ``functions/``
+    directory at the deploy root, so ``_middleware.js`` goes to
+    ``<state_dir>/functions/_middleware.js`` -- NOT flattened at the
+    state dir's root the way it sits in the repo. ``_headers`` and
+    ``index.html`` stay at the state dir's root.
+
+    Shared by two callers -- setup.py's wizard (unconditionally, so
+    re-running setup after a jimemo upgrade refreshes the deployed
+    middleware) and this module's own publish(), via
+    _ensure_state_dir_assets (only when the middleware is missing) -- so
+    the copy logic itself lives in exactly one place.
+
+    Safe to re-run: always overwrites with the current bundled source.
+    """
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    functions_dir = state_dir / "functions"
+    functions_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(
+        CLOUDFLARE_ASSETS_DIR / "_middleware.js", functions_dir / "_middleware.js"
+    )
+    shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "_headers", state_dir / "_headers")
+    shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "index.html", state_dir / "index.html")
+
+
+def _ensure_state_dir_assets(state_dir: Union[str, Path]) -> None:
+    """Self-heal: install the baseline functions/_middleware.js +
+    _headers + index.html into ``state_dir`` if the tombstone Function is
+    missing -- e.g. `jimemo publish setup` was interrupted before it
+    finished, the state directory was deleted or partially copied between
+    machines, or some other partial state -- without clobbering an
+    already-installed copy.
+
+    Called by publish() before every deploy: publish() always redeploys
+    the WHOLE state directory (see module docstring), so a deploy that
+    goes out without functions/_middleware.js has no tombstone Function
+    at all, and every hash ever published to that project starts serving
+    ``?purge`` as a silent no-op (or a 405) with no warning to whoever
+    just ran `jimemo publish`.
+    """
+    if not (Path(state_dir) / "functions" / "_middleware.js").is_file():
+        _install_state_dir_assets(state_dir)
 
 
 class CloudflarePublisher(Publisher):
@@ -113,9 +169,19 @@ class CloudflarePublisher(Publisher):
         self-contained (with its own <title>) by the render pipeline,
         unlike the `command` backend, which may hand raw markdown/text to
         an external CLI that still needs a title to wrap it with.
+
+        Before staging or deploying, self-heals the state directory's
+        baseline assets (functions/_middleware.js, _headers, index.html)
+        if they're missing -- see _ensure_state_dir_assets. This covers a
+        state directory that was never set up via `jimemo publish setup`,
+        one where setup was interrupted, or one that lost its Functions
+        bundle some other way; without this, publish() would deploy a
+        site with no tombstone Function and ``?purge`` would silently
+        stop working.
         """
         self._ensure_wrangler_available()
         self._state_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_state_dir_assets(self._state_dir)
         page_hash, _staged_dir = stage_page(Path(html_path), self._state_dir)
         self._wrangler.pages_deploy(self._cf.project, self._state_dir)
         return f"{self._cf.base_url.rstrip('/')}/{page_hash}/"

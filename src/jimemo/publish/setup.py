@@ -82,22 +82,17 @@ call fail confusingly; wrangler resolves its own auth from that same
 environment variable.
 """
 import os
-import shutil
 from pathlib import Path
 from typing import Optional
 
-from .._paths import REPO_ROOT
 from ..config import valid_project_name
 from ..errors import PublishError
-from .cloudflare_backend import _default_state_dir
+from .cloudflare_backend import (
+    CLOUDFLARE_ASSETS_DIR,
+    _default_state_dir,
+    _install_state_dir_assets,
+)
 from .wrangler import NO_WRANGLER_MESSAGE
-
-#: publish/cloudflare/ -- the middleware + _headers + index.html source
-#: this wizard installs into each project's local state directory (see
-#: _install_state_dir_assets). Read via REPO_ROOT (from _paths.py)
-#: rather than a path relative to this file, matching how
-#: tests/test_middleware_asset.py locates the same directory.
-CLOUDFLARE_ASSETS_DIR = REPO_ROOT / "publish" / "cloudflare"
 
 DEFAULT_PROJECT_NAME = "jimemo-notes"
 
@@ -253,35 +248,6 @@ def _print_kv_instructions(io: SetupIO, project: str) -> None:
         "makes tombstone\n"
         "     checks silently no-op (open-fail, not fail-safe)."
     )
-
-
-def _install_state_dir_assets(state_dir: Path) -> None:
-    """Copy publish/cloudflare/'s middleware + _headers + index.html into
-    the persistent state directory, in the layout Cloudflare Pages
-    actually requires: Functions are only picked up from a ``functions/``
-    directory at the deploy root, so ``_middleware.js`` goes to
-    ``<state_dir>/functions/_middleware.js`` -- NOT flattened at the
-    state dir's root the way it sits in the repo. ``_headers`` and
-    ``index.html`` stay at the state dir's root.
-
-    Must run before the very first deploy: cloudflare_backend.py's
-    publish() always redeploys the whole state directory (see that
-    module's docstring), so anything not installed here before that
-    first deploy is never served by any later publish() call either --
-    see this module's own docstring for the failure mode that creates.
-
-    Safe to re-run: always overwrites with the current bundled source,
-    so re-running setup after a jimemo upgrade refreshes the deployed
-    middleware too.
-    """
-    state_dir.mkdir(parents=True, exist_ok=True)
-    functions_dir = state_dir / "functions"
-    functions_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(
-        CLOUDFLARE_ASSETS_DIR / "_middleware.js", functions_dir / "_middleware.js"
-    )
-    shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "_headers", state_dir / "_headers")
-    shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "index.html", state_dir / "index.html")
 
 
 def _post_deploy_binding_check(

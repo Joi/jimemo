@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo.config import CloudflareConfig, PublishConfig
 from jimemo.errors import PublishError
-from jimemo.publish.cloudflare_backend import CloudflarePublisher
+from jimemo.publish.cloudflare_backend import CLOUDFLARE_ASSETS_DIR, CloudflarePublisher
 from jimemo.publish.wrangler import MockWrangler
 
 HASH_RE = re.compile(r"[a-f0-9]{24}")
@@ -269,6 +269,65 @@ def test_gc_never_removes_a_non_hash_named_state_dir_child(tmp_path):
     publisher.gc()
 
     assert (state_dir / "functions" / "_middleware.js").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Self-heal: publish() must install the baseline functions/_middleware.js +
+# _headers + index.html into the state dir if missing -- e.g. `jimemo
+# publish setup` was interrupted, the state dir was deleted, or some other
+# partial state -- since publish() always redeploys the WHOLE state
+# directory (see module docstring). A deploy that goes out without the
+# middleware has no tombstone Function, so ?purge silently stops working.
+# ---------------------------------------------------------------------------
+
+def test_publish_installs_missing_middleware_into_state_dir(tmp_path):
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    wrangler = MockWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    state_dir = tmp_path / "state"
+
+    publisher.publish(html)
+
+    installed = state_dir / "functions" / "_middleware.js"
+    assert installed.is_file()
+    assert installed.read_text(encoding="utf-8") == (
+        CLOUDFLARE_ASSETS_DIR / "_middleware.js"
+    ).read_text(encoding="utf-8")
+    assert (state_dir / "_headers").is_file()
+    assert (state_dir / "index.html").is_file()
+
+
+def test_publish_deploys_a_dir_that_always_contains_the_middleware(tmp_path):
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    wrangler = MockWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+
+    publisher.publish(html)
+
+    deploy_calls = [c for c in wrangler.calls if c[0] == "pages_deploy"]
+    deployed_dir = Path(deploy_calls[-1][2])
+    assert (deployed_dir / "functions" / "_middleware.js").is_file()
+
+
+def test_publish_does_not_clobber_already_installed_middleware(tmp_path):
+    """Idempotent: if the middleware is already present (e.g. installed by
+    `jimemo publish setup`, or by an earlier publish() call's self-heal),
+    a later publish() must not re-copy over it."""
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    wrangler = MockWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    state_dir = tmp_path / "state"
+    functions_dir = state_dir / "functions"
+    functions_dir.mkdir(parents=True)
+    sentinel = "// pre-existing installed copy, must survive publish()\n"
+    (functions_dir / "_middleware.js").write_text(sentinel)
+
+    publisher.publish(html)
+
+    assert (functions_dir / "_middleware.js").read_text() == sentinel
 
 
 def test_default_state_dir_is_under_home_jimemo_cloudflare(monkeypatch, tmp_path):
