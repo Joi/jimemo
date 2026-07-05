@@ -208,6 +208,32 @@ def test_build_theme_structural_gate_catches_injection_past_input_validation(mon
         build_theme(export, "evil")
 
 
+def _bypassed_build_theme(monkeypatch, value: str):
+    """build_theme on a single-token export with the input validators
+    forced off -- the 'hypothetical hole' harness for the output gate."""
+    from jimemo.design import mapping
+
+    monkeypatch.setattr(mapping, "validate_token_name", lambda name: None)
+    monkeypatch.setattr(mapping, "validate_token_value", lambda name, value: None)
+    export = DesignExport(
+        tokens=[Token(name="--x", value=value, kind="color")],
+        fonts=[],
+        brand_fonts=[],
+        namespace="Evil",
+    )
+    return build_theme(export, "evil")
+
+
+def test_build_theme_structural_gate_catches_unbalanced_brace(monkeypatch):
+    with pytest.raises(DesignImportError, match="unbalanced braces"):
+        _bypassed_build_theme(monkeypatch, "red } }")
+
+
+def test_build_theme_structural_gate_catches_stray_comment_close(monkeypatch):
+    with pytest.raises(DesignImportError, match="comment delimiter"):
+        _bypassed_build_theme(monkeypatch, "red */ oops")
+
+
 # -- header comment -----------------------------------------------------
 
 
