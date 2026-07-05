@@ -364,6 +364,27 @@ def test_embed_fonts_missing_file_raises(tmp_path, monkeypatch):
         import_design(export_dir, name="testy", embed_fonts=True)
 
 
+def test_embed_fonts_unreadable_file_raises_design_import_error(tmp_path, monkeypatch):
+    # A resolved, existing, extension-valid font file whose *read* fails
+    # (permission denied, I/O error, ...) used to raise a raw OSError past
+    # cmd_import_design's DesignImportError-only catch -- _resolve_font_file
+    # validates the path, but nothing wrapped the read_bytes() itself.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _manual_export(tmp_path)
+
+    original_read_bytes = Path.read_bytes
+
+    def raising_read_bytes(self, *args, **kwargs):
+        if self.suffix == ".ttf":
+            raise OSError("Permission denied")
+        return original_read_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", raising_read_bytes)
+
+    with pytest.raises(DesignImportError, match="could not read font file"):
+        import_design(export_dir, name="testy", embed_fonts=True)
+
+
 # -- --embed-fonts: security -- font paths confined to the export dir ----
 
 

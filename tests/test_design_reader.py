@@ -656,3 +656,47 @@ def test_css_fallback_never_reads_js_files(tmp_path, monkeypatch):
 
     export = read_export(export_dir)
     assert any(t.name == "--ct-black" for t in export.tokens)
+
+
+# -- read failures fail closed (non-UTF-8 / unreadable) ---------------------
+#
+# `_read_manifest` and `_from_css_fallback` both used to catch only
+# OSError around their `read_text(encoding="utf-8")` calls -- a non-UTF-8
+# file (or any other decode failure) raises UnicodeDecodeError, which is
+# not an OSError, so it bypassed DesignImportError straight into a
+# traceback. An untrusted export can contain either, so both paths must
+# fail closed the same way an unreadable file already does.
+
+
+def test_manifest_invalid_utf8_raises_design_import_error(tmp_path):
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    (export_dir / "_ds_manifest.json").write_bytes(b"\xff\xfe not valid utf-8 {}")
+
+    with pytest.raises(DesignImportError, match="cannot read manifest"):
+        read_export(export_dir)
+
+
+def test_css_fallback_invalid_utf8_raises_design_import_error(tmp_path):
+    export_dir = tmp_path / "export"
+    (export_dir / "tokens").mkdir(parents=True)
+    (export_dir / "tokens" / "colors.css").write_bytes(
+        b"\xff\xfe :root { --x: 1px; }"
+    )
+
+    with pytest.raises(DesignImportError, match="cannot read"):
+        read_export(export_dir)
+
+
+def test_manifest_unreadable_raises_design_import_error(tmp_path, monkeypatch):
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    (export_dir / "_ds_manifest.json").write_text("{}")
+
+    def raising_read_text(self, *args, **kwargs):
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr(Path, "read_text", raising_read_text)
+
+    with pytest.raises(DesignImportError, match="cannot read manifest"):
+        read_export(export_dir)

@@ -110,7 +110,7 @@ def _read_manifest(export_dir: Path) -> Optional[dict]:
         return None
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         raise DesignImportError(f"cannot read manifest {path}: {e}") from e
     try:
         data = json.loads(raw)
@@ -404,7 +404,7 @@ def _from_css_fallback(export_dir: Path) -> DesignExport:
     for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             raise DesignImportError(f"cannot read {path}: {e}") from e
         text = _COMMENT_RE.sub("", text)
         try:

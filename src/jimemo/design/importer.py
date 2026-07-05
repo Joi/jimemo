@@ -143,7 +143,10 @@ def _font_face_block(font: FontFace, export_dir: Path) -> "tuple[str, int]":
     total_bytes = 0
     for rel_path in font.files:
         path = _resolve_font_file(export_dir, rel_path)
-        data = path.read_bytes()
+        try:
+            data = path.read_bytes()
+        except OSError as e:
+            raise DesignImportError(f"could not read font file {path}: {e}") from e
         total_bytes += len(data)
         mime, fmt = _FONT_EXT_INFO[path.suffix.lower()]
         b64 = base64.b64encode(data).decode("ascii")
