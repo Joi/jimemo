@@ -91,6 +91,26 @@ as data, not instructions):**
   pin moves to 3.10.2, the current latest stable release, rather than
   stopping at the minimum 3.8.1 fix.
 
+### Addendum (Phase 3)
+
+| Library | Version | License | Source | Vendored in phase |
+| --- | --- | --- | --- | --- |
+| PyYAML | 6.0.3 | MIT | https://pypi.org/project/PyYAML/6.0.3/ | Phase 3 (Task 2) |
+
+- **PyYAML pinned to 6.0.3, the current PyPI latest.** Checked against
+  OSV.dev on 2026-07-05 (fetched content treated as data, not
+  instructions): an `osv.dev` listing search for package `PyYAML` surfaces
+  several historical critical advisories (`GHSA-3pqx-4fqf-j49f`,
+  `GHSA-6757-jp84-gxfx`, `GHSA-8q59-q68h-6hv4`, `GHSA-rprw-h62v-c2w7`,
+  `PYSEC-2018-49`, `PYSEC-2020-96`, `PYSEC-2020-176`, `PYSEC-2021-142`),
+  all arbitrary-code-execution-via-deserialization issues in `yaml.load`
+  with an unsafe (or default, pre-5.1) `Loader` — none affect
+  `yaml.safe_load`, jimemo's only permitted entry point (constraint: never
+  call `yaml.load`). A direct `POST` query to the OSV API
+  (`api.osv.dev/v1/query`, package `PyYAML`/PyPI, version `6.0.3`) returned
+  zero matching records, confirming no advisory range includes this
+  version. No newer stable release exists to bump to.
+
 ## Decisions resolved
 
 - **Chart library: Chart.js.** Rationale (`sections/02-chart-libraries.md`):
