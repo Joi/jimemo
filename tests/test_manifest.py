@@ -382,6 +382,37 @@ def test_chart_non_string_title_named(tmp_path):
         load_manifest(template_dir)
 
 
+@pytest.mark.parametrize("collision_name", ["charts", "chart_lib"])
+def test_chart_context_name_collision_rejected_at_load(tmp_path, collision_name):
+    # This check used to live only in render.py's render_page, so
+    # load_manifest (and therefore `info` and `render auto`'s
+    # compatibility check, which both call load_manifest directly) would
+    # accept a manifest that could only fail later, at an actual render
+    # attempt. It must be authoritative here instead.
+    data = dict(VALID)
+    data["slots"] = dict(VALID["slots"])
+    data["slots"][collision_name] = {"type": "text"}
+    data["charts"] = [dict(CHART)]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match=f"{collision_name!r}.*collides"):
+        load_manifest(template_dir)
+
+
+@pytest.mark.parametrize("collision_name", ["charts", "chart_lib"])
+def test_chartless_manifest_may_use_chart_context_slot_names(tmp_path, collision_name):
+    # The collision is reserved only WHEN the manifest declares a chart
+    # (Phase 3 behavior, preserved): a chartless manifest never injects
+    # `charts`/`chart_lib` into the render context, so a slot with
+    # either name is unclaimed and must load cleanly.
+    data = dict(VALID)
+    data["slots"] = dict(VALID["slots"])
+    data["slots"][collision_name] = {"type": "text"}
+    data["charts"] = []
+    template_dir = write_manifest(tmp_path, data)
+    manifest = load_manifest(template_dir)
+    assert manifest["slots"][collision_name]["type"] == "text"
+
+
 def test_valid_manifest_with_full_suitability_still_loads(tmp_path):
     template_dir = write_manifest(tmp_path, VALID)
     manifest = load_manifest(template_dir)

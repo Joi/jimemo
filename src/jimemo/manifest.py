@@ -14,6 +14,13 @@ SLOT_TYPES = ("text", "markdown", "data")
 # Names render_page injects into the template context itself; a slot
 # with one of these names would be silently shadowed at render time.
 RESERVED_SLOT_NAMES = ("manifest", "styles", "theme")
+# Names render_page injects into the context ONLY when the manifest
+# declares at least one chart (render.py's _chart_lib/_charts_context) —
+# reserved conditionally, unlike RESERVED_SLOT_NAMES above. A chartless
+# manifest may still use a slot literally named "charts" or "chart_lib"
+# (Phase 3 behavior, unchanged); see the `if data["charts"]:` guard
+# below, the only place this is checked.
+CHART_CONTEXT_NAMES = ("charts", "chart_lib")
 ITEM_TYPES = ("text", "markdown")
 # "scatter" is deliberately excluded: Chart.js scatter needs {x, y}
 # point objects on linear axes, but build_chart_config only ever emits
@@ -119,6 +126,19 @@ def load_manifest(template_dir: Path) -> Dict[str, Any]:
     data.setdefault("charts", [])
     if not isinstance(data["charts"], list):
         raise ManifestError("manifest field 'charts' must be a list")
+
+    if data["charts"]:
+        # Checked at load time (not just at render time) so `info` and
+        # `render auto`'s compatibility check both see the collision
+        # instead of accepting a manifest that can only fail later,
+        # inside render_page, when a chart page actually gets rendered.
+        for name in CHART_CONTEXT_NAMES:
+            if name in slots:
+                raise ManifestError(
+                    f"slot name {name!r} collides with the render context "
+                    "name injected for chart pages; rename the slot"
+                )
+
     seen_chart_ids = set()
     for idx, chart in enumerate(data["charts"]):
         if not isinstance(chart, dict):

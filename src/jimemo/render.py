@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from ._paths import CHARTJS_BUNDLE, REPO_ROOT
 from ._vendor import add_vendor_to_path
 from .charts import build_chart_config, chart_init_js, serialize_chart_config
-from .errors import ContentError, ManifestError
+from .errors import ContentError
 from .inline import assemble_css, inline_images
 from .lint import lint_html
 from .manifest import load_manifest
@@ -35,12 +35,6 @@ from markupsafe import Markup  # noqa: E402
 
 TOOLKIT_DIR = REPO_ROOT / "toolkit"
 TEMPLATE_FILENAME = "template.html.j2"
-
-# Context names render_page injects only when the manifest declares
-# charts. manifest.py's RESERVED_SLOT_NAMES predates charts and does not
-# cover these, so the collision check lives here: a slot with one of
-# these names would be silently shadowed on chart pages.
-_CHART_CONTEXT_NAMES = ("charts", "chart_lib")
 
 
 def _chart_lib() -> Markup:
@@ -150,14 +144,12 @@ def render_page(
     context["theme"] = theme
 
     # Chartless manifests inject NOTHING here — their rendered output
-    # is byte-identical to Phase 3 (the goldens pin this).
+    # is byte-identical to Phase 3 (the goldens pin this). The
+    # charts/chart_lib slot-name collision is validated authoritatively
+    # in load_manifest (manifest.py), which this function has already
+    # called above to obtain `manifest` — so it cannot reach this point
+    # uncaught, and re-checking it here would be dead code.
     if manifest["charts"]:
-        for name in _CHART_CONTEXT_NAMES:
-            if name in manifest["slots"]:
-                raise ManifestError(
-                    f"slot name {name!r} collides with the render context "
-                    "name injected for chart pages; rename the slot"
-                )
         context["chart_lib"] = _chart_lib()
         context["charts"] = _charts_context(manifest, content)
 

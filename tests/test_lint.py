@@ -69,6 +69,51 @@ def test_local_script_src_errors_even_with_charts():
     assert any("script" in e and "chart.js" in e for e in errors)
 
 
+def test_valueless_script_src_errors_even_with_charts():
+    # Python's html.parser reports a bare attribute like `src` (no
+    # `=value`) as ("src", None) -- identical to "no src attribute at
+    # all". A browser that sees src present ignores the element's
+    # inline body and fetches src instead, so this must still be
+    # rejected as a src-bearing script, not treated as (and possibly
+    # allowlisted as) an inline chart init.
+    html = (
+        "<html><body>"
+        '<script src>new Chart(document.getElementById("bar-chart"), {});</script>'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("script" in e and "never allowed" in e for e in errors)
+
+
+def test_empty_script_src_errors_even_with_charts():
+    html = (
+        "<html><body>"
+        '<script src="">new Chart(document.getElementById("bar-chart"), {});</script>'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("script" in e and "never allowed" in e for e in errors)
+
+
+def test_uppercase_script_src_attr_errors_even_with_charts():
+    html = (
+        "<html><body>"
+        '<script SRC>new Chart(document.getElementById("bar-chart"), {});</script>'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("script" in e and "never allowed" in e for e in errors)
+
+
+def test_script_src_with_value_still_errors_on_chart_page():
+    # Regression guard alongside the presence-only cases above: a
+    # normal valued src on a chart page must still be rejected, not
+    # accidentally waved through by the presence-check refactor.
+    html = '<html><body><script src="x"></script></body></html>'
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("script" in e and "never allowed" in e for e in errors)
+
+
 def test_plain_anchor_links_do_not_warn():
     html = '<html><body><a href="https://example.com/page">link</a></body></html>'
     errors, warnings = lint_html(html, {"charts": []})

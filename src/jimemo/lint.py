@@ -300,6 +300,18 @@ def _css_reference_errors(css: str) -> List[str]:
 _UNSET = object()
 
 
+def _has_src_attr(attrs: List[Tuple[str, Optional[str]]]) -> bool:
+    """True if `attrs` contains a `src` attribute AT ALL, regardless of
+    its value — including a valueless ``<script src>`` (html.parser
+    reports its value as None, identical to "attribute absent") and an
+    empty ``src=""``. A browser that sees src present ignores the
+    element's inline body and fetches src instead, so presence, not
+    value, must gate every no-src/has-src decision on a <script> tag;
+    testing the value would let a valueless src slip through as if the
+    tag had none."""
+    return any(name.lower() == "src" for name, _value in attrs)
+
+
 class _Linter(HTMLParser):
     def __init__(
         self, charts_declared: bool, chart_ids: FrozenSet[str] = frozenset()
@@ -325,17 +337,16 @@ class _Linter(HTMLParser):
         if tag == "style":
             self._style_parts = []
         elif tag == "script" and self.charts_declared:
-            src = next((v for n, v in attrs if n.lower() == "src"), None)
-            # A src'd script already errored in _check_tag; only an
-            # inline body is buffered for the allowlist check.
-            if src is None:
+            # A src-bearing script (src present at all, any value)
+            # already errored in _check_tag; only a true no-src inline
+            # body is buffered for the allowlist check.
+            if not _has_src_attr(attrs):
                 self._script_parts = []
 
     def handle_startendtag(self, tag, attrs):
         self._check_tag(tag, attrs)  # a <style/> has no text to buffer
         if tag == "script" and self.charts_declared:
-            src = next((v for n, v in attrs if n.lower() == "src"), None)
-            if src is None:
+            if not _has_src_attr(attrs):
                 # A body-less <script/> is nothing the renderer emits;
                 # judge its empty body so it fails closed like any other
                 # unexpected inline script.
@@ -455,12 +466,19 @@ class _Linter(HTMLParser):
             )
 
         if tag == "script":
-            src = next((v for n, v in attrs if n.lower() == "src"), None)
-            if src is not None:
-                # Never allowed, remote or local: a src'd script is an
-                # external fetch/file dependency either way. (Phase 4
-                # chart support vendors its script inline instead.)
-                self.errors.append(f'<script src="{src}"> is never allowed')
+            if _has_src_attr(attrs):
+                # Never allowed, remote, local, or valueless/empty: a
+                # src-bearing script is an external fetch/file
+                # dependency (or, for a browser, "ignore my body and
+                # fetch src") either way. (Phase 4 chart support vendors
+                # its script inline instead.) Presence is what counts —
+                # not the value — so this reports the raw value only
+                # for display, defaulting to "" when there is none.
+                src = next((v for n, v in attrs if n.lower() == "src"), None)
+                self.errors.append(
+                    f'<script src="{src if src is not None else ""}"> '
+                    "is never allowed"
+                )
             elif not self.charts_declared:
                 self.errors.append(
                     "<script> tag found but this template declares no charts "
