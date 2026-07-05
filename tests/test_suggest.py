@@ -118,6 +118,34 @@ title: A Quiet Afternoon
 ---
 """ + " ".join(["word"] * 130) + "\n"
 
+# A prose-heavy briefing-shaped doc: a substantial `body` (150 words) plus
+# a small `stats` sidecar (2 records -- just enough to also trip the
+# tabular-data signal). Prose dominates the sidecar (150 words / 2 records),
+# so this should read as narrative, not tabular-data.
+SIDECAR_NARRATIVE_CONTENT_YAML = (
+    'title: "Weekly status memo"\n'
+    "body: |\n"
+    "  " + " ".join(["word"] * 150) + "\n"
+    "stats:\n"
+    '  - label: "Reviews migrated"\n'
+    '    value: "12 of 20"\n'
+    '  - label: "Days elapsed"\n'
+    '    value: "5"\n'
+)
+
+# A genuinely tabular doc where every record also carries a nested `body`
+# (10 records, ~20 words of body each, 200 words total): total prose clears
+# NARRATIVE_MIN_WORDS on its own, but it's spread thin across many records
+# (20 words/record), so this should still read as tabular-data, not
+# narrative -- prose doesn't dominate, it's a per-record caption.
+MANY_RECORDS_LITTLE_PROSE_CONTENT_JSON = json.dumps({
+    "title": "Event Log",
+    "events": [
+        {"name": f"Event {i}", "body": " ".join(["word"] * 20)}
+        for i in range(1, 11)
+    ],
+})
+
 
 # --- score_templates: unit tests ---
 
@@ -212,7 +240,12 @@ def test_hierarchical_content_scores_hierarchical_template_higher(tmp_path):
     assert any("hierarchical" in reason for reason in by_name["hierarchy-tpl"]["reasons"])
 
 
-def test_narrative_baseline_only_fires_without_structural_signal(tmp_path):
+def test_narrative_fires_for_pure_prose_with_no_records(tmp_path):
+    # Renamed from test_narrative_baseline_only_fires_without_structural_signal:
+    # narrative is no longer a fallback that's suppressed by any co-firing
+    # structural bonus (there's no structural signal in this content to
+    # suppress it with anyway). This now exercises the "no structured
+    # records at all" branch of the prose-dominance rule specifically.
     templates_root = tmp_path / "templates"
     make_template(templates_root, "narrative-tpl", content_kinds=["narrative"])
     make_template(templates_root, "photo-tpl", content_kinds=["photo-heavy"])
@@ -228,6 +261,64 @@ def test_narrative_baseline_only_fires_without_structural_signal(tmp_path):
     assert by_name["narrative-tpl"]["score"] > 0
     assert by_name["photo-tpl"]["score"] == 0
     assert ranked[0]["name"] == "narrative-tpl"
+    assert any("prose-dominant" in reason for reason in by_name["narrative-tpl"]["reasons"])
+
+
+def test_prose_dominant_sidecar_ranks_narrative_over_tabular(tmp_path):
+    # The flaw this module fixes: a prose-heavy document (a briefing-style
+    # memo) that merely CONTAINS a small structured sidecar (a 2-record
+    # `stats` list) must still read as narrative, not tabular-data, because
+    # the prose (150 words) dominates the sidecar (2 records). Narrative
+    # must be able to co-fire alongside -- and outscore -- tabular-data,
+    # not be suppressed by it.
+    templates_root = tmp_path / "templates"
+    make_template(
+        templates_root, "narrative-tpl", keywords=["memo", "status"], content_kinds=["narrative"]
+    )
+    make_template(templates_root, "table-tpl", content_kinds=["tabular-data"])
+    templates = [
+        ("narrative-tpl", templates_root / "narrative-tpl"),
+        ("table-tpl", templates_root / "table-tpl"),
+    ]
+    content = write_content(tmp_path, "content.yaml", SIDECAR_NARRATIVE_CONTENT_YAML)
+
+    first = score_templates(content, templates)
+    second = score_templates(content, templates)
+    assert first == second  # determinism preserved with the new signal
+
+    ranked, _warnings = first
+    by_name = {r["name"]: r for r in ranked}
+
+    assert any("tabular-data" in reason for reason in by_name["table-tpl"]["reasons"])
+    assert any("prose-dominant" in reason for reason in by_name["narrative-tpl"]["reasons"])
+    assert by_name["narrative-tpl"]["score"] > by_name["table-tpl"]["score"]
+    assert ranked[0]["name"] == "narrative-tpl"
+
+
+def test_many_records_little_prose_still_ranks_tabular_over_narrative(tmp_path):
+    # The other side of the same rule: a genuinely tabular document where
+    # every record happens to carry a short caption (200 words of prose
+    # total, comfortably over NARRATIVE_MIN_WORDS) must NOT read as
+    # narrative just because the raw word count crosses that floor --
+    # spread across 10 records, it's 20 words/record, too thin to call
+    # prose-dominant. This is what protects a real timeline (many dated
+    # entries, each with a short body) from being mis-scored as narrative.
+    templates_root = tmp_path / "templates"
+    make_template(templates_root, "narrative-tpl", content_kinds=["narrative"])
+    make_template(templates_root, "table-tpl", content_kinds=["tabular-data"])
+    templates = [
+        ("narrative-tpl", templates_root / "narrative-tpl"),
+        ("table-tpl", templates_root / "table-tpl"),
+    ]
+    content = write_content(tmp_path, "content.json", MANY_RECORDS_LITTLE_PROSE_CONTENT_JSON)
+
+    ranked, _warnings = score_templates(content, templates)
+    by_name = {r["name"]: r for r in ranked}
+
+    assert by_name["narrative-tpl"]["score"] == 0
+    assert by_name["narrative-tpl"]["reasons"] == []
+    assert by_name["table-tpl"]["score"] > by_name["narrative-tpl"]["score"]
+    assert ranked[0]["name"] == "table-tpl"
 
 
 def test_keyword_match_adds_score_and_reason(tmp_path):

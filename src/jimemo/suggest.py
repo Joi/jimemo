@@ -25,10 +25,12 @@ import yaml  # noqa: E402
 
 # --- Weights -------------------------------------------------------------
 # Points added to a template's score when a content signal fires and the
-# template's suitability.content_kinds declares the matching kind. The
-# four structural signals are independent and may co-fire (a dated photo
-# timeline is both photo-heavy and chronological); `narrative` alone is a
-# fallback that only applies when none of the structural signals fired.
+# template's suitability.content_kinds declares the matching kind. All
+# five content_kind signals are independent and may co-fire (a dated photo
+# timeline is both photo-heavy and chronological; a briefing memo with a
+# stats sidecar is both narrative and, weakly, tabular-data) -- ranking is
+# decided by which template's declared kinds line up with the strongest
+# combination of bonuses, not by any one signal suppressing another.
 # content_kind values match the vocabulary in jimemo.manifest.CONTENT_KINDS.
 #
 #   constant                      | content signal                          | content_kind
@@ -42,8 +44,15 @@ import yaml  # noqa: E402
 #                                  |   >= 2 objects (records)                |
 #   HIERARCHICAL_MIN_DEPTH/       | nesting depth >= threshold              | hierarchical
 #     _BONUS                      |                                         |
-#   NARRATIVE_BASELINE_BONUS /    | none of the above fired, and word count | narrative
-#     NARRATIVE_MIN_WORDS         |   >= threshold (substantial prose)      |
+#   NARRATIVE_MIN_WORDS /         | prose (the markdown `body` slot, plus   | narrative
+#     NARRATIVE_WORDS_PER_RECORD/ |   any nested `body` fields inside       |
+#     _BONUS                      |   data-slot list items) is substantial  |
+#                                  |   (>= threshold words) AND dominates    |
+#                                  |   the content -- either there are no    |
+#                                  |   structured records at all, or there   |
+#                                  |   are few enough words-per-record that  |
+#                                  |   the records read as a small sidecar   |
+#                                  |   rather than the point of the document |
 #   KEYWORD_MATCH_BONUS           | per case-folded suitability.keywords    | (any)
 #                                  |   entry found as a substring of the     |
 #                                  |   content text                          |
@@ -63,7 +72,8 @@ HIERARCHICAL_MIN_DEPTH = 3
 HIERARCHICAL_BONUS = 3.0
 
 NARRATIVE_MIN_WORDS = 120
-NARRATIVE_BASELINE_BONUS = 1.0
+NARRATIVE_WORDS_PER_RECORD_THRESHOLD = 30
+NARRATIVE_BONUS = 2.0
 
 KEYWORD_MATCH_BONUS = 1.0
 
@@ -182,15 +192,42 @@ def _sum_photo_arrays(value: Any) -> int:
     return total
 
 
-def _has_tabular_shape(raw: Dict[str, Any]) -> bool:
-    for value in raw.values():
-        if (
-            isinstance(value, list)
-            and len(value) >= TABULAR_MIN_RECORDS
-            and all(isinstance(item, dict) for item in value)
-        ):
-            return True
-    return False
+def _top_level_record_counts(raw: Dict[str, Any]) -> List[int]:
+    """Length of every top-level slot value that is a list of objects
+    (records) -- e.g. a `stats` or `rows` slot. Feeds both the
+    tabular-data signal (any list >= TABULAR_MIN_RECORDS) and the
+    narrative prose-dominance signal (which needs a record *count* to
+    weigh prose against), so both share one walk of the content."""
+    return [
+        len(value)
+        for value in raw.values()
+        if isinstance(value, list) and value and all(isinstance(item, dict) for item in value)
+    ]
+
+
+def _prose_word_count(value: Any) -> int:
+    """Word count of this content's actual prose: the markdown `body`
+    slot (the free-standing article text of an .md content file, per
+    `_load_raw_content`) plus any nested `body` field found inside a
+    data-slot item (e.g. a briefing's `sections[].body`, a timeline's
+    `events[].body`). Deliberately narrower than "every string in the
+    content" -- short structural strings (labels, headings, table cells,
+    a one-paragraph `intro`) are not prose for this signal's purposes;
+    otherwise every content file with a sentence of description would
+    look narrative."""
+    total = 0
+    if isinstance(value, dict):
+        body = value.get("body")
+        if isinstance(body, str):
+            total += len(WORD_RE.findall(body))
+        for key, v in value.items():
+            if key == "body":
+                continue
+            total += _prose_word_count(v)
+    elif isinstance(value, list):
+        for item in value:
+            total += _prose_word_count(item)
+    return total
 
 
 def _depth_of(value: Any) -> int:
@@ -219,15 +256,19 @@ def _kind_bonuses(
     date_count: int,
     tabular: bool,
     depth: int,
-    word_count: int,
+    prose_words: int,
+    record_count: int,
 ) -> List[Tuple[str, float, str]]:
     """Content_kind -> (bonus, reason) for every kind this content matches.
-    The structural signals (photo-heavy, chronological, tabular-data,
-    hierarchical) are independent and can co-fire -- e.g. a dated photo
-    timeline is legitimately both photo-heavy and chronological.
-    `narrative` is the exception: a pure fallback that only fires when
-    none of the structural signals did, so a content file with 6 photos
-    and no other structure reads as photo-heavy, not narrative."""
+    All five signals are independent and can co-fire -- e.g. a dated photo
+    timeline is legitimately both photo-heavy and chronological, and a
+    briefing memo with a small stats sidecar is legitimately both
+    narrative and (weakly) tabular-data. `narrative` fires whenever prose
+    dominates the content: there's a substantial amount of it (>=
+    NARRATIVE_MIN_WORDS), and either there are no structured records to
+    compete with it, or the records present are sparse relative to how
+    much prose accompanies them (a small sidecar, not the point of the
+    document) -- see NARRATIVE_WORDS_PER_RECORD_THRESHOLD."""
     bonuses: List[Tuple[str, float, str]] = []
 
     if image_count >= PHOTO_HEAVY_IMAGE_THRESHOLD:
@@ -246,10 +287,14 @@ def _kind_bonuses(
         bonuses.append(
             ("hierarchical", HIERARCHICAL_BONUS, f"nesting depth {depth} -> hierarchical")
         )
-    if not bonuses and word_count >= NARRATIVE_MIN_WORDS:
+    prose_dominant = prose_words >= NARRATIVE_MIN_WORDS and (
+        record_count == 0
+        or prose_words >= record_count * NARRATIVE_WORDS_PER_RECORD_THRESHOLD
+    )
+    if prose_dominant:
         bonuses.append(
-            ("narrative", NARRATIVE_BASELINE_BONUS,
-             f"{word_count} words, no strong structural signal -> narrative")
+            ("narrative", NARRATIVE_BONUS,
+             f"prose-dominant ({prose_words} words, {record_count} records) -> narrative")
         )
 
     return bonuses
@@ -302,11 +347,15 @@ def score_templates(
         + _sum_photo_arrays(raw)
     )
     date_count = _count_date_values(raw)
-    tabular = _has_tabular_shape(raw)
+    record_counts = _top_level_record_counts(raw)
+    tabular = any(n >= TABULAR_MIN_RECORDS for n in record_counts)
     depth = _max_depth(raw)
-    word_count = len(WORD_RE.findall(blob))
+    prose_words = _prose_word_count(raw)
+    record_count = sum(record_counts)
 
-    kind_bonuses = _kind_bonuses(raw, image_count, date_count, tabular, depth, word_count)
+    kind_bonuses = _kind_bonuses(
+        raw, image_count, date_count, tabular, depth, prose_words, record_count
+    )
 
     results: List[Dict[str, Any]] = []
     warnings: List[str] = []
