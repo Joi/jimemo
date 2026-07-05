@@ -80,6 +80,7 @@ def cmd_list(args) -> int:
 
 
 def _do_render(template_dir: Path, content_path: Path, args) -> int:
+    out_path = Path(args.out) if args.out else Path("dist") / f"{content_path.stem}.html"
     try:
         manifest = load_manifest(template_dir)
         content = load_content(content_path, manifest)
@@ -89,12 +90,11 @@ def _do_render(template_dir: Path, content_path: Path, args) -> int:
             args.theme,
             base_dir=content_path.resolve().parent,
         )
+        write_output(html, out_path)
     except (ManifestError, ContentError) as e:
         print(str(e), file=sys.stderr)
         return 1
 
-    out_path = Path(args.out) if args.out else Path("dist") / f"{content_path.stem}.html"
-    write_output(html, out_path)
     print(f"wrote {out_path}")
 
     if args.open:
@@ -125,18 +125,45 @@ def cmd_render(args) -> int:
         if not ranked:
             print("no usable templates", file=sys.stderr)
             return 1
-        top = ranked[0]
-        tied = [r["name"] for r in ranked[1:] if r["score"] == top["score"]]
-        reason = top["reasons"][0] if top["reasons"] else "no distinguishing signal; alphabetical default"
+        # Best score wins, but only among templates that can actually
+        # take this content: the top scorer may require slots the
+        # content doesn't have (or vice versa), so walk the ranking and
+        # pick the first template whose manifest loads the content.
+        chosen = None
+        chosen_idx = 0
+        tried = []
+        for idx, entry in enumerate(ranked):
+            candidate_dir = templates_by_name[entry["name"]]
+            try:
+                load_content(content_path, load_manifest(candidate_dir))
+            except (ManifestError, ContentError) as e:
+                tried.append(entry["name"])
+                print(
+                    f"auto: skipping {entry['name']} (content does not fit): {e}",
+                    file=sys.stderr,
+                )
+                continue
+            chosen = entry
+            chosen_idx = idx
+            break
+        if chosen is None:
+            print(
+                "no template accepts this content; tried (best score first): "
+                + ", ".join(tried),
+                file=sys.stderr,
+            )
+            return 1
+        tied = [r["name"] for r in ranked[chosen_idx + 1:] if r["score"] == chosen["score"]]
+        reason = chosen["reasons"][0] if chosen["reasons"] else "no distinguishing signal; alphabetical default"
         if tied:
             print(
-                f"auto-selected {top['name']} (tie broken alphabetically; "
+                f"auto-selected {chosen['name']} (tie broken alphabetically; "
                 f"also tied: {', '.join(tied)}): {reason}",
                 file=sys.stderr,
             )
         else:
-            print(f"auto-selected {top['name']}: {reason}", file=sys.stderr)
-        template_dir = templates_by_name[top["name"]]
+            print(f"auto-selected {chosen['name']}: {reason}", file=sys.stderr)
+        template_dir = templates_by_name[chosen["name"]]
     else:
         template_dir = templates_by_name.get(args.template)
         if template_dir is None:

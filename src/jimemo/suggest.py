@@ -110,7 +110,11 @@ def _parse_frontmatter(path: Path, text: str) -> Tuple[Dict[str, Any], str]:
     fm_text = "".join(lines[1:closing])
     body = "".join(lines[closing + 1:])
 
-    parsed = yaml.safe_load(fm_text)
+    try:
+        parsed = yaml.safe_load(fm_text)
+    except yaml.YAMLError as e:
+        # str(e) on a MarkedYAMLError includes the line/column and problem.
+        raise ContentError(f"{path}: invalid YAML frontmatter: {e}") from e
     if parsed is None:
         parsed = {}
     if not isinstance(parsed, dict):

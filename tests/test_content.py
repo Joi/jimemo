@@ -109,6 +109,22 @@ def test_unterminated_frontmatter(tmp_path):
         load_content(f, MANIFEST)
 
 
+def test_malformed_yaml_frontmatter_raises_content_error(tmp_path):
+    # yaml.YAMLError must surface as a clean ContentError naming the
+    # file, not escape as a raw pyyaml traceback.
+    f = tmp_path / "brief.md"
+    f.write_text("---\ntitle: [unclosed\n---\nbody text\n")
+    with pytest.raises(ContentError, match=r"brief\.md.*YAML"):
+        load_content(f, MANIFEST)
+
+
+def test_malformed_yaml_file_raises_content_error(tmp_path):
+    f = tmp_path / "brief.yaml"
+    f.write_text("title: [unclosed\n")
+    with pytest.raises(ContentError, match=r"brief\.yaml.*YAML"):
+        load_content(f, MANIFEST)
+
+
 def test_data_slot_item_markdown_rendered(tmp_path):
     f = tmp_path / "brief.md"
     f.write_text(

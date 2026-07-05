@@ -124,6 +124,52 @@ def test_assemble_css_print_force_wins_over_theme_root_override(tmp_path, monkey
     assert css.index("PRINT-FORCE-MARKER") > css.index("THEME-MARKER")
 
 
+def test_inline_absolute_image_path_rejected(tmp_path):
+    # Content may be untrusted: ![](/etc/passwd) must never read and
+    # embed a file from outside the content directory.
+    template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
+    content_dir = tmp_path / "content"
+    content_dir.mkdir()
+    content = {"title": "Hello", "body": Markup("<p>World</p>"), "image": "/etc/passwd"}
+
+    with pytest.raises(ContentError, match=r"/etc/passwd.*absolute"):
+        render_page(template_dir, content, base_dir=content_dir)
+
+
+def test_inline_dotdot_escape_rejected(tmp_path):
+    template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
+    content_dir = tmp_path / "content"
+    content_dir.mkdir()
+    # The target exists, so this would previously have been embedded.
+    (tmp_path / "secret.png").write_bytes(TINY_PNG)
+    content = {"title": "Hello", "body": Markup("<p>World</p>"), "image": "../secret.png"}
+
+    with pytest.raises(ContentError, match=r"\.\./secret\.png.*escapes"):
+        render_page(template_dir, content, base_dir=content_dir)
+
+
+def test_inline_non_image_extension_rejected(tmp_path):
+    template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
+    content_dir = tmp_path / "content"
+    content_dir.mkdir()
+    (content_dir / "notes.txt").write_text("not an image")
+    content = {"title": "Hello", "body": Markup("<p>World</p>"), "image": "notes.txt"}
+
+    with pytest.raises(ContentError, match=r"notes\.txt.*image type"):
+        render_page(template_dir, content, base_dir=content_dir)
+
+
+def test_inline_subdirectory_image_within_base_dir_works(tmp_path):
+    template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
+    content_dir = tmp_path / "content"
+    (content_dir / "img").mkdir(parents=True)
+    (content_dir / "img" / "x.png").write_bytes(TINY_PNG)
+    content = {"title": "Hello", "body": Markup("<p>World</p>"), "image": "img/x.png"}
+
+    html = render_page(template_dir, content, base_dir=content_dir)
+    assert "data:image/png;base64," in html
+
+
 def test_render_page_missing_local_image_raises(tmp_path):
     template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
     content_dir = tmp_path / "content"
@@ -151,6 +197,34 @@ def test_write_output_creates_parent_dirs(tmp_path):
     out_path = tmp_path / "nested" / "dir" / "page.html"
     write_output("<html></html>", out_path)
     assert out_path.read_text(encoding="utf-8") == "<html></html>"
+
+
+def test_write_output_unwritable_path_raises_content_error(tmp_path):
+    # A regular file where a parent directory is needed: mkdir fails with
+    # an OSError, which must surface as a clean ContentError, not a traceback.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("i am a file, not a directory")
+    out_path = blocker / "page.html"
+
+    with pytest.raises(ContentError, match="cannot write output"):
+        write_output("<html></html>", out_path)
+
+
+def test_render_prose_with_lint_lookalike_text_still_renders(tmp_path):
+    # Regression for the regex-based lint false-failing on escaped TEXT:
+    # "one = done" matched the on*= handler pattern and "javascript:"
+    # matched the scheme pattern even inside inert prose.
+    template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
+    content = {
+        "title": "Hello",
+        "body": Markup(
+            "<p>phase one = done</p>"
+            "<p>never write onclick = x by hand</p>"
+            "<p>javascript: is bad in URLs</p>"
+        ),
+    }
+    html = render_page(template_dir, content)
+    assert "phase one = done" in html
 
 
 # --- CLI integration ---
@@ -190,6 +264,37 @@ def test_cli_render_lint_error_writes_no_file(tmp_path, monkeypatch, capsys):
     assert rc == 1
     assert not out_path.exists()
     assert "script" in capsys.readouterr().err
+
+
+def test_cli_render_unwritable_output_exits_1_cleanly(tmp_path, monkeypatch, capsys):
+    template_dir = make_template_dir(tmp_path / "templates", "test-tpl", BASIC_TEMPLATE)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [tmp_path / "templates"])
+
+    content_file = tmp_path / "content.md"
+    content_file.write_text("---\ntitle: From CLI\n---\nBody text.\n")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("i am a file, not a directory")
+
+    rc = cli.main(["render", "test-tpl", str(content_file), "-o", str(blocker / "out.html")])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "cannot write output" in err
+    assert "Traceback" not in err
+
+
+def test_cli_render_malformed_frontmatter_exits_1_cleanly(tmp_path, monkeypatch, capsys):
+    make_template_dir(tmp_path / "templates", "test-tpl", BASIC_TEMPLATE)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [tmp_path / "templates"])
+
+    content_file = tmp_path / "content.md"
+    content_file.write_text("---\ntitle: [unclosed\n---\nBody text.\n")
+
+    rc = cli.main(["render", "test-tpl", str(content_file)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "content.md" in err
+    assert "YAML" in err
+    assert "Traceback" not in err
 
 
 def test_cli_render_auto_no_templates_exits_1(tmp_path, monkeypatch, capsys):

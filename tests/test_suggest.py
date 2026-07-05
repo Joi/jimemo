@@ -40,6 +40,7 @@ def make_template(
     content_kinds=None,
     stale: bool = False,
     source: str = FAKE_TEMPLATE_SOURCE,
+    slots=None,
 ) -> Path:
     template_dir = templates_root / name
     template_dir.mkdir(parents=True)
@@ -50,7 +51,7 @@ def make_template(
         "name": name,
         "version": 1,
         "title": name.replace("-", " ").title(),
-        "slots": {
+        "slots": slots or {
             "title": {"type": "text", "required": True},
             "body": {"type": "markdown", "required": True},
         },
@@ -548,6 +549,67 @@ def test_cli_render_auto_all_broken_templates_exits_1(tmp_path, monkeypatch, cap
     err = capsys.readouterr().err
     assert "skipping template 'broken-tpl'" in err
     assert "no usable templates" in err
+
+
+def test_cli_render_auto_falls_through_to_compatible_template(tmp_path, monkeypatch, capsys):
+    # Both score 0 (no signals), so the alphabetical tie puts aaa-tpl
+    # first — but it requires an `images` slot this content lacks, so
+    # auto must fall through to the compatible bbb-tpl instead of dying
+    # on the top scorer.
+    templates_root = tmp_path / "templates"
+    make_template(
+        templates_root,
+        "aaa-tpl",
+        slots={"images": {"type": "data", "required": True}},
+    )
+    make_template(templates_root, "bbb-tpl", source=RENDERABLE_TEMPLATE_SOURCE)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_root])
+
+    content = write_content(tmp_path, "content.md", "---\ntitle: X\n---\nSome body prose.\n")
+    out_path = tmp_path / "out.html"
+    rc = cli.main(["render", "auto", str(content), "-o", str(out_path)])
+
+    assert rc == 0
+    assert out_path.is_file()
+    err = capsys.readouterr().err
+    assert "auto: skipping aaa-tpl" in err
+    assert "auto-selected bbb-tpl" in err
+
+
+def test_cli_render_auto_no_compatible_template_exits_1(tmp_path, monkeypatch, capsys):
+    templates_root = tmp_path / "templates"
+    make_template(
+        templates_root,
+        "aaa-tpl",
+        slots={"images": {"type": "data", "required": True}},
+    )
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_root])
+
+    content = write_content(tmp_path, "content.md", "---\ntitle: X\n---\nSome body prose.\n")
+    rc = cli.main(["render", "auto", str(content), "-o", str(tmp_path / "out.html")])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no template accepts this content" in err
+    assert "aaa-tpl" in err
+    assert "Traceback" not in err
+
+
+def test_cli_suggest_malformed_frontmatter_exits_1_cleanly(tmp_path, monkeypatch, capsys):
+    # suggest's own .md frontmatter parse (suggest._load_raw_content) must
+    # wrap yaml errors the same way content.py does.
+    templates_root = tmp_path / "templates"
+    make_template(templates_root, "some-tpl")
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_root])
+
+    content = write_content(tmp_path, "content.md", "---\ntitle: [unclosed\n---\nbody\n")
+    rc = cli.main(["suggest", str(content)])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "content.md" in err
+    assert "YAML" in err
+    assert "Traceback" not in err
 
 
 def test_cli_render_auto_tie_break_disclosed_in_stderr(tmp_path, monkeypatch, capsys):
