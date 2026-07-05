@@ -78,6 +78,16 @@ def test_on_attributes_stripped_even_on_allowlisted_tags():
     assert out == '<td align="left">c</td>'
 
 
+def test_fenced_code_language_class_preserved():
+    src = '<pre><code class="language-python">x = 1</code></pre>'
+    assert sanitize_html(src) == src
+
+
+def test_non_language_code_class_dropped():
+    assert sanitize_html('<code class="hljs">x</code>') == "<code>x</code>"
+    assert sanitize_html('<code class="language-py onclick=alert(1)">x</code>') == "<code>x</code>"
+
+
 def test_table_alignment_style_preserved():
     for align in ("left", "center", "right"):
         cell = '<th style="text-align: {0};">H</th>'.format(align)
@@ -137,6 +147,18 @@ def test_img_src_data_image_allowed_but_not_other_data():
     keep = '<img src="data:image/png;base64,AAAA" />'
     assert sanitize_html('<img src="data:image/png;base64,AAAA">') == keep
     assert sanitize_html('<img src="data:text/html;base64,PHNjcmlwdD4=">') == "<img />"
+
+
+def test_img_src_data_image_svg_xml_rejected_other_image_subtypes_kept():
+    # SVG is the one image subtype that can itself carry markup/script;
+    # <img> never executes it, but it's excluded as defense in depth.
+    # Other data:image/ subtypes (png, jpeg, ...) are unaffected.
+    assert sanitize_html('<img src="data:image/svg+xml,<svg onload=alert(1)>">') == "<img />"
+    assert sanitize_html('<img src="data:image/svg+xml;base64,PHN2Zz4=">') == "<img />"
+    assert (
+        sanitize_html('<img src="data:image/jpeg;base64,AAAA">')
+        == '<img src="data:image/jpeg;base64,AAAA" />'
+    )
 
 
 def test_data_uri_not_allowed_on_a_href():

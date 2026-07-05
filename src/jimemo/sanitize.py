@@ -12,14 +12,19 @@ else. Pure stdlib (html.parser); no vendored dependency.
 Rules:
   * Tags outside ALLOWED_TAGS are unwrapped (tag dropped, children
     kept), except DISCARD_TAGS whose entire subtree is removed.
-  * Only ``a``, ``img``, ``th``/``td`` keep any attributes at all, per
-    ALLOWED_ATTRS; ``style`` on table cells must be exactly the
-    text-align rule python-markdown emits for column alignment.
+  * Only ``a``, ``img``, ``th``/``td``, ``code`` keep any attributes at
+    all, per ALLOWED_ATTRS; ``style`` on table cells must be exactly the
+    text-align rule python-markdown emits for column alignment; ``class``
+    on ``code`` must be exactly the ``language-*`` form the fenced_code
+    extension emits.
   * ``on*`` attributes are always stripped, on every tag.
   * ``href``/``src`` values are scheme-checked after entity decoding
     and whitespace/control stripping, so ``java&#09;script:`` and
     friends are rejected; only relative URLs, http(s), ``#fragment``,
-    ``mailto:`` (href) and ``data:image/`` (img src) survive.
+    ``mailto:`` (href) and ``data:image/`` other than ``svg+xml`` (img
+    src) survive — SVG is the one image subtype that can itself carry
+    markup/script, so it's excluded even though ``<img>`` never executes
+    it, as defense in depth.
 """
 import html
 import re
@@ -50,11 +55,16 @@ ALLOWED_ATTRS = {
     "img": frozenset({"src", "alt", "title"}),
     "th": frozenset({"align", "style"}),
     "td": frozenset({"align", "style"}),
+    "code": frozenset({"class"}),
 }
 
 # The one style python-markdown's tables extension emits for column
 # alignment. Anything else on a cell is dropped.
 _TEXT_ALIGN_RE = re.compile(r"^\s*text-align:\s*(left|right|center);?\s*$")
+
+# The `class` python-markdown's fenced_code extension emits to carry the
+# language hint (e.g. `class="language-python"`). Anything else is dropped.
+_FENCED_CODE_LANG_RE = re.compile(r"^language-[\w-]+$")
 
 
 def _url_allowed(value: str, *, allow_mailto: bool, allow_data_image: bool) -> bool:
@@ -77,7 +87,12 @@ def _url_allowed(value: str, *, allow_mailto: bool, allow_data_image: bool) -> b
         return True
     if scheme == "mailto" and allow_mailto:
         return True
-    if scheme == "data" and allow_data_image and compact.startswith("data:image/"):
+    if (
+        scheme == "data"
+        and allow_data_image
+        and compact.startswith("data:image/")
+        and not compact.startswith("data:image/svg+xml")
+    ):
         return True
     return False
 
@@ -111,6 +126,9 @@ class _Sanitizer(HTMLParser):
                     continue
             elif tag == "img" and name == "src":
                 if not _url_allowed(value, allow_mailto=False, allow_data_image=True):
+                    continue
+            elif tag == "code" and name == "class":
+                if not _FENCED_CODE_LANG_RE.match(value):
                     continue
             elif name == "style":  # only reachable on th/td
                 if not _TEXT_ALIGN_RE.match(value):
