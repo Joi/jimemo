@@ -14,6 +14,7 @@ from .errors import ContentError, ManifestError, ScaffoldError
 from .manifest import load_manifest
 from .render import render_page, write_output
 from .scaffold import create_template
+from .suggest import is_stale_labels, score_templates
 
 PYTHON_FLOOR = (3, 9)
 
@@ -49,6 +50,21 @@ def cmd_doctor(args) -> int:
             print(f"FAIL vendored imports: {e}")
             ok = False
 
+    stale_names = []
+    for name, template_dir in find_templates(default_search_dirs()):
+        try:
+            manifest = load_manifest(template_dir)
+        except ManifestError:
+            continue
+        if is_stale_labels(manifest, template_dir):
+            stale_names.append(name)
+    if stale_names:
+        for name in stale_names:
+            print(f"WARNING stale suitability labels: {name} "
+                  "(template.html.j2 changed since labeling; re-run suggest tuning)")
+    else:
+        print("ok   suitability labels fresh (or none recorded)")
+
     return 0 if ok else 1
 
 
@@ -63,22 +79,7 @@ def cmd_list(args) -> int:
     return 0
 
 
-def cmd_render(args) -> int:
-    if args.template == "auto":
-        print("render auto requires suggest (coming in this phase)", file=sys.stderr)
-        return 2
-
-    templates = dict(find_templates(default_search_dirs()))
-    template_dir = templates.get(args.template)
-    if template_dir is None:
-        print(f"unknown template: {args.template!r}", file=sys.stderr)
-        return 1
-
-    content_path = Path(args.content)
-    if not content_path.is_file():
-        print(f"content file not found: {content_path}", file=sys.stderr)
-        return 1
-
+def _do_render(template_dir: Path, content_path: Path, args) -> int:
     try:
         manifest = load_manifest(template_dir)
         content = load_content(content_path, manifest)
@@ -98,6 +99,68 @@ def cmd_render(args) -> int:
 
     if args.open:
         webbrowser.open(out_path.resolve().as_uri())
+
+    return 0
+
+
+def cmd_render(args) -> int:
+    content_path = Path(args.content)
+    templates = find_templates(default_search_dirs())
+    templates_by_name = dict(templates)
+
+    if args.template == "auto":
+        if not templates:
+            print("no templates to choose from", file=sys.stderr)
+            return 1
+        if not content_path.is_file():
+            print(f"content file not found: {content_path}", file=sys.stderr)
+            return 1
+        try:
+            ranked = score_templates(content_path, templates)
+        except (ManifestError, ContentError) as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        top = ranked[0]
+        reason = top["reasons"][0] if top["reasons"] else "no distinguishing signal; alphabetical default"
+        print(f"auto-selected {top['name']}: {reason}", file=sys.stderr)
+        template_dir = templates_by_name[top["name"]]
+    else:
+        template_dir = templates_by_name.get(args.template)
+        if template_dir is None:
+            print(f"unknown template: {args.template!r}", file=sys.stderr)
+            return 1
+        if not content_path.is_file():
+            print(f"content file not found: {content_path}", file=sys.stderr)
+            return 1
+
+    return _do_render(template_dir, content_path, args)
+
+
+def cmd_suggest(args) -> int:
+    content_path = Path(args.content)
+    if not content_path.is_file():
+        print(f"content file not found: {content_path}", file=sys.stderr)
+        return 1
+
+    templates = find_templates(default_search_dirs())
+    try:
+        ranked = score_templates(content_path, templates)
+    except (ManifestError, ContentError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(ranked, indent=2))
+        return 0
+
+    if not ranked:
+        print("no templates available to suggest")
+        return 0
+
+    for rank, entry in enumerate(ranked[:3], start=1):
+        print(f"{rank}. {entry['name']}  (score {entry['score']})")
+        for reason in entry["reasons"]:
+            print(f"     - {reason}")
 
     return 0
 
@@ -220,6 +283,10 @@ def main(argv=None) -> int:
     new_template_p = sub.add_parser("new-template", help="scaffold a new personal template")
     new_template_p.add_argument("name", help="template name (lowercase letters, digits, hyphens)")
 
+    suggest_p = sub.add_parser("suggest", help="rank templates by fit for a content file")
+    suggest_p.add_argument("content", help="content file (.md, .json, or .yaml)")
+    suggest_p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
@@ -232,6 +299,8 @@ def main(argv=None) -> int:
         return cmd_info(args)
     if args.command == "new-template":
         return cmd_new_template(args)
+    if args.command == "suggest":
+        return cmd_suggest(args)
 
     parser.print_usage(sys.stderr)
     return 2

@@ -192,12 +192,13 @@ def test_cli_render_lint_error_writes_no_file(tmp_path, monkeypatch, capsys):
     assert "script" in capsys.readouterr().err
 
 
-def test_cli_render_auto_errors_exit_2(tmp_path, capsys):
+def test_cli_render_auto_no_templates_exits_1(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [tmp_path / "templates"])
     content_file = tmp_path / "content.md"
     content_file.write_text("---\ntitle: X\n---\nbody\n")
     rc = cli.main(["render", "auto", str(content_file)])
-    assert rc == 2
-    assert "coming in this phase" in capsys.readouterr().err
+    assert rc == 1
+    assert "no templates to choose from" in capsys.readouterr().err
 
 
 def test_cli_render_unknown_template(tmp_path, monkeypatch):
@@ -206,3 +207,21 @@ def test_cli_render_unknown_template(tmp_path, monkeypatch):
     content_file.write_text("---\ntitle: X\n---\nbody\n")
     rc = cli.main(["render", "nope", str(content_file)])
     assert rc == 1
+
+
+def test_render_page_undefined_template_value_raises_content_error(tmp_path):
+    undefined_template = BASIC_TEMPLATE.replace(
+        "{{ ui.stat_tile(\"42\", \"Answer\") }}", "{{ no_such_value }}"
+    )
+    template_dir = make_template_dir(tmp_path, "undef-tpl", undefined_template)
+    content = {"title": "Hello", "body": Markup("<p>World</p>")}
+
+    with pytest.raises(ContentError, match="undefined"):
+        render_page(template_dir, content)
+
+
+def test_assemble_css_unknown_component_raises_manifest_error():
+    from jimemo.errors import ManifestError
+
+    with pytest.raises(ManifestError, match="no-such-component"):
+        assemble_css({"components": ["no-such-component"]})
