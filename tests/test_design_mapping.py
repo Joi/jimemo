@@ -133,6 +133,23 @@ def test_build_theme_rejects_injection_shaped_token_name():
         build_theme(export, "evil")
 
 
+def test_build_theme_rejects_reserved_jm_prefix_token_name():
+    # Regression: a source token literally named a jm role (e.g.
+    # --jm-bg) would make mapping emit a self-referential
+    # `--jm-bg: var(--jm-bg)` if picked as that role's source, or
+    # silently override the role via the raw re-declaration either way.
+    # The reserved-prefix check in validate_token_name (called from this
+    # same loop) closes that off before either can happen.
+    export = DesignExport(
+        tokens=[Token(name="--jm-bg", value="#111111", kind="color")],
+        fonts=[],
+        brand_fonts=[],
+        namespace="Evil",
+    )
+    with pytest.raises(DesignImportError, match="reserved"):
+        build_theme(export, "evil")
+
+
 def test_build_theme_rejects_comment_breakout_namespace():
     export = DesignExport(
         tokens=[Token(name="--ok", value="#111111", kind="color")],

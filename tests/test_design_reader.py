@@ -280,6 +280,31 @@ def test_valid_token_name_accepted(tmp_path):
     assert export.tokens[0].name == "--ct-black"
 
 
+@pytest.mark.parametrize(
+    "reserved_name",
+    [
+        "--jm-bg",
+        "--JM-accent",
+        "--jm-anything",
+    ],
+)
+def test_reserved_jm_prefix_token_name_rejected(tmp_path, reserved_name):
+    # --jm- is jimemo's own role-token namespace; an imported token
+    # claiming it would silently override a toolkit role (raw
+    # re-declaration) or produce a self-referential var() (if mapping
+    # picked it as a role's source) -- rejected outright instead.
+    export_dir = _manifest_with_token_value(tmp_path, "#111111", name=reserved_name)
+    with pytest.raises(DesignImportError, match="reserved"):
+        read_export(export_dir)
+
+
+@pytest.mark.parametrize("normal_name", ["--ct-black", "--brand-blue"])
+def test_non_reserved_token_name_accepted(tmp_path, normal_name):
+    export_dir = _manifest_with_token_value(tmp_path, "#111111", name=normal_name)
+    export = read_export(export_dir)
+    assert export.tokens[0].name == normal_name
+
+
 def test_css_fallback_cannot_extract_an_injection_shaped_name(tmp_path):
     # The fallback scanner's regex shares validate_token_name's charset,
     # so a hostile name in raw CSS never even parses as a token.

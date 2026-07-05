@@ -565,6 +565,16 @@ _TOKEN_NAME_RE = re.compile(r"^" + _TOKEN_NAME_BODY + r"\Z")
 # case on the CSS-fallback path).
 _NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_-]*\Z")
 
+# jimemo's own semantic role tokens (--jm-bg, --jm-accent, --jm-font-prose,
+# ...) all live under this prefix -- reserved for the toolkit, never for an
+# import. Letting an imported token claim it would either silently override
+# a role via the raw re-declaration (an export naming a token `--jm-accent`
+# hijacks the theme) or, if mapping picked that same name as a role's
+# source, emit a self-referential `--jm-bg: var(--jm-bg)`. An export has no
+# legitimate reason to define jimemo's own roles, so this fails closed
+# rather than trying to re-namespace the collision.
+_RESERVED_TOKEN_PREFIX = "--jm-"
+
 
 def validate_token_name(name: str) -> None:
     """Reject a token name that isn't a plain `--ident` CSS custom
@@ -577,12 +587,21 @@ def validate_token_name(name: str) -> None:
     css_reference_errors does not catch declaration/brace injection. On
     the CSS-fallback path _DECL_HEAD_RE can only ever extract a name
     matching this same charset; on the manifest path this check is the
-    only gate."""
+    only gate.
+
+    Also rejects (case-insensitively) any name starting with the
+    `--jm-` prefix reserved for jimemo's own theme roles -- see
+    `_RESERVED_TOKEN_PREFIX`."""
     if not _TOKEN_NAME_RE.match(name):
         raise DesignImportError(
             f"token name {name!r} is not a valid CSS custom property name "
             f"(expected '--' followed by letters/digits/_/-) -- refusing "
             f"to emit it into generated CSS"
+        )
+    if name.lower().startswith(_RESERVED_TOKEN_PREFIX):
+        raise DesignImportError(
+            f"token name {name!r} uses the reserved --jm- prefix (reserved "
+            f"for jimemo theme roles)"
         )
 
 
