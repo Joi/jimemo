@@ -21,14 +21,15 @@ Requires Python >= 3.9.
 
 ## Usage
 
-Five seed templates ship in `templates/`: `briefing`, `photo-catalog`,
-`timeline`, `genealogy`, `data-dashboard`.
+Six seed templates ship in `templates/`: `briefing`, `chart-dashboard`,
+`data-dashboard`, `genealogy`, `photo-catalog`, `timeline`.
 
 List what's available:
 
 ```
 $ jimemo list
 briefing	/path/to/jimemo/templates/briefing
+chart-dashboard	/path/to/jimemo/templates/chart-dashboard
 data-dashboard	/path/to/jimemo/templates/data-dashboard
 genealogy	/path/to/jimemo/templates/genealogy
 photo-catalog	/path/to/jimemo/templates/photo-catalog
@@ -92,6 +93,25 @@ A content file is either `.md` (YAML frontmatter for every slot except
 object keyed by slot name — see any `templates/<name>/sample/` for a real
 example. `out.html` is a single file: CSS and images inlined, nothing
 fetched at view time; open it directly in a browser.
+
+### Charts
+
+`chart-dashboard` renders headline stat tiles plus a line and a bar
+chart from tabular content:
+
+```
+$ jimemo render chart-dashboard templates/chart-dashboard/sample/content.yaml -o out.html
+wrote out.html
+```
+
+A template declares charts in its manifest (`charts: [{id, type,
+data_slot, title}]`); each chart reads its data from an ordinary
+schema-free `data` slot shaped `{labels: [...], series: [{name,
+values}]}` — no chart-specific content format to learn. Chart.js is
+vendored under `charts/vendor/chartjs/` and inlined into the page
+(no CDN, no network access at view time), so a chart-bearing `out.html`
+stays exactly what every other jimemo page is: one self-contained
+file you can open directly in a browser.
 
 Scaffold a new personal template under `~/.jimemo/templates/` (discovered
 alongside the repo's own):
