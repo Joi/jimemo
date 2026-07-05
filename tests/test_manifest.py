@@ -215,11 +215,109 @@ def test_non_string_component_element_named(tmp_path):
         load_manifest(template_dir)
 
 
-def test_non_string_chart_element_named(tmp_path):
+# --- chart declarations (Phase 4) ---
+
+CHART = {"id": "sales-chart", "type": "bar", "data_slot": "sections"}
+
+
+def test_valid_chart_declaration_loads(tmp_path):
     data = dict(VALID)
-    data["charts"] = [{"not": "a string"}]
+    data["charts"] = [dict(CHART, title="Sales by quarter")]
+    template_dir = write_manifest(tmp_path, data)
+    manifest = load_manifest(template_dir)
+    assert manifest["charts"] == [
+        {
+            "id": "sales-chart",
+            "type": "bar",
+            "data_slot": "sections",
+            "title": "Sales by quarter",
+        }
+    ]
+
+
+def test_chart_title_is_optional(tmp_path):
+    data = dict(VALID)
+    data["charts"] = [dict(CHART)]
+    template_dir = write_manifest(tmp_path, data)
+    assert load_manifest(template_dir)["charts"][0]["id"] == "sales-chart"
+
+
+def test_string_chart_element_rejected(tmp_path):
+    data = dict(VALID)
+    data["charts"] = ["bar-chart"]
     template_dir = write_manifest(tmp_path, data)
     with pytest.raises(ManifestError, match="charts"):
+        load_manifest(template_dir)
+
+
+@pytest.mark.parametrize("field", ["id", "type", "data_slot"])
+def test_chart_missing_required_field_named(tmp_path, field):
+    data = dict(VALID)
+    chart = dict(CHART)
+    del chart[field]
+    data["charts"] = [chart]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match=field):
+        load_manifest(template_dir)
+
+
+@pytest.mark.parametrize(
+    "bad_id", ["1chart", "my chart", "", "chart<img>", "-lead", 42]
+)
+def test_chart_bad_id_rejected(tmp_path, bad_id):
+    data = dict(VALID)
+    data["charts"] = [dict(CHART, id=bad_id)]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="'id'"):
+        load_manifest(template_dir)
+
+
+def test_chart_invalid_type_named(tmp_path):
+    data = dict(VALID)
+    data["charts"] = [dict(CHART, type="bubble")]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="bubble"):
+        load_manifest(template_dir)
+
+
+def test_chart_data_slot_undeclared_named(tmp_path):
+    data = dict(VALID)
+    data["charts"] = [dict(CHART, data_slot="no_such_slot")]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="no_such_slot"):
+        load_manifest(template_dir)
+
+
+def test_chart_data_slot_must_be_data_typed(tmp_path):
+    # 'title' is a text slot in VALID — a chart cannot be fed by it.
+    data = dict(VALID)
+    data["charts"] = [dict(CHART, data_slot="title")]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="type 'data'"):
+        load_manifest(template_dir)
+
+
+def test_chart_duplicate_id_rejected(tmp_path):
+    data = dict(VALID)
+    data["charts"] = [dict(CHART), dict(CHART, type="line")]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="duplicate"):
+        load_manifest(template_dir)
+
+
+def test_chart_unknown_field_named(tmp_path):
+    data = dict(VALID)
+    data["charts"] = [dict(CHART, on_click="alert(1)")]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="on_click"):
+        load_manifest(template_dir)
+
+
+def test_chart_non_string_title_named(tmp_path):
+    data = dict(VALID)
+    data["charts"] = [dict(CHART, title=7)]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="title"):
         load_manifest(template_dir)
 
 

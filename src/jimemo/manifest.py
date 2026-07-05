@@ -4,6 +4,7 @@ See docs/superpowers/plans/2026-07-05-jimemo-phase3-core.md, "Binding
 contracts", for the schema enforced here.
 """
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict
 
@@ -14,6 +15,10 @@ SLOT_TYPES = ("text", "markdown", "data")
 # with one of these names would be silently shadowed at render time.
 RESERVED_SLOT_NAMES = ("manifest", "styles", "theme")
 ITEM_TYPES = ("text", "markdown")
+CHART_TYPES = ("bar", "line", "pie", "doughnut", "radar", "scatter")
+CHART_FIELDS = ("id", "type", "data_slot", "title")
+# ASCII-only so a chart id is always a safe DOM id / macro argument.
+CHART_ID_RE = re.compile(r"^[a-zA-Z][\w-]*$", re.ASCII)
 CONTENT_KINDS = (
     "narrative",
     "photo-heavy",
@@ -105,10 +110,65 @@ def load_manifest(template_dir: Path) -> Dict[str, Any]:
     data.setdefault("charts", [])
     if not isinstance(data["charts"], list):
         raise ManifestError("manifest field 'charts' must be a list")
-    for item in data["charts"]:
-        if not isinstance(item, str):
+    seen_chart_ids = set()
+    for idx, chart in enumerate(data["charts"]):
+        if not isinstance(chart, dict):
             raise ManifestError(
-                f"manifest field 'charts' must be a list of strings, got {item!r}"
+                f"manifest charts[{idx}] must be an object with "
+                f"'id', 'type', and 'data_slot', got {chart!r}"
+            )
+        for field in ("id", "type", "data_slot"):
+            if field not in chart:
+                raise ManifestError(
+                    f"manifest charts[{idx}] missing required field {field!r}"
+                )
+        for key in chart:
+            if key not in CHART_FIELDS:
+                raise ManifestError(
+                    f"manifest charts[{idx}] has unknown field {key!r} "
+                    f"(allowed: {list(CHART_FIELDS)})"
+                )
+
+        chart_id = chart["id"]
+        if not isinstance(chart_id, str) or not CHART_ID_RE.match(chart_id):
+            raise ManifestError(
+                f"manifest charts[{idx}] 'id' must be a string matching "
+                f"{CHART_ID_RE.pattern} (a safe DOM id), got {chart_id!r}"
+            )
+        if chart_id in seen_chart_ids:
+            raise ManifestError(
+                f"manifest charts[{idx}] duplicate chart id {chart_id!r}"
+            )
+        seen_chart_ids.add(chart_id)
+
+        if chart["type"] not in CHART_TYPES:
+            raise ManifestError(
+                f"manifest charts[{idx}] ({chart_id!r}) has invalid type "
+                f"{chart['type']!r} (must be one of {list(CHART_TYPES)})"
+            )
+
+        data_slot = chart["data_slot"]
+        if not isinstance(data_slot, str):
+            raise ManifestError(
+                f"manifest charts[{idx}] ({chart_id!r}) 'data_slot' must be "
+                f"a string, got {data_slot!r}"
+            )
+        if data_slot not in slots:
+            raise ManifestError(
+                f"manifest charts[{idx}] ({chart_id!r}) 'data_slot' "
+                f"references undeclared slot {data_slot!r}"
+            )
+        if slots[data_slot].get("type") != "data":
+            raise ManifestError(
+                f"manifest charts[{idx}] ({chart_id!r}) 'data_slot' "
+                f"{data_slot!r} must reference a slot of type 'data', "
+                f"got type {slots[data_slot].get('type')!r}"
+            )
+
+        if "title" in chart and not isinstance(chart["title"], str):
+            raise ManifestError(
+                f"manifest charts[{idx}] ({chart_id!r}) 'title' must be "
+                f"a string, got {chart['title']!r}"
             )
 
     suitability = data.get("suitability", {})
