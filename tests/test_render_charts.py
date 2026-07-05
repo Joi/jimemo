@@ -227,6 +227,17 @@ def test_slot_named_charts_with_charts_declared_is_manifest_error(tmp_path):
         render_page(template_dir, {"title": "T", "sales_data": SALES_DATA})
 
 
+def test_slot_named_chart_lib_with_charts_declared_is_manifest_error(tmp_path):
+    manifest = CHART_MANIFEST.replace(
+        '"title": {"type": "text", "required": true},',
+        '"title": {"type": "text", "required": true},\n'
+        '    "chart_lib": {"type": "text"},',
+    )
+    template_dir = make_chart_template_dir(tmp_path, manifest_source=manifest)
+    with pytest.raises(ManifestError, match="'chart_lib'.*collides"):
+        render_page(template_dir, {"title": "T", "sales_data": SALES_DATA})
+
+
 # --- chart data errors surface as clean domain errors ----------------------
 
 def test_missing_chart_data_value_raises_content_error(tmp_path):

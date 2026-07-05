@@ -1,6 +1,6 @@
 """Locks the suggest scorer (suggest.py) together with the seed templates'
 hand-written samples: each seed template's own sample content must rank
-that template #1 (strict unique max) among all five seed templates.
+that template #1 (strict unique max) among all seed templates.
 
 Uses the REPO templates/ dir explicitly (via jimemo._paths.REPO_ROOT), not
 jimemo.discovery.default_search_dirs() -- this must stay independent of
@@ -29,7 +29,8 @@ def test_five_seed_templates_present():
     # Guards the parametrization below against silently collecting fewer
     # cases than intended (e.g. a template dir missing manifest.json).
     assert sorted(SEED_NAMES) == [
-        "briefing", "data-dashboard", "genealogy", "photo-catalog", "timeline",
+        "briefing", "chart-dashboard", "data-dashboard", "genealogy",
+        "photo-catalog", "timeline",
     ]
 
 

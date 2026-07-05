@@ -1,0 +1,53 @@
+{#- chart-dashboard — a metrics dashboard: masthead, optional intro prose,
+    a row of headline stat-tiles, two charts (a trend line and a category
+    bar) fed by their own schema-free data slots, a supporting data-table,
+    and optional closing notes. Extends the toolkit page skeleton;
+    components used: page-header, stat-tile, chart, data-table.
+
+    The renderer supplies `charts` (one entry per manifest declaration:
+    id, type, title, config_json) only because this manifest's `charts`
+    list is non-empty; each entry is passed straight to ui.chart, the
+    only macro that may emit a <script> (see toolkit/macros.html.j2 and
+    the Phase 4 plan's "security crux"). This template never touches
+    config_json itself. -#}
+{% extends "page.html.j2" %}
+{% import "macros.html.j2" as ui %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{{ ui.page_header(title,
+     kicker="Dashboard",
+     subtitle=subtitle|default(none),
+     meta=([period] if period|default(none) else [])) }}
+
+{% if intro|default(none) %}
+<div class="jm-prose">
+{{ intro }}
+</div>
+{% endif %}
+
+{% set headline_stats = stats|default([]) %}
+{% if headline_stats %}
+{{ ui.stat_row(headline_stats) }}
+{% endif %}
+
+{% for c in charts %}
+<section class="jm-chart-block">
+  <h2 class="jm-chart-block__title">{{ c.title|default(c.id) }}</h2>
+  {{ ui.chart(c.id, c.config_json) }}
+</section>
+{% endfor %}
+
+{% for t in table|default([]) %}
+{{ ui.data_table(t.columns, t.rows, caption=t.caption|default(none)) }}
+{% endfor %}
+
+{% if notes|default(none) %}
+<div class="jm-prose">
+{{ notes }}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block footer %}Rendered with jimemo{% endblock %}

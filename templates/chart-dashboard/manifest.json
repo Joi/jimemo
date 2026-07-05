@@ -1,0 +1,41 @@
+{
+  "name": "chart-dashboard",
+  "version": 1,
+  "title": "Chart dashboard",
+  "description": "A metrics dashboard with two charts (a trend line and a category bar) plus headline stat tiles and a supporting data table.",
+  "slots": {
+    "title": {"type": "text", "required": true},
+    "subtitle": {"type": "text"},
+    "period": {"type": "text"},
+    "intro": {"type": "markdown"},
+    "stats": {
+      "type": "data",
+      "items": {"label": "text", "value": "text", "delta": "text"}
+    },
+    "chart_data_line": {"type": "data"},
+    "chart_data_bar": {"type": "data"},
+    "table": {"type": "data"},
+    "notes": {"type": "markdown"}
+  },
+  "components": ["page-header", "stat-tile", "chart-block", "data-table"],
+  "charts": [
+    {
+      "id": "signups-trend",
+      "type": "line",
+      "data_slot": "chart_data_line",
+      "title": "Weekly signups by channel"
+    },
+    {
+      "id": "revenue-by-tier",
+      "type": "bar",
+      "data_slot": "chart_data_bar",
+      "title": "Monthly recurring revenue by plan tier"
+    }
+  ],
+  "suitability": {
+    "keywords": ["metrics", "kpi", "chart", "visualization", "analytics"],
+    "content_kinds": ["tabular-data"],
+    "good_for": "Metrics dashboards where the story is a trend or a breakdown: headline KPIs plus a line and bar chart backed by a supporting table.",
+    "labeled_hash": "4d352ebaa47455ddde6d9819cd442dd822c90f77075aa12cc6dd1141e06fcf7b"
+  }
+}

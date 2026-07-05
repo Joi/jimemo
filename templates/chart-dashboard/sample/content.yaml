@@ -1,0 +1,60 @@
+title: "Growth Metrics — Weekly Chart Snapshot"
+subtitle: "Signups, revenue mix, and conversion trends across every acquisition channel."
+period: "25 May – 5 Jul 2026 (6 weeks)"
+
+intro: |
+  Weekly signups have trended upward for six consecutive weeks, with organic
+  search overtaking paid acquisition for the first time this quarter. The
+  four KPIs below summarize growth, revenue, and retention; the trend chart
+  and the bar graph that follow break weekly volume down by channel and
+  monthly recurring revenue down by plan tier. The table underneath repeats
+  each channel's weekly values so the chart can be checked by hand.
+
+stats:
+  - label: "Weekly signups"
+    value: "350"
+    delta: "+27 vs prior week"
+  - label: "Monthly recurring revenue"
+    value: "$100k"
+    delta: "+6% vs last month"
+  - label: "Trial-to-paid conversion"
+    value: "18.4%"
+    delta: "+1.2 pts vs last month"
+  - label: "Logo churn"
+    value: "2.1%"
+    delta: "-0.4 pts vs last month"
+
+chart_data_line:
+  - labels: ["25 May", "1 Jun", "8 Jun", "15 Jun", "22 Jun", "29 Jun"]
+    series:
+      - {name: "Organic", values: [120, 128, 135, 140, 152, 168]}
+      - {name: "Paid search", values: [95, 101, 98, 110, 118, 124]}
+      - {name: "Referral", values: [40, 44, 47, 50, 53, 58]}
+
+chart_data_bar:
+  - labels: ["Starter", "Growth", "Scale", "Enterprise"]
+    series:
+      - {name: "MRR ($k)", values: [18, 34, 27, 21]}
+
+table:
+  - caption: "Weekly signups by channel, 25 May – 5 Jul 2026."
+    columns:
+      - {label: "Week of", key: "week"}
+      - {label: "Organic", key: "organic", num: true}
+      - {label: "Paid search", key: "paid", num: true}
+      - {label: "Referral", key: "referral", num: true}
+      - {label: "Total", key: "total", num: true}
+    rows:
+      - {week: "25 May", organic: "120", paid: "95", referral: "40", total: "255"}
+      - {week: "1 Jun", organic: "128", paid: "101", referral: "44", total: "273"}
+      - {week: "8 Jun", organic: "135", paid: "98", referral: "47", total: "280"}
+      - {week: "15 Jun", organic: "140", paid: "110", referral: "50", total: "300"}
+      - {week: "22 Jun", organic: "152", paid: "118", referral: "53", total: "323"}
+      - {week: "29 Jun", organic: "168", paid: "124", referral: "58", total: "350"}
+
+notes: |
+  This recap shows organic increasingly carrying the acquisition mix, and
+  the visualizations above make the shift easy to audit at a glance. Paid
+  search spend held flat through the period, so the improving organic trend
+  is the main analytics story this month — worth revisiting the paid budget
+  for August if referral keeps climbing at its current pace.
