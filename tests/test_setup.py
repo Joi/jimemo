@@ -1,4 +1,3 @@
-import re
 import sys
 from pathlib import Path
 
@@ -6,8 +5,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import jimemo.publish.cloudflare_backend as cloudflare_backend_mod
 from jimemo.config import load_config
 from jimemo.errors import PublishError
+from jimemo.publish.cloudflare_backend import _default_state_dir
 from jimemo.publish.setup import (
     CLOUDFLARE_ASSETS_DIR,
     DEFAULT_PROJECT_NAME,
@@ -18,9 +19,7 @@ from jimemo.publish.setup import (
 )
 from jimemo.publish.wrangler import NO_WRANGLER_MESSAGE, MockWrangler
 
-MIDDLEWARE_SRC = (
-    Path(__file__).resolve().parents[1] / "publish" / "cloudflare" / "_middleware.js"
-).read_text(encoding="utf-8")
+MIDDLEWARE_SRC = (CLOUDFLARE_ASSETS_DIR / "_middleware.js").read_text(encoding="utf-8")
 
 
 class FakeIO(SetupIO):
@@ -70,8 +69,19 @@ class BrokenKVWrangler(MockWrangler):
         return ""
 
 
+def _patch_home(monkeypatch, home_dir: Path) -> None:
+    """run_setup() derives its state directory from cloudflare_backend's
+    _default_state_dir(), which is Path.home()-based -- patch it (the
+    same technique tests/test_cloudflare_backend.py already uses) so no
+    test ever touches the real ~/.jimemo."""
+    monkeypatch.setattr(
+        cloudflare_backend_mod.Path, "home", classmethod(lambda cls: home_dir)
+    )
+
+
 # ---------------------------------------------------------------------------
-# --dry-run: fully offline, no prompts, no wrangler execution, no config.
+# --dry-run: fully offline, no prompts, no wrangler execution, no config, no
+# local filesystem writes.
 # ---------------------------------------------------------------------------
 
 def test_dry_run_never_prompts_or_confirms(tmp_path):
@@ -109,16 +119,54 @@ def test_dry_run_writes_no_config(tmp_path):
     assert not cfg_path.exists()
 
 
+def test_dry_run_creates_no_local_state_directory(monkeypatch, tmp_path):
+    # dry-run must be fully offline: it prints what it WOULD install into
+    # the state dir, but must never actually create it.
+    _patch_home(monkeypatch, tmp_path)
+    io = FakeIO()
+
+    run_setup(True, MockWrangler(), tmp_path / "config.toml", io)
+
+    state_dir = _default_state_dir(DEFAULT_PROJECT_NAME)
+    assert not state_dir.exists()
+
+
 def test_dry_run_prints_the_deploy_argv(tmp_path):
     io = FakeIO()
+    state_dir = _default_state_dir(DEFAULT_PROJECT_NAME)
 
     run_setup(True, MockWrangler(), tmp_path / "config.toml", io)
 
     text = io.text()
     assert (
-        f"npx wrangler pages deploy {CLOUDFLARE_ASSETS_DIR} "
+        f"npx wrangler pages deploy {state_dir} "
         f"--project-name {DEFAULT_PROJECT_NAME} --branch main"
     ) in text
+    # And NOT the repo's own template dir -- that's the source it installs
+    # FROM, never the thing it deploys.
+    assert f"pages deploy {CLOUDFLARE_ASSETS_DIR} " not in text
+
+
+def test_dry_run_prints_the_state_dir_asset_install_plan(tmp_path):
+    io = FakeIO()
+    state_dir = _default_state_dir(DEFAULT_PROJECT_NAME)
+
+    run_setup(True, MockWrangler(), tmp_path / "config.toml", io)
+
+    text = io.text()
+    assert f"{state_dir}/functions/_middleware.js" in text
+    assert f"{state_dir}/_headers" in text
+    assert f"{state_dir}/index.html" in text
+
+
+def test_dry_run_prints_single_machine_warning(tmp_path):
+    io = FakeIO()
+
+    run_setup(True, MockWrangler(), tmp_path / "config.toml", io)
+
+    text = io.text()
+    assert "single-machine limitation" in text.lower()
+    assert "ONE machine per project" in text
 
 
 def test_dry_run_prints_the_kv_check_argv(tmp_path):
@@ -152,10 +200,13 @@ def test_dry_run_uses_pages_dev_base_url_for_default_project(tmp_path):
 
 # ---------------------------------------------------------------------------
 # Real-ish run (MockWrangler + FakeIO): the actual provisioning path.
+# Path.home() is always patched to tmp_path, so the state directory this
+# derives (~/.jimemo/cloudflare/<project>/) never touches the real home.
 # ---------------------------------------------------------------------------
 
 def _run_real(tmp_path, monkeypatch, wrangler=None, prompts=None, confirms=None,
               token="fake-token"):
+    _patch_home(monkeypatch, tmp_path)
     if token is not None:
         monkeypatch.setenv("CLOUDFLARE_API_TOKEN", token)
     else:
@@ -178,11 +229,56 @@ def test_real_run_creates_kv_and_deploys_in_expected_order(tmp_path, monkeypatch
     ]
 
 
-def test_real_run_deploys_the_bundled_cloudflare_assets(tmp_path, monkeypatch):
+def test_real_run_deploys_the_local_state_dir_not_the_repo_template(tmp_path, monkeypatch):
     wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
 
+    expected_state_dir = _default_state_dir("friend-notes")
     deploy_call = next(c for c in wrangler.calls if c[0] == "pages_deploy")
-    assert deploy_call == ("pages_deploy", "friend-notes", str(CLOUDFLARE_ASSETS_DIR), "main")
+    assert deploy_call == ("pages_deploy", "friend-notes", str(expected_state_dir), "main")
+    assert deploy_call[2] != str(CLOUDFLARE_ASSETS_DIR)
+
+
+def test_real_run_installs_middleware_into_state_dir_functions_subdir(tmp_path, monkeypatch):
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+
+    state_dir = _default_state_dir("friend-notes")
+    installed = state_dir / "functions" / "_middleware.js"
+    assert installed.is_file()
+    assert installed.read_text(encoding="utf-8") == MIDDLEWARE_SRC
+    # NOT flattened at the state dir root -- Cloudflare only picks up
+    # Functions from a functions/ directory.
+    assert not (state_dir / "_middleware.js").exists()
+
+
+def test_real_run_installs_headers_and_index_at_state_dir_root(tmp_path, monkeypatch):
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+
+    state_dir = _default_state_dir("friend-notes")
+    assert (state_dir / "_headers").read_text(encoding="utf-8") == (
+        CLOUDFLARE_ASSETS_DIR / "_headers"
+    ).read_text(encoding="utf-8")
+    assert (state_dir / "index.html").read_text(encoding="utf-8") == (
+        CLOUDFLARE_ASSETS_DIR / "index.html"
+    ).read_text(encoding="utf-8")
+
+
+def test_real_run_installs_assets_before_deploying(tmp_path, monkeypatch):
+    # The deploy call must see the middleware already on disk -- order
+    # matters, not just presence, since pages_deploy uploads whatever is
+    # in the directory at the moment it's called.
+    installed_before_deploy = []
+
+    class RecordingWrangler(MockWrangler):
+        def pages_deploy(self, project, directory, branch="main"):
+            state_dir = _default_state_dir(project)
+            installed_before_deploy.append(
+                (state_dir / "functions" / "_middleware.js").is_file()
+            )
+            return super().pages_deploy(project, directory, branch)
+
+    _run_real(tmp_path, monkeypatch, wrangler=RecordingWrangler())
+
+    assert installed_before_deploy == [True]
 
 
 def test_real_run_post_deploy_check_uses_the_supplied_kv_namespace(tmp_path, monkeypatch):
@@ -228,6 +324,15 @@ def test_real_run_accepts_the_default_project_name(tmp_path, monkeypatch):
     )
     config = load_config(cfg_path)
     assert config.publish.cloudflare.project == DEFAULT_PROJECT_NAME
+
+
+def test_real_run_prints_single_machine_warning_with_state_dir_path(tmp_path, monkeypatch):
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+
+    state_dir = _default_state_dir("friend-notes")
+    text = io.text()
+    assert "single-machine limitation" in text.lower()
+    assert str(state_dir) in text
 
 
 def test_module_only_checks_token_presence_never_reads_its_value():
@@ -359,6 +464,7 @@ def test_existing_config_declining_overwrite_leaves_it_untouched(tmp_path, monke
     cfg_path = tmp_path / "config.toml"
     original = '[publish]\nbackend = "command"\ncommand = "notes-publish"\n'
     cfg_path.write_text(original)
+    _patch_home(monkeypatch, tmp_path)
 
     monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "fake-token")
     io = FakeIO(prompts=["friend-notes", "acct123", "ns123"], confirms=[False])

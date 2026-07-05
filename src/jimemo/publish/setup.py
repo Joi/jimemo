@@ -19,11 +19,33 @@ publish/purge/list/gc path ever needs again, so growing the seam to cover
 them would be permanent surface area for a one-time job.
 
 Concretely, this wizard:
-  - DOES drive ``pages_deploy`` to upload ``publish/cloudflare/`` (the
-    ported middleware + ``_headers`` + root index) to the Pages project.
-    Wrangler creates the Pages project automatically on this call if the
-    account doesn't already have one by that name, so no separate
-    "create project" call is needed.
+  - Installs the bundled middleware/``_headers``/root index (source:
+    ``publish/cloudflare/``) INTO the persistent local state directory
+    ``cloudflare_backend.py`` deploys on every future ``publish()`` call
+    (``~/.jimemo/cloudflare/<project>/`` -- see ``_default_state_dir``,
+    imported from cloudflare_backend.py so the two modules can never
+    disagree on the path). This is critical, not cosmetic:
+    ``CloudflarePublisher.publish()`` always redeploys the ENTIRE state
+    directory wholesale (a Pages deploy replaces the whole production
+    tree -- see that module's docstring). If the middleware only lived in
+    this repo's ``publish/cloudflare/`` and setup deployed THAT directory
+    instead, the very next ordinary ``publish()`` call would redeploy the
+    state directory in its place -- silently dropping the Functions
+    bundle and making ``?purge`` start 405ing with no warning. That is
+    exactly the incident this design ports its security model away from
+    (notes-ito-com's own `check_deploy_freshness()` exists because of a
+    close call in the same shape). Cloudflare only picks up Functions
+    from a ``functions/`` directory at the deploy root, so the layout
+    installed is ``<state_dir>/functions/_middleware.js``,
+    ``<state_dir>/_headers``, ``<state_dir>/index.html`` -- NOT a flat
+    copy of ``publish/cloudflare/``, whose ``_middleware.js`` sits at its
+    own root purely as a distributable source file.
+  - DOES drive ``pages_deploy`` against that same state directory (never
+    against ``publish/cloudflare/`` directly) for both the initial deploy
+    and, implicitly, every later ``publish()`` call. Wrangler creates the
+    Pages project automatically on this call if the account doesn't
+    already have one by that name, so no separate "create project" call
+    is needed.
   - Does NOT create a KV namespace or bind it to the Pages project as
     ``TOMBSTONES`` -- there is no wrangler-seam call for either. It
     prints the exact manual command / dashboard step for both, in every
@@ -37,6 +59,22 @@ Concretely, this wizard:
     site (see docs/publish-setup.md for the manual live-verification
     steps).
 
+Single-machine limitation (loudly, on purpose)
+-----------------------------------------------
+Unlike notes-ito-com's git-committed ``public/`` tree, the state
+directory this backend deploys from is local-only: no git, no sync, no
+`check_deploy_freshness()`-style guard against a stale/empty copy. This
+wizard and docs/publish-setup.md both say so explicitly: publish from
+ONE machine per Cloudflare project, or sync
+``~/.jimemo/cloudflare/<project>/`` (e.g. via git or Dropbox) across
+every machine that publishes to it. Publishing from a second machine
+whose local state directory is missing prior hashes will deploy over
+them -- there is no reliable, seam-available signal to detect this
+automatically (``kv_list`` only enumerates tombstoned hashes, not what a
+live deploy is currently serving, and there's no HTTP client here to ask
+the deployed site directly), so this wizard does not attempt an
+automatic freshness check; it only documents the limitation.
+
 Secrets: this module never reads, stores, or prints the value of
 CLOUDFLARE_API_TOKEN. It only checks whether that variable is *set*, to
 fail fast with a clear message rather than letting the first wrangler
@@ -44,17 +82,20 @@ call fail confusingly; wrangler resolves its own auth from that same
 environment variable.
 """
 import os
+import shutil
 from pathlib import Path
 from typing import Optional
 
 from .._paths import REPO_ROOT
 from ..errors import PublishError
+from .cloudflare_backend import _default_state_dir
 from .wrangler import NO_WRANGLER_MESSAGE
 
-#: publish/cloudflare/ -- the middleware + _headers + index.html this
-#: wizard deploys. Read via REPO_ROOT (from _paths.py) rather than a
-#: path relative to this file, matching how tests/test_middleware_asset.py
-#: locates the same directory.
+#: publish/cloudflare/ -- the middleware + _headers + index.html source
+#: this wizard installs into each project's local state directory (see
+#: _install_state_dir_assets). Read via REPO_ROOT (from _paths.py)
+#: rather than a path relative to this file, matching how
+#: tests/test_middleware_asset.py locates the same directory.
 CLOUDFLARE_ASSETS_DIR = REPO_ROOT / "publish" / "cloudflare"
 
 DEFAULT_PROJECT_NAME = "jimemo-notes"
@@ -123,9 +164,9 @@ class RealIO(SetupIO):
         return raw in ("y", "yes")
 
 
-def _deploy_argv(project: str) -> str:
+def _deploy_argv(project: str, directory) -> str:
     return (
-        f"npx wrangler pages deploy {CLOUDFLARE_ASSETS_DIR} "
+        f"npx wrangler pages deploy {directory} "
         f"--project-name {project} --branch main"
     )
 
@@ -172,6 +213,25 @@ def _print_intro(io: SetupIO) -> None:
     )
 
 
+def _print_single_machine_warning(io: SetupIO, state_dir: Path) -> None:
+    io.print(
+        "\n"
+        "IMPORTANT -- single-machine limitation:\n"
+        f"Deploys come from the LOCAL state directory {state_dir}, not "
+        "from git (unlike\n"
+        "notes-ito-com's committed public/ tree). That directory is the "
+        "one source of\n"
+        "truth for what's currently deployed. Publish from ONE machine "
+        "per project, or\n"
+        f"sync {state_dir} (e.g. via git or Dropbox) across every "
+        "machine that\n"
+        "publishes to it. Publishing from a machine with a stale or "
+        "empty copy of this\n"
+        "directory will silently drop every previously-published link "
+        "on its next deploy."
+    )
+
+
 def _print_kv_instructions(io: SetupIO, project: str) -> None:
     io.print(
         "\n"
@@ -192,6 +252,35 @@ def _print_kv_instructions(io: SetupIO, project: str) -> None:
         "makes tombstone\n"
         "     checks silently no-op (open-fail, not fail-safe)."
     )
+
+
+def _install_state_dir_assets(state_dir: Path) -> None:
+    """Copy publish/cloudflare/'s middleware + _headers + index.html into
+    the persistent state directory, in the layout Cloudflare Pages
+    actually requires: Functions are only picked up from a ``functions/``
+    directory at the deploy root, so ``_middleware.js`` goes to
+    ``<state_dir>/functions/_middleware.js`` -- NOT flattened at the
+    state dir's root the way it sits in the repo. ``_headers`` and
+    ``index.html`` stay at the state dir's root.
+
+    Must run before the very first deploy: cloudflare_backend.py's
+    publish() always redeploys the whole state directory (see that
+    module's docstring), so anything not installed here before that
+    first deploy is never served by any later publish() call either --
+    see this module's own docstring for the failure mode that creates.
+
+    Safe to re-run: always overwrites with the current bundled source,
+    so re-running setup after a jimemo upgrade refreshes the deployed
+    middleware too.
+    """
+    state_dir.mkdir(parents=True, exist_ok=True)
+    functions_dir = state_dir / "functions"
+    functions_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(
+        CLOUDFLARE_ASSETS_DIR / "_middleware.js", functions_dir / "_middleware.js"
+    )
+    shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "_headers", state_dir / "_headers")
+    shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "index.html", state_dir / "index.html")
 
 
 def _post_deploy_binding_check(
@@ -285,18 +374,22 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
     """Run the cloudflare-backend setup wizard.
 
     In --dry-run: prints the full plan (every step, every wrangler
-    argv) using placeholder/default values, calls no wrangler method,
-    prompts for nothing, requires no CLOUDFLARE_API_TOKEN, and writes no
-    config. Fully offline and deterministic.
+    argv, every local file it would install) using placeholder/default
+    values, calls no wrangler method, prompts for nothing, requires no
+    CLOUDFLARE_API_TOKEN, touches no local filesystem state, and writes
+    no config. Fully offline and deterministic.
 
     Otherwise: validates the token and wrangler are present, prompts for
     a project name (default DEFAULT_PROJECT_NAME), an account id, and a
     KV namespace id (printing manual instructions for the latter, since
     no wrangler-seam call can create/bind one -- see module docstring),
-    deploys publish/cloudflare/ to the Pages project (which also creates
-    the project on first use), runs a best-effort post-deploy KV check,
-    and writes ~/.jimemo/config.toml (confirming first if it already
-    exists).
+    installs the middleware/_headers/index.html into
+    ``~/.jimemo/cloudflare/<project>/`` (the SAME local state directory
+    cloudflare_backend.py's CloudflarePublisher deploys on every future
+    publish() call -- see module docstring for why this placement is
+    load-bearing, not cosmetic), deploys that directory, runs a
+    best-effort post-deploy KV check, and writes ~/.jimemo/config.toml
+    (confirming first if it already exists).
 
     Raises PublishError if CLOUDFLARE_API_TOKEN is unset, wrangler/npx
     is unavailable, or (non-dry-run) a wrangler call fails.
@@ -336,6 +429,12 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
             account_id = io.prompt("Cloudflare account id")
 
     base_url = f"https://{project}.pages.dev"
+    # Same helper cloudflare_backend.py's CloudflarePublisher uses by
+    # default, imported rather than re-derived, so the two can never
+    # disagree on where the deployed state lives.
+    state_dir = _default_state_dir(project)
+
+    _print_single_machine_warning(io, state_dir)
 
     _print_kv_instructions(io, project)
     if dry_run:
@@ -350,21 +449,38 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
             kv_namespace_id = io.prompt("Cloudflare KV namespace id")
 
     io.print(
-        f"\nStep 2: deploy {CLOUDFLARE_ASSETS_DIR} to Pages project "
-        f"{project!r}\n"
+        f"\nStep 2: install the tombstone/purge middleware into {state_dir}\n"
+        "(this directory -- not this repo's publish/cloudflare/ -- is what "
+        "gets deployed,\n"
+        "on this call and on every future `jimemo publish`; see module "
+        "docstring)"
+    )
+    if dry_run:
+        io.print(f"  [dry-run] would create {state_dir}/functions/_middleware.js")
+        io.print(f"  [dry-run] would create {state_dir}/_headers")
+        io.print(f"  [dry-run] would create {state_dir}/index.html")
+    else:
+        _install_state_dir_assets(state_dir)
+        io.print(
+            f"  installed functions/_middleware.js, _headers, index.html "
+            f"into {state_dir}"
+        )
+
+    io.print(
+        f"\nStep 3: deploy {state_dir} to Pages project {project!r}\n"
         "(this also creates the project if your account doesn't have "
         "one by that\nname yet)"
     )
-    deploy_argv = _deploy_argv(project)
+    deploy_argv = _deploy_argv(project, state_dir)
     if dry_run:
         io.print(f"  [dry-run] would run: {deploy_argv}")
     else:
         io.print(f"  running: {deploy_argv}")
-        wrangler.pages_deploy(project, CLOUDFLARE_ASSETS_DIR)
+        wrangler.pages_deploy(project, state_dir)
 
     _post_deploy_binding_check(wrangler, kv_namespace_id, base_url, io, dry_run)
 
-    io.print(f"\nStep 3: write {config_path}")
+    io.print(f"\nStep 4: write {config_path}")
     if dry_run:
         io.print(
             "  [dry-run] would write:\n"
@@ -390,4 +506,8 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
 
     _write_config(config_path, project, account_id, kv_namespace_id, base_url)
     io.print(f"  wrote {config_path}")
-    io.print(f"\nDone. Try: jimemo render ... | jimemo publish")
+    io.print(
+        f"\nDone. Try: jimemo render ... | jimemo publish\n"
+        f"Reminder: {state_dir} is this project's single source of truth "
+        "for what's deployed -- see the single-machine note above."
+    )
