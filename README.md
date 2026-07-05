@@ -132,6 +132,62 @@ ok   vendored imports (jinja2, markdown)
 ok   suitability labels fresh (or none recorded)
 ```
 
+## Import a design
+
+`jimemo import-design <export-dir> --name mybrand` reads a Claude-design
+export (a folder of design tokens and fonts produced by the
+design-system Skill) and produces a jimemo **theme**: a `--jm-*` token
+override file that `jimemo render <template> <content> --theme mybrand`
+layers on top of the toolkit's defaults.
+
+```
+$ jimemo import-design "Chiba Tech Design System" --name mybrand
+/* jimemo theme 'mybrand' -- auto-generated from a Claude-design export
+ * (namespace: ChibaTechDesignSystem_9e0e92). Deterministic: re-running the import on the
+ * same export regenerates this file byte-for-byte.
+ *
+ * Auto-mapped roles (source token -> role):
+ *   --ct-font -> --jm-font-prose
+ *   --ct-font -> --jm-font-ui
+ *   --ct-blue-core -> --jm-accent
+ *   ...
+ */
+
+fonts are referenced by family name only (no font files embedded); they
+render correctly only where that family is installed on the viewer's
+system. Re-run with --embed-fonts to inline the font files instead (see
+the licensing note that prints with it).
+
+wrote theme: /Users/you/.jimemo/themes/mybrand.css
+use it with: jimemo render <template> <content> --theme mybrand
+
+$ jimemo render briefing templates/briefing/sample/content.md \
+    -o out.html --theme mybrand
+```
+
+It's **parse-only**: the importer reads the export's `_ds_manifest.json`
+(or, absent a manifest, `tokens/*.css`) and never opens, imports, or
+executes the export's `.js`/`.jsx`/`.ts` files — the whole export is
+treated as untrusted data, never as code. Every token value is
+validated before it lands in the generated theme (rejecting anything
+that could break out of a CSS declaration or point at a remote
+resource), and the theme itself is checked against the same
+self-contained-page rule every other jimemo output follows: no remote
+`url()`, no `@import`, no script.
+
+Fonts map to family name + a generic fallback stack by default, so the
+theme names the brand's typeface but renders correctly only where that
+font is already installed on the viewer's machine. Pass `--embed-fonts`
+to instead read the export's font files and inline them into the theme
+as base64 `data:` URIs — the rendered page stays self-contained but
+gets larger, and only makes sense for fonts you're licensed to
+redistribute, since embedding publishes the font bytes in every page
+rendered with that theme.
+
+Imported themes are written to `~/.jimemo/themes/<name>.css`, never
+into the repo, and take precedence over a repo theme of the same
+name — a theme you just imported wins even on a name collision.
+
 ## Publish
 
 `jimemo publish` turns a rendered `out.html` into an unlisted private

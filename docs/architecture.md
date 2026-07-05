@@ -68,7 +68,58 @@ contracts are in `docs/superpowers/plans/2026-07-05-jimemo-phase3-core.md`.
   sample, compared byte-for-byte by `tests/test_golden.py`;
   `JIMEMO_UPDATE_GOLDENS=1 python3 -m pytest tests/test_golden.py`
   regenerates them.
-- `themes/` — theme token file overrides (later phase).
+- `themes/` — repo-level theme token file overrides: a `<name>.css`
+  `:root` block layered on top of `toolkit/tokens.css` by
+  `assemble_css`'s `--theme NAME` resolution. `~/.jimemo/themes/` is the
+  personal counterpart (mirroring `~/.jimemo/templates/` for personal
+  templates) and is checked *first* — the opposite precedence from
+  template discovery, where the repo copy wins a name collision: a
+  theme a user just ran `jimemo import-design` against should take
+  effect even if it collides with a repo theme's name, since applying
+  the import is the entire point of running the command. Assembly
+  order inside `assemble_css` is `tokens.css`, `base.css`, the
+  manifest's components, then the resolved theme (if any), then
+  `print-force.css` always last, so a theme's `:root` can override
+  component defaults but never the print-force rules.
+- `src/jimemo/design/` — parse-only import of a Claude-design export
+  (a folder of design tokens/fonts a design-system Skill produces) into
+  a jimemo theme; see `jimemo import-design --help` and the README's
+  "Import a design" section.
+  - `reader.py` — `read_export(export_dir) -> DesignExport`: reads
+    `_ds_manifest.json` (preferred) or falls back to scanning
+    `tokens/*.css` for `:root` custom properties. Only ever `json.load`s
+    or regex-scans text; never opens, imports, or executes the export's
+    `.js`/`.jsx`/`.ts` — the whole export is untrusted data. Every token
+    value is passed through `validate_token_value` (rejecting `<`,
+    braces, `expression(`, and any `url()`/bare value pointing anywhere
+    but local or an allowlisted-mime `data:` URI) before it becomes
+    part of a `DesignExport`, since it is destined to be dropped
+    verbatim into generated theme CSS.
+  - `mapping.py` — `build_theme(export, name) -> str`: deterministic,
+    LLM-free token-to-role mapping. Re-declares every imported token
+    verbatim under its own name, then maps a subset onto jimemo's
+    `--jm-*` roles (font-prose/font-ui, accent/accent-contrast, text,
+    bg, surface, muted, border, positive, negative) by name-keyword
+    heuristics (with luminance as a tie-breaker for accent/grey
+    choices), emitting `var(--source-token)` references rather than
+    copied literals so hand-editing the raw token still moves the
+    mapped role. A header comment documents what was auto-mapped and
+    what needs manual review. Re-validates the assembled CSS against
+    the same self-contained-page lint (`lint.css_reference_errors`)
+    every other jimemo render output passes.
+  - `importer.py` — `import_design(export_dir, name=, embed_fonts=)`:
+    orchestrates reader → mapping → install to
+    `~/.jimemo/themes/<name>.css` (via `inline.personal_themes_dir`).
+    Fonts are family-name-only by default; `--embed-fonts` reads the
+    export's actual font files, confines each path to the export
+    directory (rejecting absolute paths or `..` traversal) and to a
+    real font extension, base64-encodes it, and appends an `@font-face`
+    with a `data:font/...` `src` — the one place in this package that
+    reads bytes rather than text, and the one place that needs a
+    path-traversal check. `DesignImportError` (`errors.py`) covers every
+    failure mode across the three modules; the CLI (`cli.py`'s
+    `cmd_import_design`) catches it, prints the message to stderr, and
+    exits 1 — the same pattern as `ManifestError`/`ContentError`.
 - `src/jimemo/config.py` — `load_config`: parses `~/.jimemo/config.toml`
   (vendored `tomli`) into a `Config`/`PublishConfig`; missing/invalid
   config raises `ConfigError` with a "run `jimemo publish setup`"
