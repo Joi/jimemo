@@ -1,6 +1,9 @@
 import hashlib
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -99,6 +102,17 @@ def test_listed_file_under_symlinked_directory_is_not_followed(tmp_path):
     problems = verify_checksums(vendor)
     assert any("symlink not allowed" in p and "evilpkg" in p for p in problems)
     assert not any("checksum mismatch" in p and "evilpkg/evil.py" in p for p in problems)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no mkfifo")
+def test_fifo_is_reported_not_opened(tmp_path):
+    vendor = make_vendor(tmp_path)
+    fifo = vendor / "pkg" / "pipe.py"
+    os.mkfifo(fifo)
+    with (vendor / "SHA256SUMS").open("a") as fh:
+        fh.write("0" * 64 + "  ./pkg/pipe.py\n")
+    problems = verify_checksums(vendor)
+    assert any("special file not allowed" in p and "pkg/pipe.py" in p for p in problems)
 
 
 def test_missing_sums_file_is_reported(tmp_path):

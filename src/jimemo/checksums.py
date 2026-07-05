@@ -18,22 +18,26 @@ def verify_checksums(vendor_dir: Path) -> list:
         expected, rel = line.split(None, 1)
         listed[Path(rel.strip().lstrip("*"))] = expected
 
-    reported_symlinks = set()
+    excluded = set()
     real_files = {}
     for f in sorted(vendor_dir.rglob("*")):
         rel = f.relative_to(vendor_dir)
         if f.is_symlink():
             problems.append(f"symlink not allowed: {rel}")
-            reported_symlinks.add(rel)
+            excluded.add(rel)
             continue
         if f.is_dir() or f == sums_file:
+            continue
+        if not f.is_file():
+            problems.append(f"special file not allowed: {rel}")
+            excluded.add(rel)
             continue
         real_files[rel] = f
 
     for rel, expected in sorted(listed.items()):
         f = real_files.get(rel)
         if f is None:
-            if rel not in reported_symlinks:
+            if rel not in excluded:
                 problems.append(f"missing vendored file: {rel}")
             continue
         actual = hashlib.sha256(f.read_bytes()).hexdigest()
