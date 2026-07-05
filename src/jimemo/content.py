@@ -10,7 +10,9 @@ Content file formats:
 
 Unknown keys and missing required slots are reported by name so authors
 can fix a typo without guessing. Markdown-typed slot values are rendered
-to HTML here and returned as ``markupsafe.Markup`` so the (autoescaping)
+to HTML here, sanitized (allowlist — see sanitize.py; python-markdown
+passes raw HTML through verbatim, and content may come from untrusted
+sources), and returned as ``markupsafe.Markup`` so the (autoescaping)
 render step passes them through unescaped; every other slot value is
 returned as parsed/raw and relies on Jinja2 autoescape for safety.
 """
@@ -20,6 +22,7 @@ from typing import Any, Dict, List, Tuple
 
 from ._vendor import add_vendor_to_path
 from .errors import ContentError
+from .sanitize import sanitize_html
 
 add_vendor_to_path()
 import markdown  # noqa: E402
@@ -34,7 +37,10 @@ MARKDOWN_EXTENSIONS = ["markdown.extensions.tables", "markdown.extensions.fenced
 
 
 def _render_markdown(text: str) -> Markup:
-    return Markup(markdown.markdown(text, extensions=MARKDOWN_EXTENSIONS))
+    # Sole markdown->HTML path (top-level markdown slots AND markdown
+    # items in data slots), so sanitizing here covers both. Runs before
+    # inline_images, so authored img src are still paths/URLs.
+    return Markup(sanitize_html(markdown.markdown(text, extensions=MARKDOWN_EXTENSIONS)))
 
 
 def _coerce_text(path: Path, slot_name: str, value: Any) -> str:

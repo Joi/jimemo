@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ._paths import REPO_ROOT
-from .errors import ContentError
+from .errors import ContentError, ManifestError
 
 TOOLKIT_DIR = REPO_ROOT / "toolkit"
 
@@ -47,7 +47,7 @@ def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
     for name in manifest.get("components", []):
         css_path = TOOLKIT_DIR / "components" / f"{name}.css"
         if not css_path.is_file():
-            raise ContentError(f"manifest lists unknown component {name!r} ({css_path})")
+            raise ManifestError(f"manifest lists unknown component {name!r} ({css_path})")
         parts.append(css_path.read_text(encoding="utf-8"))
     if theme:
         theme_path = TOOLKIT_DIR / "themes" / f"{theme}.css"

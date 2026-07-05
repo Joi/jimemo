@@ -63,3 +63,27 @@ def test_missing_charts_key_treated_as_empty():
     html = "<html><body><script>alert(1)</script></body></html>"
     errors, warnings = lint_html(html, {})
     assert any("script" in e for e in errors)
+
+
+def test_inline_event_handler_errors():
+    html = '<html><body><div onclick="alert(1)">x</div></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("event handler" in e for e in errors)
+
+
+def test_javascript_uri_errors():
+    html = '<html><body><a href="javascript:alert(1)">x</a></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("javascript" in e for e in errors)
+
+
+def test_vbscript_uri_errors():
+    html = '<html><body><a href="vbscript:msgbox(1)">x</a></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("vbscript" in e for e in errors)
+
+
+def test_mixed_case_event_handler_errors():
+    html = '<html><body><img src="x" OnErRoR="alert(1)"></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("event handler" in e for e in errors)

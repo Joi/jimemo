@@ -159,3 +159,53 @@ def test_unsupported_extension(tmp_path):
     f.write_text("title: T\n")
     with pytest.raises(ContentError, match="unsupported"):
         load_content(f, MANIFEST)
+
+
+# --- sanitization of markdown-rendered slots (see sanitize.py) ---
+
+def test_markdown_body_raw_html_payloads_sanitized(tmp_path):
+    f = tmp_path / "brief.md"
+    f.write_text(
+        "---\ntitle: T\n---\n"
+        "before\n\n"
+        '<img src=x onerror=alert(1)>\n\n'
+        "<svg onload=alert(1)><circle/></svg>\n\n"
+        '<a href="javascript:alert(1)">click</a>\n\n'
+        "after\n"
+    )
+    content = load_content(f, MANIFEST)
+    body = str(content["body"])
+    assert "onerror" not in body
+    assert "onload" not in body
+    assert "<svg" not in body
+    assert "javascript:" not in body
+    assert "<a>click</a>" in body  # tag survives, href dropped
+    assert "before" in body and "after" in body
+
+
+def test_markdown_body_script_content_removed(tmp_path):
+    f = tmp_path / "brief.md"
+    f.write_text("---\ntitle: T\n---\n<script>document.write('pwn')</script>\n\nok\n")
+    content = load_content(f, MANIFEST)
+    body = str(content["body"])
+    assert "script" not in body
+    assert "document.write" not in body
+    assert "ok" in body
+
+
+def test_data_slot_markdown_item_sanitized(tmp_path):
+    f = tmp_path / "brief.md"
+    f.write_text(
+        "---\n"
+        "title: T\n"
+        "sections:\n"
+        "  - heading: First\n"
+        "    body: '<img src=x onerror=alert(1)> fine **bold**'\n"
+        "---\n"
+        "body text\n"
+    )
+    content = load_content(f, MANIFEST)
+    section_body = str(content["sections"][0]["body"])
+    assert "onerror" not in section_body
+    assert '<img src="x" />' in section_body
+    assert "<strong>bold</strong>" in section_body

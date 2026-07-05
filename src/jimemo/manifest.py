@@ -10,6 +10,9 @@ from typing import Any, Dict
 from .errors import ManifestError
 
 SLOT_TYPES = ("text", "markdown", "data")
+# Names render_page injects into the template context itself; a slot
+# with one of these names would be silently shadowed at render time.
+RESERVED_SLOT_NAMES = ("manifest", "styles", "theme")
 ITEM_TYPES = ("text", "markdown")
 CONTENT_KINDS = (
     "narrative",
@@ -59,6 +62,11 @@ def load_manifest(template_dir: Path) -> Dict[str, Any]:
         raise ManifestError("manifest field 'slots' must be a non-empty object")
 
     for slot_name, slot in slots.items():
+        if slot_name in RESERVED_SLOT_NAMES:
+            raise ManifestError(
+                f"slot name {slot_name!r} collides with a reserved render "
+                f"context name (reserved: {list(RESERVED_SLOT_NAMES)})"
+            )
         if not isinstance(slot, dict):
             raise ManifestError(f"slot {slot_name!r} must be an object")
         slot_type = slot.get("type")

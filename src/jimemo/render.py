@@ -14,7 +14,7 @@ from .lint import lint_html
 from .manifest import load_manifest
 
 add_vendor_to_path()
-from jinja2 import Environment, FileSystemLoader, StrictUndefined  # noqa: E402
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, UndefinedError  # noqa: E402
 from markupsafe import Markup  # noqa: E402
 
 TOOLKIT_DIR = REPO_ROOT / "toolkit"
@@ -55,7 +55,12 @@ def render_page(
     context["styles"] = styles
     context["theme"] = theme
 
-    html = template.render(**context)
+    try:
+        html = template.render(**context)
+    except UndefinedError as e:
+        # StrictUndefined raises on any unknown name; surface it as the
+        # domain error the CLI already prints cleanly (no traceback).
+        raise ContentError(f"template referenced an undefined value: {e}") from e
 
     html, img_warnings = inline_images(html, Path(base_dir) if base_dir else Path.cwd())
 

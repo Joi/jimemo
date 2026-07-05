@@ -7,6 +7,12 @@ import re
 from typing import Any, Dict, List, Tuple
 
 _SCRIPT_TAG_RE = re.compile(r"<script\b", re.IGNORECASE)
+# Last-gate tripwires on the assembled page. The markdown sanitizer
+# (sanitize.py) should make these unreachable for slot content; they
+# exist so a template-authored handler or script-scheme URL fails
+# closed too.
+_EVENT_HANDLER_RE = re.compile(r"\son[a-z]+\s*=", re.IGNORECASE)
+_SCRIPT_SCHEME_RE = re.compile(r"(javascript|vbscript):", re.IGNORECASE)
 _SCRIPT_REMOTE_SRC_RE = re.compile(
     r'<script\b[^>]*\ssrc=["\'](https?://[^"\']*)', re.IGNORECASE
 )
@@ -28,6 +34,15 @@ def lint_html(html: str, manifest: Dict[str, Any]) -> Tuple[List[str], List[str]
             "<script> tag found but this template declares no charts "
             "(manifest 'charts' is empty)"
         )
+
+    for m in _EVENT_HANDLER_RE.finditer(html):
+        errors.append(
+            f"inline event handler found ({m.group(0).strip()!r}) — "
+            "on* attributes are never allowed"
+        )
+
+    for m in _SCRIPT_SCHEME_RE.finditer(html):
+        errors.append(f"{m.group(1).lower()}: URI found — script-scheme URLs are never allowed")
 
     for m in _IMG_REMOTE_RE.finditer(html):
         warnings.append(f"external image not inlined: {m.group(1)}")

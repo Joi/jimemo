@@ -138,3 +138,13 @@ def test_manifest_must_be_object(tmp_path):
     (template_dir / "manifest.json").write_text("[1, 2, 3]")
     with pytest.raises(ManifestError, match="must be a JSON object"):
         load_manifest(template_dir)
+
+
+@pytest.mark.parametrize("reserved", ["manifest", "styles", "theme"])
+def test_reserved_slot_name_rejected(tmp_path, reserved):
+    data = dict(VALID)
+    data["slots"] = dict(VALID["slots"])
+    data["slots"][reserved] = {"type": "text"}
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match=reserved):
+        load_manifest(template_dir)
