@@ -72,12 +72,32 @@ jimemo/
 - Seed templates: briefing/memo, photo-catalog, timeline, data-dashboard,
   genealogy/tree.
 
+### Template suitability labels and auto-suggestion
+
+- Each `manifest.json` carries a `suitability` block: `keywords`,
+  `content_kinds` (e.g. `narrative`, `photo-heavy`, `tabular-data`,
+  `chronological`, `hierarchical`), a one-line `good_for`, and
+  `labeled_hash` — the hash of `template.html.j2` at labeling time.
+- `jimemo suggest <content>` ranks templates with a deterministic scorer:
+  content shape (image count, date fields, arrays of records, tree
+  structure, word count) matched against suitability labels. Prints the top
+  3 with reasons. Pure Python, offline, no LLM call.
+- `jimemo render auto <content>` renders with the top-ranked template and
+  reports why it was chosen.
+- Staleness instead of a periodic scan: when `labeled_hash` no longer
+  matches the template file, `jimemo doctor` and `suggest` flag the labels
+  as stale. The skill instructs the agent to reread the template + sample
+  and rewrite the suitability block; the CLI validates the shape. Works the
+  same for personal templates in `~/.jimemo/templates/`.
+
 ## CLI
 
 ```
 jimemo list                          # templates + themes (repo + ~/.jimemo/templates/)
 jimemo info <template> [--json]      # manifest: slots, content schema, sample — the agent contract
+jimemo suggest <content> [--json]    # rank templates for this content (suitability labels + shape)
 jimemo render <template> <content>   # → dist/<name>.html  (--theme, -o, --open)
+jimemo render auto <content>         # top-ranked template, with the reason printed
 jimemo new-template <name>           # scaffold a template folder from a starter
 jimemo thumbnail <page.html>         # preview.jpg via headless Chrome if available
 jimemo import-design <export>        # Claude design export → theme (+ template)   [Phase 6]
@@ -136,10 +156,13 @@ jimemo doctor                        # environment + vendor checksum verificatio
 
 ## Skill and install
 
-- `skill/SKILL.md` is thin: run `jimemo list`, pick a template, run
-  `jimemo info`, generate content matching the schema, run `jimemo render`,
-  optionally `jimemo publish`. The same contract works in Claude Code,
-  Codex, Cowork, and Amplifier because it is all CLI + JSON.
+- `skill/SKILL.md` is thin: run `jimemo suggest` (or `list`) to pick a
+  template, run `jimemo info`, generate content matching the schema, run
+  `jimemo render`, optionally `jimemo publish`. It also covers the label
+  refresh: when `suggest`/`doctor` report stale suitability labels, the
+  agent rereads the template + sample and rewrites the manifest's
+  suitability block. The same contract works in Claude Code, Codex, Cowork,
+  and Amplifier because it is all CLI + JSON.
 - `install.sh`: check python3; symlink CLI to `~/.local/bin/jimemo`; symlink
   `skill/` to `~/.claude/skills/jimemo` (Claude Code + Cowork) and
   `~/.codex/skills/jimemo`; register in the Amplifier bundle where present;
@@ -155,8 +178,8 @@ jimemo doctor                        # environment + vendor checksum verificatio
    techniques, Cloudflare direct-upload API feasibility. Deliverable:
    research report + pinned tool shortlist with licenses.
 2. Repo scaffold + architecture doc.
-3. Core: toolkit, CLI (`list`/`info`/`render`/`new-template`), 5 seed
-   templates.
+3. Core: toolkit, CLI (`list`/`info`/`suggest`/`render`/`new-template`),
+   5 seed templates with hand-written suitability labels.
 4. Chart + infographic components.
 5. `jimemo publish` — generalized notes.ito.com + setup wizard.
 6. Claude-design import.
@@ -170,6 +193,8 @@ library, Claude design export format handling, wrangler vs REST for deploy.
 
 - Golden-file render tests per template: sample content → stable HTML.
 - Schema validation tests: good and bad content, error message quality.
+- Suggest-scorer tests: each seed template's sample content must rank its
+  own template first; stale-label detection fires on a modified template.
 - Lint tests, including an external-`<script>` injection attempt that must
   hard-fail.
 - Vendor checksum verification in CI (GitHub Actions).
@@ -182,4 +207,5 @@ library, Claude design export format handling, wrangler vs REST for deploy.
 - Publish failures surface wrangler/Cloudflare output verbatim; staging is
   local-first so a failed deploy never leaves a half-published note.
 - `jimemo doctor` diagnoses environment problems (python version, missing
-  Chrome for thumbnails, missing wrangler for publish, checksum mismatches).
+  Chrome for thumbnails, missing wrangler for publish, checksum mismatches,
+  stale suitability labels).
