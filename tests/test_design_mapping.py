@@ -1,0 +1,122 @@
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from jimemo.design.mapping import build_theme
+from jimemo.design.reader import read_export
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "design-export"
+
+
+def _theme():
+    export = read_export(FIXTURE_DIR)
+    return export, build_theme(export, "chiba")
+
+
+# -- role mapping ----------------------------------------------------------
+
+
+def test_font_maps_to_finder_with_fallback():
+    _, css = _theme()
+    for role in ("--jm-font-prose", "--jm-font-ui"):
+        m = re.search(re.escape(role) + r":\s*([^;]+);", css)
+        assert m, f"{role} not set in theme"
+        value = m.group(1)
+        assert '"Finder"' in value
+        # a real fallback stack, not just the bare family name
+        assert "sans-serif" in value
+        assert "Arial" in value or "Helvetica" in value
+
+
+def test_accent_maps_to_brand_core_not_black_or_white():
+    _, css = _theme()
+    m = re.search(r"--jm-accent:\s*([^;]+);", css)
+    assert m
+    assert m.group(1).strip() == "var(--ct-blue-core)"
+    # the underlying brand color itself, re-declared verbatim
+    assert "--ct-blue-core: #4c4499;" in css
+
+
+def test_accent_contrast_is_light_against_the_dark_accent():
+    _, css = _theme()
+    m = re.search(r"--jm-accent-contrast:\s*([^;]+);", css)
+    assert m
+    assert m.group(1).strip().lower() == "#ffffff"
+
+
+def test_positive_and_negative_map_to_green_and_red():
+    _, css = _theme()
+    positive = re.search(r"--jm-positive:\s*([^;]+);", css)
+    negative = re.search(r"--jm-negative:\s*([^;]+);", css)
+    assert positive and positive.group(1).strip() == "var(--ct-green)"
+    assert negative and negative.group(1).strip() == "var(--ct-red)"
+
+
+def test_text_bg_surface_map_to_semantic_aliases_not_pink():
+    _, css = _theme()
+    text = re.search(r"--jm-text:\s*([^;]+);", css)
+    bg = re.search(r"--jm-bg:\s*([^;]+);", css)
+    surface = re.search(r"--jm-surface:\s*([^;]+);", css)
+    assert text and text.group(1).strip() == "var(--ct-ink)"
+    assert bg and bg.group(1).strip() == "var(--ct-paper)"
+    assert surface and surface.group(1).strip() == "var(--ct-surface)"
+
+
+def test_border_and_muted_pick_distinct_greys():
+    _, css = _theme()
+    border = re.search(r"--jm-border:\s*([^;]+);", css)
+    muted = re.search(r"--jm-muted:\s*([^;]+);", css)
+    assert border and muted
+    assert border.group(1).strip() != muted.group(1).strip()
+    # border is the lightest grey, muted a darker one
+    assert border.group(1).strip() == "var(--ct-grey-b9)"
+    assert muted.group(1).strip() == "var(--ct-grey-64)"
+
+
+# -- raw token preservation --------------------------------------------------
+
+
+def test_all_raw_tokens_present_verbatim():
+    export, css = _theme()
+    for t in export.tokens:
+        assert "{}: {};".format(t.name, t.value) in css
+
+
+# -- output shape / self-contained lint -------------------------------------
+
+
+def test_output_is_valid_css_with_balanced_braces():
+    _, css = _theme()
+    assert css.count("{") == css.count("}")
+    assert css.count("{") >= 1
+
+
+def test_output_has_no_remote_url_or_import_or_markup():
+    _, css = _theme()
+    assert "url(http" not in css
+    assert "@import" not in css
+    assert "<" not in css
+
+
+# -- determinism --------------------------------------------------------
+
+
+def test_deterministic_across_runs():
+    export = read_export(FIXTURE_DIR)
+    first = build_theme(export, "chiba")
+    second = build_theme(export, "chiba")
+    assert first == second
+
+
+# -- header comment -----------------------------------------------------
+
+
+def test_header_documents_mappings():
+    _, css = _theme()
+    header_end = css.index(":root")
+    header = css[:header_end]
+    assert "Auto-mapped roles" in header
+    assert "--ct-blue-core -> --jm-accent" in header
+    assert "Review / refine" in header
