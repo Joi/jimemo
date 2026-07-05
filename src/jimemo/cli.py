@@ -1,11 +1,13 @@
 import argparse
 import hashlib
 import json
+import re
 import sys
 import webbrowser
 from pathlib import Path
 
 from . import __version__
+from ._paths import REPO_ROOT
 from ._vendor import VENDOR_DIR, add_vendor_to_path
 from .checksums import verify_checksums
 from .discovery import default_search_dirs, find_templates
@@ -20,6 +22,23 @@ from .scaffold import create_template
 # needs one of them imports it locally instead.
 
 PYTHON_FLOOR = (3, 9)
+
+# Chart.js is browser JS, never imported by Python -- it lives under its own
+# vendor dir with its own SHA256SUMS, checked by doctor but never added to
+# sys.path (see _vendor.py, which is the Python-importable vendor gate).
+CHARTS_VENDOR_DIR = REPO_ROOT / "charts" / "vendor"
+
+_CHARTJS_VERSION_RE = re.compile(r"Chart\.js v([0-9]+\.[0-9]+\.[0-9]+)")
+
+
+def _chartjs_version(charts_vendor_dir: Path) -> str:
+    bundle = charts_vendor_dir / "chartjs" / "chart.umd.min.js"
+    try:
+        head = bundle.read_bytes()[:200].decode("utf-8", errors="replace")
+    except OSError:
+        return "unknown"
+    m = _CHARTJS_VERSION_RE.search(head)
+    return m.group(1) if m else "unknown"
 
 
 def cmd_doctor(args) -> int:
@@ -40,6 +59,15 @@ def cmd_doctor(args) -> int:
         ok = False
     else:
         print(f"ok   vendor checksums ({VENDOR_DIR})")
+
+    charts_problems = verify_checksums(CHARTS_VENDOR_DIR)
+    if charts_problems:
+        for p in charts_problems:
+            print(f"FAIL charts: {p}")
+        ok = False
+    else:
+        version = _chartjs_version(CHARTS_VENDOR_DIR)
+        print(f"ok   charts vendored (chart.js {version})")
 
     if problems:
         print("skip vendored imports (checksum verification failed)")

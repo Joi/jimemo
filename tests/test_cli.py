@@ -24,6 +24,7 @@ def test_doctor_on_clean_repo(capsys):
     assert "python" in out.lower()
     assert "vendor" in out.lower()
     assert "ok   vendored imports (jinja2, markdown, yaml)" in out
+    assert "ok   charts vendored (chart.js 4.5.1)" in out
 
 
 def test_no_args_shows_help(capsys):
@@ -54,6 +55,25 @@ def test_doctor_skips_vendored_imports_on_tampered_checksums(capsys, monkeypatch
     assert "checksum mismatch" in out
     assert "skip vendored imports" in out
     assert "ok   vendored imports" not in out
+
+
+def test_doctor_reports_tampered_charts_checksums(capsys, monkeypatch, tmp_path):
+    charts_vendor = tmp_path / "charts_vendor"
+    f = charts_vendor / "chartjs" / "chart.umd.min.js"
+    f.parent.mkdir(parents=True)
+    f.write_text("/*! Chart.js v4.5.1 */\nvar x = 1;\n")
+    digest = hashlib.sha256(f.read_bytes()).hexdigest()
+    (charts_vendor / "SHA256SUMS").write_text(f"{digest}  ./chartjs/chart.umd.min.js\n")
+    f.write_text("/*! Chart.js v4.5.1 */\nvar x = 2;\n")  # tamper after recording
+
+    monkeypatch.setattr("jimemo.cli.CHARTS_VENDOR_DIR", charts_vendor)
+
+    assert main(["doctor"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL charts: checksum mismatch" in out
+    assert "chartjs/chart.umd.min.js" in out
+    # the real (non-tampered) vendor/ should still verify clean independently
+    assert "ok   vendor checksums" in out
 
 
 # The next two checks need a *clean* sys.modules: every other test module in
