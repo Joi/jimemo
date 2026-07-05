@@ -294,7 +294,7 @@ def _css_url_problem(url: str) -> Optional[str]:
     )
 
 
-def _css_reference_errors(css: str) -> List[str]:
+def css_reference_errors(css: str) -> List[str]:
     """Error strings for every url()/@import reference in `css` that
     violates the allowlist (see the section comment above)."""
     errors: List[str] = []
@@ -522,7 +522,7 @@ class _Linter(HTMLParser):
             return
         css = "".join(self._style_parts)
         self._style_parts = None
-        for problem in _css_reference_errors(css):
+        for problem in css_reference_errors(css):
             self.errors.append(f"in <style> CSS: {problem}")
 
     def _flush_script(self) -> None:
@@ -755,7 +755,7 @@ class _Linter(HTMLParser):
                 )
                 continue
             if name == "style" and value:
-                for problem in _css_reference_errors(value):
+                for problem in css_reference_errors(value):
                     self.errors.append(
                         f"in style attribute on <{tag}>: {problem}"
                     )

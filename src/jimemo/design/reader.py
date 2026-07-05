@@ -19,7 +19,7 @@ Two sources, tried in order:
      fallback's kind/family inference is necessarily best-effort since
      the CSS carries no explicit `kind`/`brandFonts` metadata.
 
-Every token VALUE is validated by `_validate_token_value` before it's
+Every token VALUE is validated by `validate_token_value` before it's
 accepted, because it is destined to be dropped verbatim into a generated
 theme's `--name: <value>;` declaration (jimemo.design.mapping, a later
 task): an export is untrusted input, so a value that could break out of
@@ -37,7 +37,14 @@ from typing import List, Optional
 from ..errors import DesignImportError
 from ..sanitize import is_allowed_data_uri, is_protocol_relative, url_scheme
 
-__all__ = ["Token", "FontFace", "BrandFont", "DesignExport", "read_export"]
+__all__ = [
+    "Token",
+    "FontFace",
+    "BrandFont",
+    "DesignExport",
+    "read_export",
+    "validate_token_value",
+]
 
 
 @dataclass
@@ -123,7 +130,7 @@ def _from_manifest(manifest: dict) -> DesignExport:
             raise DesignImportError(
                 f"manifest tokens[{i}] 'name'/'value' must be strings, got {t!r}"
             )
-        _validate_token_value(name, value)
+        validate_token_value(name, value)
         kind = t.get("kind")
         defined_in = t.get("definedIn")
         tokens.append(
@@ -244,7 +251,7 @@ def _from_css_fallback(export_dir: Path) -> DesignExport:
                 if name in seen_names:
                     continue  # first definition wins across files
                 seen_names.add(name)
-                _validate_token_value(name, value)
+                validate_token_value(name, value)
                 tokens.append(
                     Token(
                         name=name,
@@ -298,7 +305,7 @@ _DATA_URI_RE = re.compile(
 )
 
 
-def _validate_token_value(name: str, value: str) -> None:
+def validate_token_value(name: str, value: str) -> None:
     """Reject a token value that isn't safe to drop verbatim into a
     generated theme's `--name: <value>;` declaration. None of these
     characters/constructs are needed by a legitimate color/spacing/font

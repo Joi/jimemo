@@ -41,8 +41,8 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from ..errors import DesignImportError
-from ..lint import _css_reference_errors
-from .reader import DesignExport, Token, _validate_token_value
+from ..lint import css_reference_errors
+from .reader import DesignExport, Token, validate_token_value
 
 __all__ = ["build_theme"]
 
@@ -383,7 +383,7 @@ def build_theme(export: DesignExport, name: str) -> str:
     @import scan.
     """
     for t in export.tokens:
-        _validate_token_value(t.name, t.value)
+        validate_token_value(t.name, t.value)
 
     mapped_lines: List[Tuple[str, str]] = []
     review_notes: List[str] = []
@@ -447,7 +447,7 @@ def build_theme(export: DesignExport, name: str) -> str:
 
     css = header + ":root {\n" + "\n".join(body_lines) + "\n}\n"
 
-    lint_errors = _css_reference_errors(css)
+    lint_errors = css_reference_errors(css)
     if lint_errors:
         raise DesignImportError(
             "generated theme {!r} failed the self-contained CSS check: {}".format(
