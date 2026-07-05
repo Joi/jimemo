@@ -8,6 +8,7 @@ data survived intact (safe, not mangled).
 """
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -15,8 +16,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from jimemo._paths import REPO_ROOT
 from jimemo.charts import (
-    PLACEHOLDER_PALETTE,
+    DEFAULT_PALETTE,
     build_chart_config,
     serialize_chart_config,
 )
@@ -126,7 +128,7 @@ def test_build_valid_columnar_mapping():
             ],
         },
     )
-    c0, c1 = PLACEHOLDER_PALETTE[0], PLACEHOLDER_PALETTE[1]
+    c0, c1 = DEFAULT_PALETTE[0], DEFAULT_PALETTE[1]
     assert config == {
         "type": "bar",
         "data": {
@@ -176,9 +178,9 @@ def test_build_pie_colors_per_slice():
     config = build_chart_config(decl, chart_data())
     dataset = config["data"]["datasets"][0]
     assert dataset["backgroundColor"] == [
-        PLACEHOLDER_PALETTE[0],
-        PLACEHOLDER_PALETTE[1],
-        PLACEHOLDER_PALETTE[2],
+        DEFAULT_PALETTE[0],
+        DEFAULT_PALETTE[1],
+        DEFAULT_PALETTE[2],
     ]
     assert "borderColor" not in dataset
 
@@ -194,6 +196,46 @@ def test_build_custom_palette_cycles():
     )
     colors = [d["backgroundColor"] for d in config["data"]["datasets"]]
     assert colors == ["#111111", "#222222", "#111111"]
+
+
+# --- default palette (dataviz toolkit) ---
+
+
+def test_default_palette_applied_deterministically():
+    # dataset i always gets DEFAULT_PALETTE[i] when palette=None (no
+    # hashing/randomness) — pin every slot, not just the first two.
+    series = [{"name": f"s{i}", "values": [i, i, i]} for i in range(len(DEFAULT_PALETTE))]
+    config = build_chart_config(DECL, chart_data(series=series))
+    colors = [d["backgroundColor"] for d in config["data"]["datasets"]]
+    assert colors == list(DEFAULT_PALETTE)
+    assert [d["borderColor"] for d in config["data"]["datasets"]] == list(DEFAULT_PALETTE)
+
+
+def test_default_palette_cycles_past_eight():
+    # a 9th+ series wraps back to slot 1 rather than inventing a hue.
+    n = len(DEFAULT_PALETTE) + 3
+    series = [{"name": f"s{i}", "values": [i]} for i in range(n)]
+    config = build_chart_config(DECL, {"labels": ["only"], "series": series})
+    colors = [d["backgroundColor"] for d in config["data"]["datasets"]]
+    expected = [DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)] for i in range(n)]
+    assert colors == expected
+
+
+def test_default_palette_matches_light_tokens_css():
+    # tokens.css is the CSS-facing documentation of this same palette;
+    # keep the two from drifting apart. Parses only the first (light,
+    # default :root) block, before the first dark-mode override.
+    tokens_css = (REPO_ROOT / "toolkit" / "tokens.css").read_text(encoding="utf-8")
+    # Split on the block's opening brace, not just the media-query text,
+    # since the file's header comment also mentions "@media (...) dark"
+    # in prose above the real block.
+    light_section = tokens_css.split("@media (prefers-color-scheme: dark) {", 1)[0]
+    found = dict(
+        re.findall(r"--jm-chart-(\d+):\s*(#[0-9a-fA-F]{6});", light_section)
+    )
+    assert found, "no --jm-chart-* tokens found in tokens.css light block"
+    token_palette = [found[str(i)] for i in range(1, len(found) + 1)]
+    assert [c.lower() for c in token_palette] == [c.lower() for c in DEFAULT_PALETTE]
 
 
 # --- build: bad data → ContentError naming the problem ---

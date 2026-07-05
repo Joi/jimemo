@@ -51,6 +51,56 @@ Scale (ratio 1.25, anchored at a 17px body): `--jm-text-xs` 0.68rem ·
 `sm` 0.85 · `md` 1.0625 · `lg` 1.3281 · `xl` 1.6602 · `2xl` 2.0752 ·
 `3xl` 2.594. Leading: `--jm-leading-tight` 1.12, `-snug` 1.4, `-body` 1.72.
 
+### Chart palette
+
+Eight categorical colors, `--jm-chart-1` through `--jm-chart-8`, for charts
+built by `src/jimemo/charts.py` (Phase 4). The order (blue, aqua, yellow,
+green, violet, red, magenta, orange) is fixed and CVD-optimized — never
+reorder it, and never cycle past 8; a 9th series wraps back to slot 1
+rather than inventing a hue.
+
+| Slot | Hue | Light | Dark |
+|---|---|---|---|
+| `--jm-chart-1` | blue | `#2a78d6` | `#3987e5` |
+| `--jm-chart-2` | aqua | `#1baf7a` | `#199e70` |
+| `--jm-chart-3` | yellow | `#eda100` | `#c98500` |
+| `--jm-chart-4` | green | `#008300` | `#008300` |
+| `--jm-chart-5` | violet | `#4a3aa7` | `#9085e9` |
+| `--jm-chart-6` | red | `#e34948` | `#e66767` |
+| `--jm-chart-7` | magenta | `#e87ba4` | `#d55181` |
+| `--jm-chart-8` | orange | `#eb6834` | `#d95926` |
+
+Deliberately brand-neutral rather than derived from `--jm-accent`: chart
+series need an identity channel distinct from the accent's editorial role
+(links, kickers, markers). This is the dataviz skill's reference categorical
+palette, unmodified, validated with `dataviz/scripts/validate_palette.js`
+against both `--jm-bg` and `--jm-surface` (a chart `<canvas>` has no
+background of its own, so it shows whichever surface it sits on):
+
+- **Light** (surface `#ffffff` or `#faf9f7`): lightness band, chroma floor,
+  and CVD separation all pass (worst adjacent ΔE 24.2). Three slots (aqua,
+  yellow, magenta) fall below 3:1 contrast — a documented WARN, not a
+  failure, that obligates a relief channel: Chart.js's own legend plus
+  direct labels satisfy this, so no further mitigation is needed.
+- **Dark** (surface `#1e2126` or `#16181b`): lightness band, chroma floor,
+  and contrast all pass. CVD separation sits in the 8–12 floor band (worst
+  adjacent ΔE 10.3) rather than the ≥12 target — legal per the skill only
+  with secondary encoding (legend + direct labels), which the chart macro
+  already provides.
+
+**Chart.js draws to `<canvas>`, which cannot read CSS custom properties.**
+These tokens exist for documentation and any CSS-styled chart chrome (axis
+labels, legends built outside canvas, etc.) — they are not read by the
+chart renderer. The actual source of truth for rendered chart colors is the
+Python list `charts.DEFAULT_PALETTE` in `src/jimemo/charts.py`, which must
+match this table's **light** values exactly (`tests/test_charts.py` parses
+`tokens.css` and asserts the two stay in sync). Only the light palette is
+baked into rendered charts: a page's light/dark appearance is a view-time
+CSS choice (`prefers-color-scheme` or `data-theme`), but canvas pixels are
+fixed at render time, so a dark-adaptive chart is a documented future item,
+not current behavior — a chart viewed in dark mode today still draws in
+light-palette colors.
+
 ### Space, radius, elevation, layout
 
 - `--jm-space-1..8`: 0.25 / 0.5 / 0.75 / 1 / 1.5 / 2.25 / 3.25 / 4.5 rem

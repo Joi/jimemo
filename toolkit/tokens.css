@@ -28,6 +28,31 @@
   --jm-positive: #2f6b46;
   --jm-negative: #a63d33;
 
+  /* ---- chart palette (categorical) ----
+   * Eight-hue dataviz palette in a fixed, CVD-optimized order — never
+   * reorder, never cycle past 8 (a 9th series folds into "Other" or
+   * small multiples, per the dataviz skill's non-negotiables). It is
+   * deliberately brand-neutral rather than derived from --jm-accent:
+   * chart series need an identity channel distinct from that
+   * editorial role. The chart library renders to a bitmap drawing
+   * surface it paints itself and cannot read custom properties from,
+   * so these tokens are CSS-only chrome/documentation — src/jimemo/
+   * charts.py DEFAULT_PALETTE is the source of truth for rendered
+   * chart colors and its light-mode values must match this block
+   * exactly (tests/test_charts.py checks the two stay in sync).
+   * Validated with dataviz/scripts/validate_palette.js against both
+   * --jm-bg and --jm-surface (the drawing surface has no fill of its
+   * own, so it shows whichever it's placed on), light and dark; see
+   * toolkit/README.md for the full report. */
+  --jm-chart-1: #2a78d6; /* blue */
+  --jm-chart-2: #1baf7a; /* aqua */
+  --jm-chart-3: #eda100; /* yellow */
+  --jm-chart-4: #008300; /* green */
+  --jm-chart-5: #4a3aa7; /* violet */
+  --jm-chart-6: #e34948; /* red */
+  --jm-chart-7: #e87ba4; /* magenta */
+  --jm-chart-8: #eb6834; /* orange */
+
   /* ---- type: two voices ----
    * prose — serif, carries content (body, titles, values)
    * ui    — sans, carries apparatus (labels, captions, table headers) */
@@ -94,6 +119,17 @@
     --jm-positive: #8ac29c;
     --jm-negative: #dd9182;
 
+    /* Same eight hues, stepped for the dark surface (not a separate
+     * palette) — see the light-mode block above for the shared note. */
+    --jm-chart-1: #3987e5;
+    --jm-chart-2: #199e70;
+    --jm-chart-3: #c98500;
+    --jm-chart-4: #008300;
+    --jm-chart-5: #9085e9;
+    --jm-chart-6: #e66767;
+    --jm-chart-7: #d55181;
+    --jm-chart-8: #d95926;
+
     --jm-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
     --jm-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.35),
       0 8px 24px rgba(0, 0, 0, 0.35);
@@ -114,6 +150,15 @@
   --jm-positive: #8ac29c;
   --jm-negative: #dd9182;
 
+  --jm-chart-1: #3987e5;
+  --jm-chart-2: #199e70;
+  --jm-chart-3: #c98500;
+  --jm-chart-4: #008300;
+  --jm-chart-5: #9085e9;
+  --jm-chart-6: #e66767;
+  --jm-chart-7: #d55181;
+  --jm-chart-8: #d95926;
+
   --jm-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --jm-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.35),
     0 8px 24px rgba(0, 0, 0, 0.35);
@@ -131,6 +176,15 @@
   --jm-border: #e4e0d8;
   --jm-positive: #2f6b46;
   --jm-negative: #a63d33;
+
+  --jm-chart-1: #2a78d6;
+  --jm-chart-2: #1baf7a;
+  --jm-chart-3: #eda100;
+  --jm-chart-4: #008300;
+  --jm-chart-5: #4a3aa7;
+  --jm-chart-6: #e34948;
+  --jm-chart-7: #e87ba4;
+  --jm-chart-8: #eb6834;
 
   --jm-shadow-sm: 0 1px 2px rgba(31, 27, 20, 0.05);
   --jm-shadow-md: 0 1px 2px rgba(31, 27, 20, 0.05),

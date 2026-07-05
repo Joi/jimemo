@@ -51,16 +51,31 @@ from typing import Any, Dict, List, Optional, Sequence
 from .errors import ContentError, ManifestError
 from .manifest import CHART_TYPES
 
-# Placeholder palette (Tableau 10 subset) — replaced by the dataviz
-# toolkit palette in Task 4. Cycled per dataset (per slice for
-# pie/doughnut, which color by data point rather than by dataset).
-PLACEHOLDER_PALETTE = (
-    "#4e79a7",
-    "#f28e2b",
-    "#59a14f",
-    "#e15759",
-    "#b07aa1",
-    "#76b7b2",
+# The dataviz-toolkit categorical palette (8 hues, fixed CVD-optimized
+# order — see the dataviz skill's color-formula.md and palette.md).
+# These are the LIGHT-mode values; they must match toolkit/tokens.css's
+# --jm-chart-1..8 exactly (tests/test_charts.py checks the two files
+# stay in sync). Chart.js renders to <canvas>, which cannot read CSS
+# custom properties, so this Python list — not the CSS tokens — is the
+# actual source of truth for rendered chart colors; the tokens exist
+# for documentation and any CSS-styled chart chrome. Only the light
+# palette is baked in: a rendered page's canvas colors are fixed at
+# render time, while light/dark is a view-time CSS choice, so a
+# dark-adaptive canvas is out of scope here (see toolkit/README.md).
+#
+# Cycled per dataset (per slice for pie/doughnut, which color by data
+# point rather than by dataset); a 9th series wraps back to slot 1
+# rather than inventing a new hue, per the dataviz skill's rule that
+# categorical hues are never generated on the fly.
+DEFAULT_PALETTE = (
+    "#2a78d6",  # blue
+    "#1baf7a",  # aqua
+    "#eda100",  # yellow
+    "#008300",  # green
+    "#4a3aa7",  # violet
+    "#e34948",  # red
+    "#e87ba4",  # magenta
+    "#eb6834",  # orange
 )
 
 
@@ -185,7 +200,7 @@ def build_chart_config(
         )
 
     if palette is None:
-        palette = PLACEHOLDER_PALETTE
+        palette = DEFAULT_PALETTE
     if (
         not isinstance(palette, (list, tuple))
         or not palette
