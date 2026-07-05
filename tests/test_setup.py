@@ -169,8 +169,24 @@ def test_dry_run_prints_the_deploy_argv(tmp_path):
     run_setup(True, MockWrangler(), tmp_path / "config.toml", io)
 
     text = io.text()
+    # Must NOT print a copy-pasteable `pages deploy <raw state_dir>`
+    # command -- a real deploy never deploys the raw state dir (only an
+    # allowlisted temp copy via _build_deploy_dir), so a user pasting a
+    # command against the raw dir verbatim would leak any synced strays
+    # (.git/, .DS_Store) that live there. See _build_deploy_dir's
+    # docstring.
     assert (
         f"npx wrangler pages deploy {state_dir} "
+        f"--project-name {DEFAULT_PROJECT_NAME} --branch main"
+    ) not in text
+    # Instead it must describe the allowlisted-copy deploy accurately.
+    assert f"allowlisted copy of {state_dir}" in text
+    assert "functions/_middleware.js, _headers, index.html" in text
+    assert ".git/, .DS_Store" in text
+    # Any wrangler command shown is against a placeholder, never a raw,
+    # copy-pasteable path.
+    assert (
+        f"npx wrangler pages deploy <allowlisted-copy> "
         f"--project-name {DEFAULT_PROJECT_NAME} --branch main"
     ) in text
     # And NOT the repo's own template dir -- that's the source it installs

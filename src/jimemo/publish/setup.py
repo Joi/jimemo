@@ -503,7 +503,13 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
         "account doesn't have one by that name yet)"
     )
     if dry_run:
-        io.print(f"  [dry-run] would run: {_deploy_argv(project, state_dir)}")
+        io.print(
+            f"  [dry-run] would deploy an allowlisted copy of {state_dir} "
+            "(functions/_middleware.js, _headers, index.html, and "
+            "published hash directories only -- .git/, .DS_Store, and "
+            "other synced strays excluded) via: "
+            f"{_deploy_argv(project, '<allowlisted-copy>')}"
+        )
     else:
         # Never deploy state_dir directly -- the SAME allowlist
         # publish()/gc() use, via the shared helper, so a friend re-
