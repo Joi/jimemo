@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo import cli
+from jimemo._paths import CHARTJS_BUNDLE
 from jimemo.errors import ContentError, ManifestError
 from jimemo.lint import lint_html
 from jimemo.manifest import load_manifest
@@ -170,6 +171,21 @@ def test_two_charts_share_one_inlined_lib(tmp_path):
     assert '<canvas id="trend"></canvas>' in html
     assert extract_config(html, "sales")["type"] == "bar"
     assert extract_config(html, "trend")["type"] == "line"
+
+
+def test_chart_lib_inlined_without_sourcemap_comment(tmp_path):
+    # The vendored bundle ships a trailing sourceMappingURL comment
+    # pointing at a .map file jimemo never vendors or ships; a rendered
+    # page must not carry that comment (it can make devtools attempt a
+    # dead fetch), while the vendored FILE ON DISK -- the checksum
+    # source of truth -- must be completely untouched by rendering.
+    before = CHARTJS_BUNDLE.read_bytes()
+    template_dir = make_chart_template_dir(tmp_path)
+    html = render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})
+    assert "sourceMappingURL" not in html
+    after = CHARTJS_BUNDLE.read_bytes()
+    assert after == before
+    assert b"sourceMappingURL" in after
 
 
 def test_chart_page_is_self_contained(tmp_path):
@@ -480,3 +496,95 @@ def test_cli_render_auto_skips_chart_template_missing_required_data(
     assert "auto-selected plain-tpl" in err
     assert rc == 0
     assert "Quarterly Sales Report" in out_path.read_text(encoding="utf-8")
+
+
+def test_cli_render_auto_skips_chart_template_with_malformed_chart_data(
+    tmp_path, monkeypatch, capsys
+):
+    # Chart data slots are schema-free (content.py passes their value
+    # through unvalidated), so load_content alone accepts a malformed
+    # {labels, series} mapping -- the manifest+content compatibility
+    # check in render auto must also try building each declared chart's
+    # config, so a template that would only blow up later in
+    # render_page (a hard ContentError from build_chart_config) is
+    # skipped here instead, falling through to a template that actually
+    # fits, rather than crashing mid-render after being selected.
+    templates_dir = tmp_path / "templates"
+    chart_manifest = json.loads(CHART_MANIFEST)
+    chart_manifest["suitability"] = {"keywords": ["sales", "quarterly"]}
+    make_chart_template_dir(
+        templates_dir, manifest_source=json.dumps(chart_manifest)
+    )
+    # The fallback must declare (but not require) a "sales_data" slot
+    # too -- content.py's load_content rejects any key a candidate's
+    # manifest doesn't declare at all, so a plain-tpl with no such slot
+    # would reject this content for an unrelated reason (unknown slot)
+    # rather than exercising the chart-validation fallthrough this test
+    # targets. A schema-free, chart-less "data" slot accepts the value
+    # without judging its {labels, series} shape.
+    plain_manifest = json.dumps({
+        "name": "plain-tpl",
+        "version": 1,
+        "title": "Plain",
+        "slots": {
+            "title": {"type": "text", "required": True},
+            "sales_data": {"type": "data"},
+        },
+        "components": [],
+    })
+    plain_dir = templates_dir / "plain-tpl"
+    plain_dir.mkdir(parents=True)
+    (plain_dir / "manifest.json").write_text(plain_manifest)
+    (plain_dir / "template.html.j2").write_text(PLAIN_TEMPLATE)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_dir])
+
+    # Matches chart-tpl's suitability keywords (so it outranks plain-tpl
+    # and is tried first). sales_data IS present -- load_content alone
+    # accepts it -- but is structurally malformed: one series value
+    # against two labels.
+    content_file = tmp_path / "content.yaml"
+    content_file.write_text(
+        "title: Quarterly Sales Report\n"
+        "sales_data:\n"
+        "  - labels: [Q1, Q2]\n"
+        "    series:\n"
+        "      - {name: Revenue, values: [1]}\n"
+    )
+    out_path = tmp_path / "out.html"
+
+    rc = cli.main(["render", "auto", str(content_file), "-o", str(out_path)])
+
+    err = capsys.readouterr().err
+    assert "auto: skipping chart-tpl (content does not fit)" in err
+    assert "auto-selected plain-tpl" in err
+    assert rc == 0
+    assert "Quarterly Sales Report" in out_path.read_text(encoding="utf-8")
+
+
+def test_cli_render_auto_exits_1_cleanly_when_only_chart_template_has_malformed_data(
+    tmp_path, monkeypatch, capsys
+):
+    # Same malformed chart data as above, but with no fallback template
+    # available: render auto must fail closed with the existing clean
+    # exit-1 path, not a render-time crash/traceback.
+    templates_dir = tmp_path / "templates"
+    make_chart_template_dir(templates_dir)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_dir])
+
+    content_file = tmp_path / "content.yaml"
+    content_file.write_text(
+        "title: Sales\n"
+        "sales_data:\n"
+        "  - labels: [Q1, Q2]\n"
+        "    series:\n"
+        "      - {name: Revenue, values: [1]}\n"
+    )
+    out_path = tmp_path / "out.html"
+
+    rc = cli.main(["render", "auto", str(content_file), "-o", str(out_path)])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert not out_path.exists()
+    assert "Traceback" not in err
+    assert "no template accepts this content" in err

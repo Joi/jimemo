@@ -16,10 +16,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jimemo._paths import REPO_ROOT
+from jimemo._paths import CHARTJS_BUNDLE, REPO_ROOT
 from jimemo.charts import (
     DEFAULT_PALETTE,
     build_chart_config,
+    chart_lib_inline_text,
     serialize_chart_config,
 )
 from jimemo.errors import ContentError, ManifestError
@@ -352,3 +353,52 @@ def test_non_dict_decl_rejected():
 def test_bad_palette_rejected():
     with pytest.raises(ValueError, match="palette"):
         build_chart_config(DECL, chart_data(), palette=[])
+
+
+# --- chart_lib_inline_text: strip sourceMappingURL at inline time ----------
+
+def test_chart_lib_inline_text_strips_sourcemap_comment(tmp_path):
+    bundle = tmp_path / "chart.umd.min.js"
+    bundle.write_text("var Chart = {};\n//# sourceMappingURL=chart.umd.min.js.map\n")
+    text = chart_lib_inline_text(bundle)
+    assert "sourceMappingURL" not in text
+    assert text == "var Chart = {};\n"
+
+
+def test_chart_lib_inline_text_strips_legacy_at_spelling(tmp_path):
+    bundle = tmp_path / "chart.umd.min.js"
+    bundle.write_text("var Chart = {};\n//@ sourceMappingURL=chart.umd.min.js.map\n")
+    text = chart_lib_inline_text(bundle)
+    assert "sourceMappingURL" not in text
+    assert text == "var Chart = {};\n"
+
+
+def test_chart_lib_inline_text_leaves_other_comments_alone():
+    # Only the trailing sourceMappingURL comment is a stripping target;
+    # every other comment in the bundle (license banners, etc.) must
+    # survive untouched.
+    bundle_text = chart_lib_inline_text(CHARTJS_BUNDLE)
+    assert "Chart.js v" in bundle_text
+    assert "@kurkle/color" in bundle_text
+
+
+def test_chart_lib_inline_text_rejects_breakout_sequence_after_stripping(tmp_path):
+    bundle = tmp_path / "bad.js"
+    bundle.write_text("var x = 1; // sneaky </scrIPT amid the code")
+    with pytest.raises(ContentError, match="cannot be inlined safely"):
+        chart_lib_inline_text(bundle)
+
+
+def test_chart_lib_inline_text_missing_file_raises_oserror(tmp_path):
+    with pytest.raises(OSError):
+        chart_lib_inline_text(tmp_path / "nope.js")
+
+
+def test_chart_lib_inline_text_does_not_mutate_vendored_file_on_disk():
+    # Reading and stripping happens purely in memory; the vendored file
+    # -- and therefore its SHA256SUMS checksum -- must be untouched.
+    before = CHARTJS_BUNDLE.read_bytes()
+    chart_lib_inline_text(CHARTJS_BUNDLE)
+    after = CHARTJS_BUNDLE.read_bytes()
+    assert before == after
+    assert b"sourceMappingURL" in after

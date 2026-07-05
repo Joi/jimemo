@@ -144,6 +144,7 @@ def cmd_render(args) -> int:
     templates_by_name = dict(templates)
 
     if args.template == "auto":
+        from .charts import build_chart_config
         from .content import load_content
         from .suggest import score_templates
 
@@ -166,14 +167,24 @@ def cmd_render(args) -> int:
         # Best score wins, but only among templates that can actually
         # take this content: the top scorer may require slots the
         # content doesn't have (or vice versa), so walk the ranking and
-        # pick the first template whose manifest loads the content.
+        # pick the first template whose manifest loads the content AND,
+        # for every chart it declares, whose data-slot value actually
+        # builds a chart config. Chart data slots are schema-free
+        # (content.py passes them through unvalidated), so load_content
+        # alone cannot tell a well-formed {labels, series} mapping from
+        # a malformed one — without this second check a template could
+        # be selected here and only fail later, mid-render, in
+        # render_page instead of falling through to the next candidate.
         chosen = None
         chosen_idx = 0
         tried = []
         for idx, entry in enumerate(ranked):
             candidate_dir = templates_by_name[entry["name"]]
             try:
-                load_content(content_path, load_manifest(candidate_dir))
+                candidate_manifest = load_manifest(candidate_dir)
+                content = load_content(content_path, candidate_manifest)
+                for chart_decl in candidate_manifest["charts"]:
+                    build_chart_config(chart_decl, content[chart_decl["data_slot"]])
             except (ManifestError, ContentError) as e:
                 tried.append(entry["name"])
                 print(

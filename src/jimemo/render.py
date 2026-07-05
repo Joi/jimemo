@@ -17,7 +17,12 @@ from typing import Any, Dict, List, Optional
 
 from ._paths import CHARTJS_BUNDLE, REPO_ROOT
 from ._vendor import add_vendor_to_path
-from .charts import build_chart_config, chart_init_js, serialize_chart_config
+from .charts import (
+    build_chart_config,
+    chart_init_js,
+    chart_lib_inline_text,
+    serialize_chart_config,
+)
 from .errors import ContentError
 from .inline import assemble_css, inline_images
 from .lint import lint_html
@@ -40,23 +45,21 @@ TEMPLATE_FILENAME = "template.html.j2"
 def _chart_lib() -> Markup:
     """The vendored Chart.js source, ready to emit verbatim inside the
     page skeleton's library <script>. This is our pinned, checksummed
-    file (doctor verifies it), not content — hence Markup."""
+    file (doctor verifies it), not content — hence Markup.
+    chart_lib_inline_text (charts.py) is the single function that reads
+    and prepares this text — it also strips the bundle's trailing
+    sourceMappingURL comment and re-checks the inline-safety invariant
+    (script element text must not be able to close the element or open
+    an HTML comment) — and lint.py's script-body allowlist calls the
+    same function, so the two can never drift on what "the inlined
+    library" is."""
     try:
-        lib = CHARTJS_BUNDLE.read_text(encoding="utf-8")
+        lib = chart_lib_inline_text(CHARTJS_BUNDLE)
     except OSError as e:
         raise ContentError(
             f"cannot read vendored Chart.js at {CHARTJS_BUNDLE}: {e} "
             "(run 'jimemo doctor')"
         ) from e
-    # Inline-safety invariant, checked at every render as defense in
-    # depth beyond the checksum: script element text must not be able
-    # to close the element or open an HTML comment. The pinned bundle
-    # contains neither sequence.
-    if "</script" in lib.lower() or "<!--" in lib:
-        raise ContentError(
-            f"vendored Chart.js at {CHARTJS_BUNDLE} contains '</script' "
-            "or '<!--' and cannot be inlined safely"
-        )
     return Markup(lib)
 
 

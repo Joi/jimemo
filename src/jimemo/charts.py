@@ -47,6 +47,7 @@ naming the problem, never silently passed into the config.
 import json
 import math
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .errors import ContentError, ManifestError
@@ -321,3 +322,50 @@ def serialize_chart_config(config: Dict[str, Any]) -> str:
     # replaces are belt-and-braces should that ever change.
     text = text.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     return text.replace("<", "\\u003c")
+
+
+# --- the vendored library's inline text -------------------------------------
+# The ONE function that turns the vendored Chart.js bundle on disk into
+# the text a page inlines into its library <script>. render.py's
+# chart_lib context value and lint.py's script-body allowlist both call
+# this, so "the inlined library" can never mean two different things to
+# the renderer and the linter.
+
+# Matches the bundle's trailing sourceMappingURL comment (current and
+# legacy `//@` spellings) only when it is the last thing in the file,
+# together with any trailing newline(s) — never elsewhere in the text.
+_SOURCE_MAPPING_URL_RE = re.compile(
+    r"[ \t]*//[#@][ \t]*sourceMappingURL=\S*[ \t]*\r?\n*\Z"
+)
+
+
+def chart_lib_inline_text(bundle_path: Path) -> str:
+    """The vendored Chart.js bundle at `bundle_path`, as text ready to
+    inline verbatim inside a page's library ``<script>`` element.
+
+    The shipped bundle ends with a ``//# sourceMappingURL=...`` comment
+    naming a ``.map`` file jimemo does not vendor or ship; left in, an
+    inlined page can make the browser's devtools attempt (and fail) a
+    fetch for it — a self-containment leak even though it never blocks
+    rendering. That comment, and only that comment, is stripped here, at
+    INLINE time: the vendored file on disk (and its SHA256SUMS entry) is
+    never touched, so the checksum-verified integrity guarantee doctor
+    checks holds unchanged.
+
+    Re-runs the breakout defense after stripping (the same one the
+    vendored file itself must already satisfy, checked here again as
+    defense in depth): the result must contain neither ``</script`` nor
+    ``<!--``, either of which could close or hide the enclosing
+    ``<script>`` element.
+
+    Raises OSError if `bundle_path` cannot be read, and ContentError if
+    the (stripped) text still contains a breakout sequence.
+    """
+    text = bundle_path.read_text(encoding="utf-8")
+    text = _SOURCE_MAPPING_URL_RE.sub("", text)
+    if "</script" in text.lower() or "<!--" in text:
+        raise ContentError(
+            f"vendored Chart.js at {bundle_path} contains '</script' "
+            "or '<!--' and cannot be inlined safely"
+        )
+    return text

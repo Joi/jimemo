@@ -6,6 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo._paths import CHARTJS_BUNDLE
+from jimemo.charts import chart_lib_inline_text
 from jimemo.lint import MAX_OUTPUT_BYTES, lint_html
 
 
@@ -897,12 +898,23 @@ def test_whitespace_around_valid_init_is_fine():
 
 
 def test_vendored_chartjs_library_body_is_accepted():
-    # The other allowed body: the exact vendored bundle text, inlined as
-    # the page's single library <script>. Read the real file so the
+    # The other allowed body: the vendored bundle's INLINED text (same
+    # chart_lib_inline_text() render.py calls), as the page's single
+    # library <script>. Use the real file via the shared function so the
     # byte-equality path is exercised end to end.
-    lib = CHARTJS_BUNDLE.read_text(encoding="utf-8")
+    lib = chart_lib_inline_text(CHARTJS_BUNDLE)
     errors, _ = _lint_with_charts(f"<script>{lib}</script>")
     assert errors == []
+
+
+def test_raw_vendored_chartjs_bundle_with_sourcemap_comment_is_rejected():
+    # lint's allowlist matches the INLINED form only (sourceMappingURL
+    # stripped) -- the raw on-disk bundle, sourceMappingURL comment and
+    # all, is not a body render.py ever emits and must not be accepted
+    # as if it were.
+    lib = CHARTJS_BUNDLE.read_text(encoding="utf-8")
+    errors, _ = _lint_with_charts(f"<script>{lib}</script>")
+    assert any("unexpected inline" in e for e in errors)
 
 
 def test_two_declared_inits_both_accepted():

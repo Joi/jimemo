@@ -76,7 +76,8 @@ from html.parser import HTMLParser
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from ._paths import CHARTJS_BUNDLE
-from .charts import parse_chart_init_js
+from .charts import chart_lib_inline_text, parse_chart_init_js
+from .errors import ContentError
 from .sanitize import (
     browser_url_form,
     is_allowed_image_data_uri,
@@ -385,16 +386,18 @@ class _Linter(HTMLParser):
         self._check_script_body(body)
 
     def _chart_lib(self) -> Optional[str]:
-        """The vendored Chart.js bundle text (stripped), read lazily on
-        the first inline script judged — never at module import — and
-        None if unreadable, in which case no body can match the library
-        form and everything but a valid chart init fails closed."""
+        """The vendored Chart.js bundle text in its INLINED form (same
+        chart_lib_inline_text charts.py function render.py calls to
+        build the library <script> — sourceMappingURL stripped, breakout
+        defense re-checked), stripped of surrounding whitespace, read
+        lazily on the first inline script judged — never at module
+        import — and None if unreadable or unsafe to inline, in which
+        case no body can match the library form and everything but a
+        valid chart init fails closed."""
         if self._chart_lib_cache is _UNSET:
             try:
-                self._chart_lib_cache = CHARTJS_BUNDLE.read_text(
-                    encoding="utf-8"
-                ).strip()
-            except OSError:
+                self._chart_lib_cache = chart_lib_inline_text(CHARTJS_BUNDLE).strip()
+            except (OSError, ContentError):
                 self._chart_lib_cache = None
         return self._chart_lib_cache
 
