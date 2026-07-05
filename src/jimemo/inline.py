@@ -56,10 +56,38 @@ _SRCSET_RES = (
 )
 
 
+def personal_themes_dir() -> Path:
+    """Where `jimemo import-design` installs a generated theme, and the
+    first place `assemble_css` looks when resolving `--theme NAME` (see
+    `_resolve_theme_path`). Mirrors discovery.py's `~/.jimemo/templates`
+    personal dir; respects a `HOME` override (Path.home() reads it),
+    which is what lets tests point this at a temp directory."""
+    return Path.home() / ".jimemo" / "themes"
+
+
+def _theme_search_dirs() -> List[Path]:
+    """Directories to look for `<theme>.css` in, in resolution order.
+    Personal comes first — unlike discovery.py's template search, where
+    the repo copy wins a name collision, a theme a user just imported
+    (jimemo.design.importer) should actually take effect even if it
+    happens to share a name with a repo theme, since applying the
+    import is the entire point of running the command."""
+    return [personal_themes_dir(), TOOLKIT_DIR / "themes"]
+
+
+def _resolve_theme_path(theme: str) -> Optional[Path]:
+    for base in _theme_search_dirs():
+        candidate = base / f"{theme}.css"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
     """tokens.css + base.css + only the components the manifest lists
-    (+ a toolkit/themes/<theme>.css override, if one exists) + print-force.css,
-    always last.
+    (+ a <theme>.css override, if one resolves — see `_resolve_theme_path`:
+    ~/.jimemo/themes/ is checked before the repo's toolkit/themes/) +
+    print-force.css, always last.
 
     print-force.css is re-appended unconditionally, after the theme, even
     though base.css already contains the same rules: a theme file is free
@@ -79,8 +107,8 @@ def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
             raise ManifestError(f"manifest lists unknown component {name!r} ({css_path})")
         parts.append(css_path.read_text(encoding="utf-8"))
     if theme:
-        theme_path = TOOLKIT_DIR / "themes" / f"{theme}.css"
-        if theme_path.is_file():
+        theme_path = _resolve_theme_path(theme)
+        if theme_path is not None:
             parts.append(theme_path.read_text(encoding="utf-8"))
     parts.append((TOOLKIT_DIR / "print-force.css").read_text(encoding="utf-8"))
     return "\n".join(parts)

@@ -110,6 +110,7 @@ from .charts import chart_lib_inline_text, parse_chart_init_js
 from .errors import ContentError
 from .sanitize import (
     browser_url_form,
+    is_allowed_data_uri,
     is_allowed_image_data_uri,
     is_protocol_relative,
     normalize_url,
@@ -219,10 +220,13 @@ _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
 # cursor, @font-face src, ...) and an @import both load their target at
 # style-apply time, so <style> element text and style="..." attribute
 # values are scanned against their own allowlist: a url() may hold an
-# inlined raster data:image URI or a pure #fragment (a same-document
-# paint-server reference, e.g. fill:url(#grad), which never fetches),
-# nothing else. This is broader than the HTML fetch-on-load attribute
-# allowlist above, which no longer accepts a fragment at all — a CSS
+# inlined raster data:image URI, an inlined data:font URI (ttf/otf/woff/
+# woff2 — a design-theme @font-face's only legitimate src form; see
+# jimemo.design.importer's --embed-fonts), or a pure #fragment (a
+# same-document paint-server reference, e.g. fill:url(#grad), which
+# never fetches), nothing else. This is broader than the HTML
+# fetch-on-load attribute allowlist above, which no longer accepts a
+# fragment at all — a CSS
 # url() fragment is a reference to an element in the current document,
 # not a resource-load attribute pointing at an external resource, so
 # the two are judged differently on purpose. @import's target is a
@@ -266,9 +270,13 @@ def _css_unescape(text: str) -> str:
 
 def _css_url_problem(url: str) -> Optional[str]:
     """Why `url` (extracted from a CSS url() reference) violates the
-    resource allowlist, or None if allowed — the same two allowed forms
-    as _check_fetch_on_load_url: an inlined raster data:image URI or a
-    pure #fragment (e.g. an SVG paint server, fill:url(#grad))."""
+    resource allowlist, or None if allowed — an inlined raster
+    data:image URI, an inlined data:font URI (the only legitimate form
+    of an @font-face src — see jimemo.design.importer), or a pure
+    #fragment (e.g. an SVG paint server, fill:url(#grad)); the same
+    allowance `is_allowed_data_uri` already grants a design-token value
+    (jimemo.design.reader.validate_token_value), applied here to a CSS
+    url() specifically."""
     if browser_url_form(url).startswith("#"):
         return None
     shown = url if len(url) <= _MAX_URL_IN_MESSAGE else (
@@ -276,11 +284,12 @@ def _css_url_problem(url: str) -> Optional[str]:
     )
     scheme = url_scheme(url)
     if scheme == "data":
-        if is_allowed_image_data_uri(url):
+        if is_allowed_data_uri(url):
             return None
         return (
             f"url({shown!r}) is a disallowed data: URI — only raster "
-            "data:image/{png,jpeg,jpg,gif,webp} may be referenced"
+            "data:image/{png,jpeg,jpg,gif,webp} or "
+            "data:font/{ttf,otf,woff,woff2} may be referenced"
         )
     if scheme in ("http", "https") or is_protocol_relative(url):
         return f"url({shown!r}) is a remote resource and would fetch at view time"
