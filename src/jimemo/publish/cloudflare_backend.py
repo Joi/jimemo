@@ -110,22 +110,47 @@ def _install_state_dir_assets(state_dir: Union[str, Path]) -> None:
 
 
 def _ensure_state_dir_assets(state_dir: Union[str, Path]) -> None:
-    """Self-heal: install the baseline functions/_middleware.js +
-    _headers + index.html into ``state_dir`` if the tombstone Function is
-    missing -- e.g. `jimemo publish setup` was interrupted before it
-    finished, the state directory was deleted or partially copied between
-    machines, or some other partial state -- without clobbering an
-    already-installed copy.
+    """Self-heal: install any of the baseline functions/_middleware.js +
+    _headers + index.html that are missing from ``state_dir`` -- e.g.
+    `jimemo publish setup` was interrupted before it finished, the state
+    directory was deleted or partially copied between machines, or some
+    other partial state -- without clobbering whichever of the three are
+    already installed.
 
-    Called by publish() before every deploy: publish() always redeploys
-    the WHOLE state directory (see module docstring), so a deploy that
-    goes out without functions/_middleware.js has no tombstone Function
-    at all, and every hash ever published to that project starts serving
-    ``?purge`` as a silent no-op (or a 405) with no warning to whoever
-    just ran `jimemo publish`.
+    Checks all three files individually rather than just the middleware:
+    a state dir can have functions/_middleware.js but be missing _headers
+    (losing the noindex/noarchive headers on every live page) or
+    index.html, e.g. if a partial copy or an interrupted setup dropped
+    only some of the baseline. Each missing file is reinstalled from
+    CLOUDFLARE_ASSETS_DIR independently; a file that's already present is
+    left untouched (so a hand-edited or otherwise customized copy of any
+    one of the three survives a self-heal of the other two).
+
+    Called by publish() and gc() before every deploy: both always
+    redeploy the WHOLE state directory (see module docstring), so a
+    deploy that goes out missing functions/_middleware.js has no
+    tombstone Function at all -- every hash ever published to that
+    project starts serving ``?purge`` as a silent no-op (or a 405) with
+    no warning -- and one missing _headers or index.html means the live
+    site silently loses the noindex/noarchive headers or the tombstone
+    landing page.
     """
-    if not (Path(state_dir) / "functions" / "_middleware.js").is_file():
-        _install_state_dir_assets(state_dir)
+    state_dir = Path(state_dir)
+    functions_dir = state_dir / "functions"
+    middleware = functions_dir / "_middleware.js"
+    headers = state_dir / "_headers"
+    index_html = state_dir / "index.html"
+
+    if middleware.is_file() and headers.is_file() and index_html.is_file():
+        return
+
+    functions_dir.mkdir(parents=True, exist_ok=True)
+    if not middleware.is_file():
+        shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "_middleware.js", middleware)
+    if not headers.is_file():
+        shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "_headers", headers)
+    if not index_html.is_file():
+        shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "index.html", index_html)
 
 
 class CloudflarePublisher(Publisher):
@@ -180,12 +205,29 @@ class CloudflarePublisher(Publisher):
         bundle some other way; without this, publish() would deploy a
         site with no tombstone Function and ``?purge`` would silently
         stop working.
+
+        If the deploy itself fails, the just-staged ``<hash>/`` directory
+        is removed from the state directory before the error propagates
+        (as a PublishError). The state directory is redeployed in full on
+        every publish() call (see module docstring), so leaving a staged
+        hash behind after a failed deploy would make the NEXT publish()
+        redeploy a hash that was never actually served -- an orphan URL
+        that looks live in `list()`/`gc()` bookkeeping but 404s. Only a
+        successful deploy leaves the staged hash in persistent state.
         """
         self._ensure_wrangler_available()
         self._state_dir.mkdir(parents=True, exist_ok=True)
         _ensure_state_dir_assets(self._state_dir)
-        page_hash, _staged_dir = stage_page(Path(html_path), self._state_dir)
-        self._wrangler.pages_deploy(self._cf.project, self._state_dir)
+        page_hash, staged_dir = stage_page(Path(html_path), self._state_dir)
+        try:
+            self._wrangler.pages_deploy(self._cf.project, self._state_dir)
+        except Exception as exc:
+            # Best-effort: only remove the hash dir THIS call just staged,
+            # never touch other hashes or functions/_middleware.js.
+            shutil.rmtree(staged_dir, ignore_errors=True)
+            if isinstance(exc, PublishError):
+                raise
+            raise PublishError(f"cloudflare pages deploy failed: {exc}") from exc
         return f"{self._cf.base_url.rstrip('/')}/{page_hash}/"
 
     def purge(self, hash_or_url: str) -> None:

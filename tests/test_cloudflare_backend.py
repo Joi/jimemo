@@ -8,7 +8,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo.config import CloudflareConfig, PublishConfig
 from jimemo.errors import PublishError
-from jimemo.publish.cloudflare_backend import CLOUDFLARE_ASSETS_DIR, CloudflarePublisher
+from jimemo.publish.cloudflare_backend import (
+    CLOUDFLARE_ASSETS_DIR,
+    CloudflarePublisher,
+    _ensure_state_dir_assets,
+)
 from jimemo.publish.wrangler import MockWrangler, Wrangler
 
 HASH_RE = re.compile(r"[a-f0-9]{24}")
@@ -105,6 +109,38 @@ def test_publish_raises_clear_error_when_wrangler_unavailable(tmp_path):
     with pytest.raises(PublishError) as exc:
         publisher.publish(html)
     assert "wrangler" in str(exc.value).lower()
+
+
+def test_publish_rolls_back_staged_hash_dir_when_deploy_fails(tmp_path):
+    """publish() stages the new hash into the PERSISTENT state dir before
+    deploying. If pages_deploy raises, that staged dir must not survive --
+    otherwise the next publish() would redeploy a hash that was never
+    actually served (an orphan URL that 404s but looks live in list()).
+    Only a successful deploy may leave the staged hash behind."""
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    wrangler = MockWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    state_dir = tmp_path / "state"
+
+    url1 = publisher.publish(html)
+    hash1 = _hash_from_url(url1)
+    before = sorted(p.name for p in state_dir.iterdir())
+
+    class FailingWrangler(MockWrangler):
+        def pages_deploy(self, project, directory, branch="main"):
+            self.calls.append(("pages_deploy", project, str(directory), branch))
+            raise RuntimeError("deploy exploded")
+
+    publisher._wrangler = FailingWrangler()
+
+    with pytest.raises(PublishError):
+        publisher.publish(html)
+
+    after = sorted(p.name for p in state_dir.iterdir())
+    assert after == before  # no orphan hash dir left behind
+    assert (state_dir / hash1).is_dir()  # unrelated pre-existing hash untouched
+    assert (state_dir / "functions" / "_middleware.js").is_file()  # middleware untouched
 
 
 def test_purge_extracts_hash_from_bare_hash_and_writes_timestamp(tmp_path):
@@ -381,6 +417,48 @@ def test_gc_does_not_clobber_already_installed_middleware(tmp_path):
     publisher.gc()
 
     assert (functions_dir / "_middleware.js").read_text() == sentinel
+
+
+def test_ensure_state_dir_assets_reinstalls_only_the_missing_file(tmp_path):
+    """_ensure_state_dir_assets must check _headers and index.html, not
+    just the middleware -- a state dir missing only _headers previously
+    stayed that way forever (deploys silently lost the noindex/noarchive
+    headers) because the old check short-circuited on the middleware
+    alone being present."""
+    state_dir = tmp_path / "state"
+    functions_dir = state_dir / "functions"
+    functions_dir.mkdir(parents=True)
+    middleware_sentinel = "// pre-existing middleware, must survive\n"
+    (functions_dir / "_middleware.js").write_text(middleware_sentinel)
+    (state_dir / "index.html").write_text("pre-existing index, must survive\n")
+    # _headers deliberately absent.
+
+    _ensure_state_dir_assets(state_dir)
+
+    assert (functions_dir / "_middleware.js").read_text() == middleware_sentinel
+    assert (state_dir / "index.html").read_text() == "pre-existing index, must survive\n"
+    assert (state_dir / "_headers").is_file()
+    assert (state_dir / "_headers").read_text(encoding="utf-8") == (
+        CLOUDFLARE_ASSETS_DIR / "_headers"
+    ).read_text(encoding="utf-8")
+
+
+def test_ensure_state_dir_assets_is_a_noop_when_all_three_present(tmp_path):
+    state_dir = tmp_path / "state"
+    functions_dir = state_dir / "functions"
+    functions_dir.mkdir(parents=True)
+    middleware_sentinel = "// mw\n"
+    headers_sentinel = "# headers\n"
+    index_sentinel = "<html>index</html>\n"
+    (functions_dir / "_middleware.js").write_text(middleware_sentinel)
+    (state_dir / "_headers").write_text(headers_sentinel)
+    (state_dir / "index.html").write_text(index_sentinel)
+
+    _ensure_state_dir_assets(state_dir)
+
+    assert (functions_dir / "_middleware.js").read_text() == middleware_sentinel
+    assert (state_dir / "_headers").read_text() == headers_sentinel
+    assert (state_dir / "index.html").read_text() == index_sentinel
 
 
 def test_default_wrangler_is_scoped_to_configured_account_id(tmp_path):
