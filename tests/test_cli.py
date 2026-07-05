@@ -22,3 +22,9 @@ def test_doctor_on_clean_repo(capsys):
 def test_no_args_shows_help(capsys):
     assert main([]) == 2
     assert "usage" in capsys.readouterr().err.lower()
+
+
+def test_list_runs(capsys):
+    assert main(["list"]) == 0
+    out = capsys.readouterr().out
+    assert ("no templates installed yet" in out) or ("\t" in out)
