@@ -1,0 +1,45 @@
+/* figure-block — a mounted plate with a numbered caption.
+ * The optional label ("Fig. 1") speaks in the apparatus voice. */
+
+.jm-figure-block {
+  margin-block: var(--jm-space-6);
+  break-inside: avoid;
+}
+
+.jm-figure-block__media {
+  width: 100%;
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-md);
+  background: var(--jm-surface);
+}
+
+/* --plain: no frame, for images that carry their own edges */
+.jm-figure-block--plain .jm-figure-block__media {
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.jm-figure-block__caption {
+  margin-block-start: var(--jm-space-3);
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-sm);
+  line-height: 1.5;
+  color: var(--jm-muted);
+}
+
+.jm-figure-block__label {
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-accent);
+  margin-inline-end: 0.6em;
+}
+
+.jm-figure-block__credit {
+  display: block;
+  margin-block-start: var(--jm-space-1);
+  font-size: var(--jm-text-xs);
+  letter-spacing: 0.04em;
+}

@@ -1,0 +1,351 @@
+/* jimemo base
+ *
+ * Reset, document defaults, layout container, prose typography, focus,
+ * print. Everything reads from tokens.css.
+ *
+ * Convention: markdown-rendered slots go inside a `.jm-prose` wrapper;
+ * toolkit components are SIBLINGS of prose blocks, never children, so
+ * prose element selectors cannot leak into component internals.
+ */
+
+/* ---- reset ---- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+img,
+picture,
+svg,
+video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+/* ---- document ---- */
+
+body {
+  background: var(--jm-bg);
+  color: var(--jm-text);
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-md);
+  line-height: var(--jm-leading-body);
+  font-kerning: normal;
+  overflow-wrap: break-word;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--jm-accent) 22%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--jm-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ---- layout ---- */
+
+.jm-container {
+  max-width: var(--jm-content-max);
+  margin-inline: auto;
+  padding-inline: var(--jm-space-5);
+  padding-block: var(--jm-space-7) var(--jm-space-8);
+}
+
+.jm-container--wide {
+  max-width: var(--jm-content-wide);
+}
+
+.jm-footer {
+  max-width: var(--jm-content-max);
+  margin-inline: auto;
+  padding-inline: var(--jm-space-5);
+  padding-block-end: var(--jm-space-7);
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  letter-spacing: 0.04em;
+  color: var(--jm-muted);
+}
+
+.jm-footer:empty {
+  display: none;
+}
+
+/* ---- prose typography ---- */
+
+.jm-prose {
+  font-family: var(--jm-font-prose);
+}
+
+.jm-prose h1,
+.jm-prose h2,
+.jm-prose h3 {
+  font-weight: 400;
+  line-height: var(--jm-leading-tight);
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.jm-prose h1 {
+  font-size: var(--jm-text-2xl);
+  margin-block: var(--jm-space-7) var(--jm-space-4);
+}
+
+/* Hairline above each section: quiet structure between h2 blocks. */
+.jm-prose h2 {
+  font-size: var(--jm-text-xl);
+  margin-block: var(--jm-space-7) var(--jm-space-4);
+  padding-block-start: var(--jm-space-5);
+  border-block-start: 1px solid var(--jm-border);
+}
+
+.jm-prose > h1:first-child,
+.jm-prose > h2:first-child,
+.jm-prose > h3:first-child {
+  margin-block-start: 0;
+}
+
+.jm-prose > h2:first-child {
+  padding-block-start: 0;
+  border-block-start: 0;
+}
+
+.jm-prose h3 {
+  font-size: var(--jm-text-lg);
+  font-weight: 600;
+  margin-block: var(--jm-space-6) var(--jm-space-3);
+}
+
+/* At h4 the apparatus voice enters the prose. */
+.jm-prose h4 {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+  margin-block: var(--jm-space-5) var(--jm-space-2);
+}
+
+.jm-prose p {
+  margin-block: var(--jm-space-4);
+}
+
+.jm-prose a {
+  color: var(--jm-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, var(--jm-accent) 45%, transparent);
+  transition: text-decoration-color 0.15s ease;
+}
+
+.jm-prose a:hover {
+  text-decoration-color: currentColor;
+}
+
+.jm-prose ul,
+.jm-prose ol {
+  margin-block: var(--jm-space-4);
+  padding-inline-start: 1.4em;
+}
+
+.jm-prose li {
+  margin-block: var(--jm-space-1);
+}
+
+.jm-prose li::marker {
+  color: var(--jm-muted);
+}
+
+.jm-prose blockquote {
+  margin-block: var(--jm-space-5);
+  margin-inline: 0;
+  padding-inline-start: var(--jm-space-5);
+  border-inline-start: 2px solid var(--jm-accent);
+  font-style: italic;
+}
+
+.jm-prose blockquote cite {
+  display: block;
+  margin-block-start: var(--jm-space-2);
+  font-family: var(--jm-font-ui);
+  font-style: normal;
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+}
+
+.jm-prose code {
+  font-family: var(--jm-font-mono);
+  font-size: 0.875em;
+  background: rgba(127, 127, 127, 0.12);
+  background: color-mix(in srgb, var(--jm-text) 7%, transparent);
+  padding: 0.1em 0.35em;
+  border-radius: var(--jm-radius-sm);
+}
+
+.jm-prose pre {
+  margin-block: var(--jm-space-5);
+  padding: var(--jm-space-4) var(--jm-space-5);
+  background: var(--jm-surface);
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-md);
+  font-family: var(--jm-font-mono);
+  font-size: var(--jm-text-sm);
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.jm-prose pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* Booktable: heavy rule above, hairline rows — for raw markdown tables.
+ * (Structured data should use the data-table component instead.) */
+.jm-prose table {
+  width: 100%;
+  margin-block: var(--jm-space-5);
+  border-block-start: 2px solid var(--jm-text);
+  font-size: var(--jm-text-sm);
+}
+
+.jm-prose th {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+  text-align: start;
+  padding: var(--jm-space-2) var(--jm-space-3);
+  border-block-end: 1px solid var(--jm-text);
+}
+
+.jm-prose td {
+  padding: var(--jm-space-2) var(--jm-space-3);
+  border-block-end: 1px solid var(--jm-border);
+}
+
+.jm-prose th:first-child,
+.jm-prose td:first-child {
+  padding-inline-start: 0;
+}
+
+.jm-prose th:last-child,
+.jm-prose td:last-child {
+  padding-inline-end: 0;
+}
+
+/* Section break: a short rule, not a full-width divider. */
+.jm-prose hr {
+  border: 0;
+  width: 4rem;
+  height: 1px;
+  background: var(--jm-border);
+  margin-block: var(--jm-space-7);
+  margin-inline: auto;
+}
+
+.jm-prose img {
+  border-radius: var(--jm-radius-sm);
+  margin-block: var(--jm-space-5);
+}
+
+.jm-prose figure {
+  margin-block: var(--jm-space-5);
+}
+
+.jm-prose figcaption {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+  margin-block-start: var(--jm-space-2);
+}
+
+.jm-prose strong {
+  font-weight: 700;
+}
+
+/* ---- print ---- */
+
+@media print {
+  /* Paper decides the theme: force light tokens whatever the screen said. */
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: light;
+
+    --jm-bg: #ffffff;
+    --jm-surface: #ffffff;
+    --jm-text: #1c1a17;
+    --jm-muted: #57524a;
+    --jm-accent: #17597a;
+    --jm-accent-contrast: #ffffff;
+    --jm-border: #c9c4bb;
+    --jm-positive: #2f6b46;
+    --jm-negative: #a63d33;
+
+    --jm-shadow-sm: none;
+    --jm-shadow-md: none;
+  }
+
+  @page {
+    margin: 18mm 16mm;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  .jm-container {
+    max-width: none;
+    padding: 0;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid;
+  }
+
+  .jm-prose pre {
+    white-space: pre-wrap;
+    overflow-x: visible;
+  }
+}

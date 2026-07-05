@@ -1,0 +1,37 @@
+{#- jimemo base page skeleton.
+
+    Templates extend this and fill the blocks:
+        {% extends "page.html.j2" %}
+        {% block title %}…{% endblock %}
+        {% block content %}…{% endblock %}
+        {% block footer %}…{% endblock %}      (optional)
+        {% block head_extra %}{% endblock %}   (optional)
+
+    Context variables:
+        styles — full <style> tag injected by the renderer (Markup)
+        theme  — optional "light"/"dark" to pin the theme; otherwise
+                 the page follows the OS via prefers-color-scheme
+        lang   — html lang attribute, defaults to "en"
+        wide   — true widens the content column for grids/dashboards
+
+    No JavaScript, ever: the output must render identically from a
+    file:// double-click, an unlisted link, and a printer.
+-#}
+<!doctype html>
+<html lang="{{ lang|default('en') }}"{% if theme|default(none) %} data-theme="{{ theme }}"{% endif %}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<title>{% block title %}jimemo{% endblock %}</title>
+{{ styles }}
+{% block head_extra %}{% endblock %}
+</head>
+<body>
+<main class="jm-container{% if wide|default(false) %} jm-container--wide{% endif %}">
+{% block content %}{% endblock %}
+</main>
+<footer class="jm-footer">{% block footer %}{% endblock %}</footer>
+</body>
+</html>

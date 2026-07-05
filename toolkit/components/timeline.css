@@ -1,0 +1,80 @@
+/* timeline — a vertical rail with square markers (catalog registration
+ * marks, not bullet dots). Dates speak in the apparatus voice. */
+
+.jm-timeline {
+  list-style: none;
+  margin-block: var(--jm-space-6);
+  padding: 0;
+}
+
+.jm-timeline__item {
+  position: relative;
+  padding-inline-start: var(--jm-space-6);
+  padding-block-end: var(--jm-space-6);
+  border-inline-start: 1px solid var(--jm-border);
+}
+
+.jm-timeline__item:last-child {
+  border-inline-start-color: transparent;
+  padding-block-end: 0;
+}
+
+.jm-timeline__marker {
+  position: absolute;
+  inset-inline-start: -5px;
+  inset-block-start: 0.28em;
+  width: 9px;
+  height: 9px;
+  background: var(--jm-bg);
+  border: 2px solid var(--jm-accent);
+}
+
+.jm-timeline__date {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+  margin-block-end: var(--jm-space-1);
+}
+
+.jm-timeline__title {
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-md);
+  font-weight: 700;
+  line-height: var(--jm-leading-snug);
+}
+
+.jm-timeline__body {
+  margin-block-start: var(--jm-space-2);
+  line-height: var(--jm-leading-body);
+}
+
+.jm-timeline__body > :first-child {
+  margin-block-start: 0;
+}
+
+.jm-timeline__body > :last-child {
+  margin-block-end: 0;
+}
+
+.jm-timeline__media {
+  margin-block-start: var(--jm-space-3);
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-sm);
+  max-width: 24rem;
+}
+
+.jm-timeline__badges {
+  margin-block-start: var(--jm-space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jm-space-2);
+}
+
+@media print {
+  .jm-timeline__item {
+    break-inside: avoid;
+  }
+}

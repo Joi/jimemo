@@ -1,0 +1,69 @@
+/* card-grid — catalog entries: image plate, serif title, apparatus meta.
+ * Cards keep their media at 4:3 like mounted photographs. */
+
+.jm-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--jm-space-5);
+  margin-block: var(--jm-space-6);
+}
+
+.jm-card-grid__item {
+  background: var(--jm-surface);
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-md);
+  box-shadow: var(--jm-shadow-sm);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  break-inside: avoid;
+}
+
+.jm-card-grid__media {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--jm-border);
+}
+
+.jm-card-grid__body {
+  padding: var(--jm-space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--jm-space-2);
+  flex: 1;
+}
+
+.jm-card-grid__title {
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-md);
+  font-weight: 700;
+  line-height: var(--jm-leading-snug);
+  letter-spacing: -0.005em;
+}
+
+.jm-card-grid__title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.jm-card-grid__title a:hover {
+  color: var(--jm-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.jm-card-grid__text {
+  font-size: var(--jm-text-sm);
+  line-height: 1.55;
+}
+
+.jm-card-grid__meta {
+  margin-block-start: auto;
+  padding-block-start: var(--jm-space-2);
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  letter-spacing: 0.04em;
+  color: var(--jm-muted);
+}

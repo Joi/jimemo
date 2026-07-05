@@ -1,0 +1,70 @@
+/* page-header — the masthead of every jimemo page.
+ * Signature: a short indigo bar above the kicker, serif title,
+ * apparatus meta row, hairline rule below. */
+
+.jm-page-header {
+  margin-block-end: var(--jm-space-7);
+  padding-block-end: var(--jm-space-5);
+  border-block-end: 1px solid var(--jm-border);
+}
+
+.jm-page-header::before {
+  content: "";
+  display: block;
+  width: 2.75rem;
+  height: 3px;
+  border-radius: 1.5px;
+  background: var(--jm-accent);
+  margin-block-end: var(--jm-space-4);
+}
+
+.jm-page-header__kicker {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-accent);
+  margin-block-end: var(--jm-space-2);
+}
+
+.jm-page-header__title {
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-3xl);
+  font-weight: 400;
+  line-height: var(--jm-leading-tight);
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.jm-page-header__subtitle {
+  margin-block-start: var(--jm-space-3);
+  font-size: var(--jm-text-lg);
+  line-height: var(--jm-leading-snug);
+  font-style: italic;
+  color: var(--jm-muted);
+  text-wrap: balance;
+}
+
+.jm-page-header__meta {
+  margin-block-start: var(--jm-space-4);
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--jm-space-2);
+  row-gap: var(--jm-space-1);
+}
+
+.jm-page-header__meta-item + .jm-page-header__meta-item::before {
+  content: "\00B7"; /* interpunct */
+  margin-inline-end: var(--jm-space-2);
+  opacity: 0.55;
+}
+
+@media (max-width: 480px) {
+  .jm-page-header__title {
+    font-size: var(--jm-text-2xl);
+  }
+}

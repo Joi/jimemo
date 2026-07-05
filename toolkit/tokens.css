@@ -1,0 +1,138 @@
+/* jimemo design tokens
+ *
+ * The only file that defines color, type, and rhythm. Components and
+ * templates consume these custom properties and never hard-code values;
+ * a theme is a file that overrides them.
+ *
+ * Palette: unbleached paper and sumi ink, with a dyed-indigo (ai) accent.
+ * Dark is the same page after dark — ink-slate ground, paper-toned text.
+ *
+ * Three blocks below must stay in sync:
+ *   1. :root                              — light (default)
+ *   2. @media (prefers-color-scheme: dark) :root  — dark via OS
+ *   3. :root[data-theme="dark"] / [data-theme="light"] — explicit override,
+ *      wins over the media query in both directions by specificity.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- color roles ---- */
+  --jm-bg: #faf9f7;
+  --jm-surface: #ffffff;
+  --jm-text: #262521;
+  --jm-muted: #6b6459;
+  --jm-accent: #17597a;
+  --jm-accent-contrast: #ffffff;
+  --jm-border: #e4e0d8;
+  --jm-positive: #2f6b46;
+  --jm-negative: #a63d33;
+
+  /* ---- type: two voices ----
+   * prose — serif, carries content (body, titles, values)
+   * ui    — sans, carries apparatus (labels, captions, table headers) */
+  --jm-font-prose: "Iowan Old Style", Palatino, "Palatino Linotype",
+    "Book Antiqua", Georgia, "Hiragino Mincho ProN", "Yu Mincho",
+    "Noto Serif CJK JP", serif;
+  --jm-font-ui: system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic",
+    "Noto Sans CJK JP", sans-serif;
+  --jm-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo,
+    Consolas, "Liberation Mono", monospace;
+
+  /* 1.25-ratio modular scale anchored at a 17px (1.0625rem) body */
+  --jm-text-xs: 0.68rem;
+  --jm-text-sm: 0.85rem;
+  --jm-text-md: 1.0625rem;
+  --jm-text-lg: 1.3281rem;
+  --jm-text-xl: 1.6602rem;
+  --jm-text-2xl: 2.0752rem;
+  --jm-text-3xl: 2.594rem;
+
+  --jm-leading-tight: 1.12;
+  --jm-leading-snug: 1.4;
+  --jm-leading-body: 1.72;
+  --jm-tracking-caps: 0.14em; /* for uppercase apparatus text */
+
+  /* ---- spacing scale ---- */
+  --jm-space-1: 0.25rem;
+  --jm-space-2: 0.5rem;
+  --jm-space-3: 0.75rem;
+  --jm-space-4: 1rem;
+  --jm-space-5: 1.5rem;
+  --jm-space-6: 2.25rem;
+  --jm-space-7: 3.25rem;
+  --jm-space-8: 4.5rem;
+
+  /* ---- radius ---- */
+  --jm-radius-sm: 4px;
+  --jm-radius-md: 8px;
+  --jm-radius-lg: 14px;
+
+  /* ---- elevation: whispers, not drops ---- */
+  --jm-shadow-sm: 0 1px 2px rgba(31, 27, 20, 0.05);
+  --jm-shadow-md: 0 1px 2px rgba(31, 27, 20, 0.05),
+    0 6px 18px rgba(31, 27, 20, 0.06);
+
+  /* ---- layout ---- */
+  --jm-content-max: 46rem;  /* reading column, ~70ch of serif */
+  --jm-content-wide: 72rem; /* grids, dashboards, wide tables */
+}
+
+/* ---- dark via OS preference ---- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --jm-bg: #16181b;
+    --jm-surface: #1e2126;
+    --jm-text: #e9e5dc;
+    --jm-muted: #a29b8d;
+    --jm-accent: #85b8d3;
+    --jm-accent-contrast: #0e2431;
+    --jm-border: #34383f;
+    --jm-positive: #8ac29c;
+    --jm-negative: #dd9182;
+
+    --jm-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --jm-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.35),
+      0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* ---- explicit theme attribute: wins over the media query ---- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --jm-bg: #16181b;
+  --jm-surface: #1e2126;
+  --jm-text: #e9e5dc;
+  --jm-muted: #a29b8d;
+  --jm-accent: #85b8d3;
+  --jm-accent-contrast: #0e2431;
+  --jm-border: #34383f;
+  --jm-positive: #8ac29c;
+  --jm-negative: #dd9182;
+
+  --jm-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --jm-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.35),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --jm-bg: #faf9f7;
+  --jm-surface: #ffffff;
+  --jm-text: #262521;
+  --jm-muted: #6b6459;
+  --jm-accent: #17597a;
+  --jm-accent-contrast: #ffffff;
+  --jm-border: #e4e0d8;
+  --jm-positive: #2f6b46;
+  --jm-negative: #a63d33;
+
+  --jm-shadow-sm: 0 1px 2px rgba(31, 27, 20, 0.05);
+  --jm-shadow-md: 0 1px 2px rgba(31, 27, 20, 0.05),
+    0 6px 18px rgba(31, 27, 20, 0.06);
+}
