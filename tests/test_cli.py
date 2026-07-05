@@ -2,6 +2,7 @@ import hashlib
 import subprocess
 import sys
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import pytest
 
@@ -141,3 +142,152 @@ def test_doctor_tampered_checksums_never_imports_vendored_libs(tmp_path):
     assert "checksum mismatch" in result.stdout
     assert "skip vendored imports" in result.stdout
     assert "OK" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# publish dispatch (Phase 5 Task 2): a fake command config + a monkeypatched
+# subprocess.run stand in for a real notes-publish invocation. Patching
+# subprocess.run (rather than CommandPublisher's injectable `runner`) mirrors
+# what actually happens end to end -- the CLI's own construction of
+# CommandPublisher via get_publisher() never sees a test-injected runner.
+# ---------------------------------------------------------------------------
+
+def _write_command_config(tmp_path, command="fake-publish-cli"):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(f'[publish]\nbackend = "command"\ncommand = "{command}"\n')
+    return cfg_file
+
+
+def test_publish_file_prints_url(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(_write_command_config(tmp_path)))
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return CompletedProcess(argv, 0, stdout="https://notes.ito.com/abc123/\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["publish", str(html)]) == 0
+    assert capsys.readouterr().out.strip() == "https://notes.ito.com/abc123/"
+    assert calls == [["fake-publish-cli", str(html)]]
+
+
+def test_publish_file_with_title(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(_write_command_config(tmp_path)))
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return CompletedProcess(argv, 0, stdout="https://notes.ito.com/abc123/\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["publish", str(html), "--title", "Q3 Briefing"]) == 0
+    assert calls == [["fake-publish-cli", str(html), "--title", "Q3 Briefing"]]
+
+
+def test_publish_missing_file_errors(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(_write_command_config(tmp_path)))
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kw: (_ for _ in ()).throw(
+        AssertionError("subprocess.run should not be called for a missing file")
+    ))
+
+    missing = tmp_path / "nope.html"
+    assert main(["publish", str(missing)]) == 1
+    assert "file not found" in capsys.readouterr().err
+
+
+def test_publish_purge_dispatches(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(_write_command_config(tmp_path)))
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return CompletedProcess(argv, 0, stdout="purged: abc123\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["publish", "purge", "abc123"]) == 0
+    assert calls == [["fake-publish-cli", "purge", "abc123"]]
+    assert "abc123" in capsys.readouterr().out
+
+
+def test_publish_purge_missing_arg_errors(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(_write_command_config(tmp_path)))
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kw: (_ for _ in ()).throw(
+        AssertionError("subprocess.run should not be called without a purge target")
+    ))
+
+    assert main(["publish", "purge"]) == 2
+    assert "missing hash or URL" in capsys.readouterr().err
+
+
+def test_publish_list_dispatches(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(_write_command_config(tmp_path)))
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return CompletedProcess(argv, 0, stdout="HASH  TITLE\nabc123  Note\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["publish", "list"]) == 0
+    assert calls == [["fake-publish-cli", "list"]]
+    out = capsys.readouterr().out
+    assert "HASH  TITLE" in out
+    assert "abc123  Note" in out
+
+
+def test_publish_gc_dispatches(tmp_path, monkeypatch):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(_write_command_config(tmp_path)))
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["publish", "gc"]) == 0
+    assert calls == [["fake-publish-cli", "gc"]]
+
+
+def test_publish_no_target_errors(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(_write_command_config(tmp_path)))
+
+    assert main(["publish"]) == 2
+    assert "provide a file" in capsys.readouterr().err
+
+
+def test_publish_missing_config_errors_cleanly(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "does-not-exist.toml"))
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+
+    assert main(["publish", str(html)]) == 1
+    assert "jimemo publish setup" in capsys.readouterr().err
+
+
+def test_publish_command_failure_surfaces_stderr(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(_write_command_config(tmp_path)))
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+
+    def fake_run(argv, **kwargs):
+        return CompletedProcess(argv, 1, stdout="", stderr="wrangler deploy failed")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert main(["publish", str(html)]) == 1
+    assert "wrangler deploy failed" in capsys.readouterr().err

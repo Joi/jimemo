@@ -344,6 +344,57 @@ def cmd_info(args) -> int:
     return 0
 
 
+def cmd_publish(args) -> int:
+    from .config import load_config
+    from .errors import ConfigError, PublishError
+    from .publish import get_publisher
+
+    try:
+        publisher = get_publisher(load_config())
+    except (ConfigError, PublishError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    # "publish" doubles as a small command group: `jimemo publish <file>`
+    # publishes, while `purge`/`list`/`gc` as the first positional dispatch
+    # to the matching Publisher method (mirroring notes-publish's own
+    # top-level UX). This is a deliberate simplification over nested
+    # argparse subparsers, which can't cleanly mix a bare positional (the
+    # file to publish) with subcommands in the same slot. The tradeoff: a
+    # file literally named "purge", "list", or "gc" (no extension) cannot
+    # be published this way -- an acceptable, documented edge case.
+    target = args.target
+    try:
+        if target == "purge":
+            if not args.arg:
+                print("jimemo publish purge: missing hash or URL", file=sys.stderr)
+                return 2
+            publisher.purge(args.arg)
+            print(f"purged: {args.arg}")
+        elif target == "list":
+            for entry in publisher.list():
+                print(entry)
+        elif target == "gc":
+            publisher.gc()
+        elif target is None:
+            print(
+                "jimemo publish: provide a file to publish, or purge/list/gc",
+                file=sys.stderr,
+            )
+            return 2
+        else:
+            html_path = Path(target)
+            if not html_path.is_file():
+                print(f"file not found: {html_path}", file=sys.stderr)
+                return 1
+            print(publisher.publish(html_path, args.title))
+    except PublishError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    return 0
+
+
 def cmd_new_template(args) -> int:
     try:
         template_dir = create_template(args.name)
@@ -383,6 +434,18 @@ def main(argv=None) -> int:
     suggest_p.add_argument("content", help="content file (.md, .json, or .yaml)")
     suggest_p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
+    publish_p = sub.add_parser(
+        "publish", help="publish a rendered HTML file to an unlisted link"
+    )
+    publish_p.add_argument(
+        "target", nargs="?",
+        help='HTML file to publish, or one of "purge", "list", "gc"',
+    )
+    publish_p.add_argument(
+        "arg", nargs="?", help='hash or URL (only used with "purge")',
+    )
+    publish_p.add_argument("--title", help="title for the published page")
+
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
@@ -397,6 +460,8 @@ def main(argv=None) -> int:
         return cmd_new_template(args)
     if args.command == "suggest":
         return cmd_suggest(args)
+    if args.command == "publish":
+        return cmd_publish(args)
 
     parser.print_usage(sys.stderr)
     return 2
