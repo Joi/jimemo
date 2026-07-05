@@ -1,0 +1,39 @@
+{#- data-dashboard — a metrics/ops report: masthead, optional intro
+    prose, a row of headline stat-tiles, one or more data-tables, and
+    optional closing notes. Phase 3: stat tiles + tables only, no chart
+    scripts (manifest 'charts' stays empty). Extends the toolkit page
+    skeleton; components used: page-header, stat-tile, data-table. -#}
+{% extends "page.html.j2" %}
+{% import "macros.html.j2" as ui %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{{ ui.page_header(title,
+     kicker="Dashboard",
+     subtitle=subtitle|default(none),
+     meta=([period] if period|default(none) else [])) }}
+
+{% if intro|default(none) %}
+<div class="jm-prose">
+{{ intro }}
+</div>
+{% endif %}
+
+{% set headline_stats = stats|default([]) %}
+{% if headline_stats %}
+{{ ui.stat_row(headline_stats) }}
+{% endif %}
+
+{% for t in tables|default([]) %}
+{{ ui.data_table(t.columns, t.rows, caption=t.caption|default(none)) }}
+{% endfor %}
+
+{% if notes|default(none) %}
+<div class="jm-prose">
+{{ notes }}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block footer %}Rendered with jimemo{% endblock %}

@@ -1,0 +1,26 @@
+{
+  "name": "data-dashboard",
+  "version": 1,
+  "title": "Data dashboard",
+  "description": "A metrics or ops report: masthead, headline stat tiles, and one or more data tables.",
+  "slots": {
+    "title": {"type": "text", "required": true},
+    "subtitle": {"type": "text"},
+    "period": {"type": "text"},
+    "intro": {"type": "markdown"},
+    "stats": {
+      "type": "data",
+      "items": {"label": "text", "value": "text", "delta": "text"}
+    },
+    "tables": {"type": "data"},
+    "notes": {"type": "markdown"}
+  },
+  "components": ["page-header", "stat-tile", "data-table"],
+  "charts": [],
+  "suitability": {
+    "keywords": ["dashboard", "metrics", "kpi", "report", "analytics", "numbers", "stats"],
+    "content_kinds": ["tabular-data"],
+    "good_for": "Weekly or periodic metrics and ops reports: headline numbers plus supporting breakdown tables.",
+    "labeled_hash": "36b9757d0098e3a25436fbf1f2b70279ded3cb56b378dd1aaa7a816c9b508466"
+  }
+}
