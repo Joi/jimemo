@@ -237,9 +237,12 @@ def import_design(
         css, embedded_font_families, embedded_bytes = _embed_fonts(css, export, export_dir)
 
     themes_dir = personal_themes_dir()
-    themes_dir.mkdir(parents=True, exist_ok=True)
     theme_path = themes_dir / f"{theme_name}.css"
-    theme_path.write_text(css, encoding="utf-8")
+    try:
+        themes_dir.mkdir(parents=True, exist_ok=True)
+        theme_path.write_text(css, encoding="utf-8")
+    except OSError as e:
+        raise DesignImportError(f"could not write theme to {theme_path}: {e}") from e
 
     return ImportResult(
         name=theme_name,

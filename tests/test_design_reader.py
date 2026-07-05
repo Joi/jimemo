@@ -85,6 +85,101 @@ def test_css_fallback_no_manifest_and_no_css_raises(tmp_path):
         read_export(export_dir)
 
 
+# -- css fallback: data-URI values must not be truncated at their own ';' --
+#
+# The fallback scanner used to capture a custom-property value with
+# `[^;]+`, which stops at the FIRST ';' in the block -- but a legitimate
+# `url(data:...)` or bare `data:...;base64,...` value contains a ';' that
+# is not a declaration terminator. Only exercised on this manifest-less
+# path: the manifest path's values come out of JSON, which never gets
+# split on ';' in the first place.
+
+
+def _css_fallback_export(tmp_path: Path, css_body: str) -> Path:
+    export_dir = tmp_path / "css-export"
+    (export_dir / "tokens").mkdir(parents=True)
+    (export_dir / "tokens" / "colors.css").write_text(css_body)
+    return export_dir
+
+
+def test_css_fallback_preserves_url_data_uri_semicolon(tmp_path):
+    export_dir = _css_fallback_export(
+        tmp_path, ":root { --logo: url(data:image/png;base64,AAAA); }\n"
+    )
+    export = read_export(export_dir)
+    logo = next(t for t in export.tokens if t.name == "--logo")
+    assert logo.value == "url(data:image/png;base64,AAAA)"
+
+
+def test_css_fallback_preserves_bare_data_uri_semicolon(tmp_path):
+    export_dir = _css_fallback_export(
+        tmp_path, ":root { --x: data:font/ttf;base64,BBBB; }\n"
+    )
+    export = read_export(export_dir)
+    x = next(t for t in export.tokens if t.name == "--x")
+    assert x.value == "data:font/ttf;base64,BBBB"
+
+
+def test_css_fallback_normal_value_still_parsed(tmp_path):
+    export_dir = _css_fallback_export(tmp_path, ":root { --c: #fff; }\n")
+    export = read_export(export_dir)
+    assert export.tokens[0].name == "--c"
+    assert export.tokens[0].value == "#fff"
+
+
+def test_css_fallback_two_declarations_one_line_still_split(tmp_path):
+    export_dir = _css_fallback_export(tmp_path, ":root { --a: 1; --b: 2; }\n")
+    export = read_export(export_dir)
+    values = {t.name: t.value for t in export.tokens}
+    assert values == {"--a": "1", "--b": "2"}
+
+
+def test_css_fallback_data_uri_and_following_token_both_parsed(tmp_path):
+    # A data: URI value followed by an ordinary declaration on the same
+    # line -- the ';' inside the data URI must not be mistaken for the
+    # terminator, and the SUBSEQUENT declaration must still be found.
+    export_dir = _css_fallback_export(
+        tmp_path,
+        ":root { --icon: url(data:image/png;base64,PHN2Zz4=); --gap: 4px; }\n",
+    )
+    export = read_export(export_dir)
+    values = {t.name: t.value for t in export.tokens}
+    assert values == {
+        "--icon": "url(data:image/png;base64,PHN2Zz4=)",
+        "--gap": "4px",
+    }
+
+
+def test_css_fallback_data_prefix_with_no_comma_handled_sanely(tmp_path):
+    # `data:evil` never reaches a ',', so it doesn't look like a real
+    # data: URI metadata prefix and gets no special treatment: the first
+    # ';' terminates it (same as any other value), and the declaration
+    # that follows is still parsed correctly rather than being swallowed
+    # into a runaway scan for a comma that never comes.
+    export_dir = _css_fallback_export(
+        tmp_path, ":root { --bad: data:evil; --ok: 1px; }\n"
+    )
+    export = read_export(export_dir)
+    values = {t.name: t.value for t in export.tokens}
+    assert values == {"--bad": "data:evil", "--ok": "1px"}
+
+
+def test_css_fallback_non_base64_data_shaped_value_rejected(tmp_path):
+    # This DOES reach a comma (`data:text/plain;charset=utf8,payload`),
+    # so it's captured WHOLE rather than truncated at the first ';' --
+    # but it isn't an allowlisted `;base64,` data URI, so it still
+    # carries a bare ';' when it reaches validate_token_value, which
+    # correctly rejects it as a possible declaration injection. This is
+    # the intended backstop: a genuinely malformed ';'-bearing value that
+    # isn't a real data: URI or url() must still end up rejected, not
+    # silently truncated into something that looks safe.
+    export_dir = _css_fallback_export(
+        tmp_path, ":root { --bad: data:text/plain;charset=utf8,payload; }\n"
+    )
+    with pytest.raises(DesignImportError, match="--bad"):
+        read_export(export_dir)
+
+
 # -- security: value sanitization -----------------------------------------
 
 

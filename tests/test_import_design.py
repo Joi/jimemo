@@ -131,6 +131,48 @@ def test_import_header_lists_mappings(tmp_path, monkeypatch):
     assert "--ct-blue-core -> --jm-accent" in result.header
 
 
+# -- theme-write filesystem errors: clean DesignImportError, no traceback --
+
+
+def test_import_theme_dir_mkdir_oserror_wrapped(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    def raising_mkdir(self, *args, **kwargs):
+        raise OSError("Read-only file system")
+
+    monkeypatch.setattr(Path, "mkdir", raising_mkdir)
+
+    with pytest.raises(DesignImportError, match="could not write theme"):
+        import_design(FIXTURE_DIR, name="chiba")
+
+
+def test_import_theme_write_text_oserror_wrapped(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    def raising_write_text(self, *args, **kwargs):
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr(Path, "write_text", raising_write_text)
+
+    with pytest.raises(DesignImportError, match="could not write theme"):
+        import_design(FIXTURE_DIR, name="chiba")
+
+
+def test_cli_theme_write_oserror_returns_rc1_not_traceback(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    def raising_write_text(self, *args, **kwargs):
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr(Path, "write_text", raising_write_text)
+
+    rc = main(["import-design", str(FIXTURE_DIR), "--name", "chiba"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "could not write theme" in err
+    assert "Traceback" not in err
+
+
 # -- render with an imported theme (end-to-end via the CLI) -------------
 
 

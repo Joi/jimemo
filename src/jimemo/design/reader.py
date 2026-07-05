@@ -207,7 +207,24 @@ _ROOT_BLOCK_RE = re.compile(r":root\s*\{([^}]*)\}", re.DOTALL)
 # `validate_token_name`'s anchored allowlist below, so the two paths can
 # never disagree about what a token name may contain.
 _TOKEN_NAME_BODY = r"--[a-zA-Z0-9_-]+"
-_CUSTOM_PROP_RE = re.compile(r"(" + _TOKEN_NAME_BODY + r")\s*:\s*([^;]+);")
+# A declaration's NAME and its trailing `:` -- deliberately not the whole
+# `--name: value;` shape, because the value can legitimately contain a
+# `;` (a data: URI's own separator; see `_value_end` below), so the value
+# span has to be found by scanning forward from here rather than by a
+# `[^;]+` regex group that would stop at that first `;`.
+_DECL_HEAD_RE = re.compile(r"(" + _TOKEN_NAME_BODY + r")\s*:\s*")
+# The metadata prefix of a *bare* (not url()-wrapped) data: URI value --
+# `data:<mediatype>[;param]*,` -- matched only anchored at the value's own
+# start. None of these character classes admit whitespace, ',', or ';',
+# so this can only ever match a well-formed-looking prefix that actually
+# reaches a real ','; a value that merely starts with `data:` but never
+# reaches such a comma (malformed, or not a data: URI at all) simply
+# fails to match and falls through to ordinary first-';'-terminates
+# handling in `_value_end` -- there is no speculative semicolon-skipping
+# that could run away past the true end of this declaration.
+_BARE_DATA_URI_HEAD_RE = re.compile(
+    r"data:[a-zA-Z0-9.+/-]*(?:;[a-zA-Z0-9=_.+-]*)*,", re.IGNORECASE
+)
 _FONT_FACE_RE = re.compile(r"@font-face\s*\{([^}]*)\}", re.DOTALL)
 _FONT_FACE_FAMILY_RE = re.compile(r"font-family\s*:\s*([^;]+);")
 _FONT_FACE_WEIGHT_RE = re.compile(r"font-weight\s*:\s*([^;]+);")
@@ -244,6 +261,65 @@ def _infer_kind(name: str, value: str) -> str:
     if re.match(r"^-?\d+(\.\d+)?(px|rem|em|%)?$", lvalue):
         return "spacing"
     return "other"
+
+
+def _value_end(text: str, start: int) -> Optional[int]:
+    """The index of the `;` in `text` that terminates the declaration
+    value beginning at `start`, or None if it never terminates
+    (unclosed/truncated CSS -- same as the old `[^;]+;` regex simply not
+    matching). A `;` does NOT terminate the value when it is either:
+
+      - inside `url( ... )` -- tracked via paren depth, so a url()
+        argument (most commonly a data: URI, e.g.
+        `url(data:image/png;base64,AAAA)`) can contain a literal `;`
+        without ending the declaration early; or
+      - part of a bare (not url()-wrapped) data: URI's own
+        `data:<mediatype>[;param]*,<payload>` metadata prefix, matched
+        via `_BARE_DATA_URI_HEAD_RE` anchored at `start` -- see that
+        regex's docstring for why this can't run away past the true end
+        of the declaration on malformed input."""
+    i = start
+    head = _BARE_DATA_URI_HEAD_RE.match(text, start)
+    if head is not None:
+        i = head.end()
+    paren_depth = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "(":
+            paren_depth += 1
+        elif c == ")":
+            if paren_depth > 0:
+                paren_depth -= 1
+        elif c == ";" and paren_depth == 0:
+            return i
+        i += 1
+    return None
+
+
+def _iter_custom_properties(body: str):
+    """Yield `(name, value)` for each `--name: value;` declaration in
+    `body` (a :root block's interior), splitting on the `;` that
+    actually terminates each declaration -- see `_value_end` -- rather
+    than the first `;` found, which truncates a legitimate
+    `url(data:...)` or bare `data:...;base64,...` value. Declaration
+    heads are found the same way `re.finditer` would (searching for the
+    next match anywhere after the previous one), so text between
+    declarations that doesn't fit the `--name:` shape (e.g. an
+    injection-shaped name lacking the shared token-name charset) is
+    skipped exactly as before."""
+    pos = 0
+    n = len(body)
+    while pos < n:
+        head = _DECL_HEAD_RE.search(body, pos)
+        if head is None:
+            return
+        value_start = head.end()
+        end = _value_end(body, value_start)
+        if end is None:
+            return  # unterminated declaration -- nothing further to find
+        yield head.group(1).strip(), body[value_start:end].strip()
+        pos = end + 1
 
 
 def _fallback_font_files(body: str, css_path: Path, export_dir: Path) -> List[str]:
@@ -307,12 +383,11 @@ def _from_css_fallback(export_dir: Path) -> DesignExport:
 
         for block in _ROOT_BLOCK_RE.finditer(text):
             found_root_block = True
-            for m in _CUSTOM_PROP_RE.finditer(block.group(1)):
-                name, value = m.group(1).strip(), m.group(2).strip()
+            for name, value in _iter_custom_properties(block.group(1)):
                 if name in seen_names:
                     continue  # first definition wins across files
                 seen_names.add(name)
-                # _CUSTOM_PROP_RE shares validate_token_name's charset, so
+                # _DECL_HEAD_RE shares validate_token_name's charset, so
                 # this can't fail here -- called anyway so the guarantee
                 # is enforced at the boundary, not assumed of a regex.
                 validate_token_name(name)
@@ -469,7 +544,7 @@ def validate_token_name(name: str) -> None:
     hostile manifest name like `x: red } body { display:none } :root{ --y`
     would break out of the :root block and inject a live rule -- and
     css_reference_errors does not catch declaration/brace injection. On
-    the CSS-fallback path _CUSTOM_PROP_RE can only ever extract a name
+    the CSS-fallback path _DECL_HEAD_RE can only ever extract a name
     matching this same charset; on the manifest path this check is the
     only gate."""
     if not _TOKEN_NAME_RE.match(name):
