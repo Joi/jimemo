@@ -1,5 +1,8 @@
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -41,6 +44,25 @@ def test_duplicate_name_first_dir_wins(tmp_path):
 
 def test_missing_dirs_are_ignored(tmp_path):
     assert find_templates([tmp_path / "nope"]) == []
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root bypasses directory permission checks",
+)
+def test_unreadable_search_dir_is_skipped_with_warning(tmp_path, capsys):
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    make_template(tmp_path / "open", "briefing")
+    blocked.chmod(0o000)
+    try:
+        found = find_templates([blocked, tmp_path / "open"])
+    finally:
+        blocked.chmod(0o755)  # restore so tmp_path teardown can clean up
+
+    assert [name for name, _ in found] == ["briefing"]
+    err = capsys.readouterr().err
+    assert "blocked" in err
 
 
 def test_default_search_dirs():

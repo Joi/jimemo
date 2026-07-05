@@ -2,6 +2,8 @@ import hashlib
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import jimemo
@@ -9,7 +11,9 @@ from jimemo.cli import main
 
 
 def test_version_flag(capsys):
-    assert main(["--version"]) == 0
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--version"])
+    assert exc_info.value.code == 0
     assert jimemo.__version__ in capsys.readouterr().out
 
 

@@ -5,9 +5,10 @@ the stdlib come from vendor/. Call add_vendor_to_path() before importing
 jinja2/markupsafe/markdown anywhere in this package.
 """
 import sys
-from pathlib import Path
 
-VENDOR_DIR = Path(__file__).resolve().parents[2] / "vendor"
+from ._paths import REPO_ROOT
+
+VENDOR_DIR = REPO_ROOT / "vendor"
 
 
 def add_vendor_to_path() -> None:

@@ -59,17 +59,14 @@ def main(argv=None) -> int:
         prog="jimemo",
         description="Self-contained single-file HTML pages from templates.",
     )
-    parser.add_argument("--version", action="store_true",
-                        help="print version and exit")
+    parser.add_argument("--version", action="version",
+                        version=f"jimemo {__version__}")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("doctor", help="check environment and vendor integrity")
     sub.add_parser("list", help="list available templates")
 
     args = parser.parse_args(argv)
 
-    if args.version:
-        print(f"jimemo {__version__}")
-        return 0
     if args.command == "doctor":
         return cmd_doctor(args)
     if args.command == "list":
