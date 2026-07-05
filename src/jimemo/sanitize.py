@@ -30,6 +30,7 @@ import html
 import re
 from html.parser import HTMLParser
 from typing import List, Optional, Tuple
+from urllib.parse import urlsplit
 
 # Everything python-markdown (with the tables and fenced_code
 # extensions) emits for legitimate markdown constructs.
@@ -91,6 +92,34 @@ def url_scheme(value: str) -> str:
     return head.split(":", 1)[0]
 
 
+def is_allowed_image_data_uri(value: str) -> bool:
+    """True if `value`, normalized, is a ``data:image/`` URI other than
+    ``svg+xml`` — the sanitizer's own allowance for ``img src`` (SVG can
+    itself carry markup/script, so it's excluded even though ``<img>``
+    never executes it; see module docstring). Shared with lint's
+    last-gate check on template-authored ``<img src>`` values (a
+    text/data slot written straight into a macro's ``<img src>`` bypasses
+    markdown sanitization entirely) and with inline_images' earlier,
+    non-authoritative check on the same values."""
+    compact = normalize_url(value)
+    return compact.startswith("data:image/") and not compact.startswith("data:image/svg+xml")
+
+
+def is_protocol_relative(value: str) -> bool:
+    """True if `value` has no scheme but resolves a netloc once
+    normalized — a protocol-relative reference like
+    ``//cdn.example/x.css``. The browser fetches these with the
+    embedding page's own scheme, so they're a remote resource exactly
+    like an explicit http(s) URL, even though `url_scheme` reports
+    ``""`` for them (otherwise shaped like a relative URL). Used by
+    lint's last-gate external-resource check on ``<img src>``/``<link
+    href>``; a bare root-relative path (``/x``) or fragment (``#x``)
+    has no netloc and is correctly not flagged."""
+    if url_scheme(value):
+        return False
+    return bool(urlsplit(normalize_url(value)).netloc)
+
+
 def _url_allowed(value: str, *, allow_mailto: bool, allow_data_image: bool) -> bool:
     """True if the URL's scheme is acceptable (see module docstring for
     the per-context rules)."""
@@ -105,12 +134,7 @@ def _url_allowed(value: str, *, allow_mailto: bool, allow_data_image: bool) -> b
         return True
     if scheme == "mailto" and allow_mailto:
         return True
-    if (
-        scheme == "data"
-        and allow_data_image
-        and compact.startswith("data:image/")
-        and not compact.startswith("data:image/svg+xml")
-    ):
+    if scheme == "data" and allow_data_image and is_allowed_image_data_uri(value):
         return True
     return False
 

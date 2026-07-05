@@ -139,3 +139,63 @@ def test_relative_and_data_and_fragment_urls_are_fine():
     errors, warnings = lint_html(html, {"charts": []})
     assert errors == []
     assert warnings == []
+
+
+# --- data: image URIs on <img src> (Fix 1) ---
+
+def test_svg_data_uri_img_src_errors():
+    html = '<html><body><img src="data:image/svg+xml,<svg onload=alert(1)>"></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("data URI" in e for e in errors)
+
+
+def test_svg_data_uri_base64_img_src_errors():
+    html = '<html><body><img src="data:image/svg+xml;base64,PHN2Zz4="></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("data URI" in e for e in errors)
+
+
+def test_non_image_data_uri_img_src_errors():
+    html = '<html><body><img src="data:text/html,<script>alert(1)</script>"></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("data URI" in e for e in errors)
+
+
+def test_png_data_uri_img_src_ok():
+    html = '<html><body><img src="data:image/png;base64,AAAA"></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert errors == []
+
+
+# --- protocol-relative resource URLs (Fix 2) ---
+
+def test_protocol_relative_img_src_errors():
+    html = '<html><body><img src="//host/x.png"></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("//host/x.png" in e for e in errors)
+
+
+def test_protocol_relative_link_href_errors():
+    html = '<html><head><link rel="stylesheet" href="//cdn.example/x.css"></head></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("//cdn.example/x.css" in e for e in errors)
+
+
+def test_root_relative_img_src_not_flagged_as_protocol_relative():
+    # A bare "/x" has no netloc; it's a different (non-fetch) concern that
+    # this lint doesn't police. Must not newly error here.
+    html = '<html><body><img src="/local/x.png"></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert errors == []
+
+
+def test_relative_img_src_and_fragment_and_data_still_fine_with_protocol_relative_check():
+    html = (
+        "<html><body>"
+        '<img src="img/x.png">'
+        '<a href="#frag">x</a>'
+        '<img src="data:image/png;base64,AAAA">'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": []})
+    assert errors == []

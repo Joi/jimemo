@@ -16,7 +16,7 @@ template-authored handler or script-scheme URL fails closed too.
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Tuple
 
-from .sanitize import url_scheme
+from .sanitize import is_allowed_image_data_uri, is_protocol_relative, url_scheme
 
 MAX_OUTPUT_BYTES = 8_000_000
 
@@ -67,18 +67,30 @@ class _Linter(HTMLParser):
                     f"{scheme}: URI found on <{tag} {name}> — "
                     "script-scheme URLs are never allowed"
                 )
-            elif scheme in ("http", "https"):
-                # Output must be self-contained: nothing may fetch at
-                # view time. <a href> is fine (fetches only on click);
-                # img/link fetch on load, so a surviving remote URL there
-                # is a hard error (inline_images already converted every
-                # legitimate local image to a data: URI).
-                if tag == "img" and name == "src":
+                continue
+            # Output must be self-contained: nothing may fetch at view
+            # time. <a href> is fine (fetches only on click); img/link
+            # fetch on load, so a surviving remote URL there is a hard
+            # error (inline_images already converted every legitimate
+            # local image to a data: URI). A protocol-relative URL
+            # (``//host/x``) has no scheme but is just as much a fetch —
+            # the browser resolves it against the page's own scheme.
+            if tag == "img" and name == "src":
+                if scheme == "data":
+                    if not is_allowed_image_data_uri(value):
+                        self.errors.append(
+                            f"<img src={value!r}> is not an allowed image "
+                            "data URI — only data:image/{png,jpeg,jpg,gif,webp} "
+                            "are permitted (svg+xml can carry markup; other "
+                            "data: subtypes aren't images at all)"
+                        )
+                elif scheme in ("http", "https") or is_protocol_relative(value):
                     self.errors.append(
                         f"external image {value!r} would fetch at view time — "
                         "use a local file so it can be inlined"
                     )
-                elif tag == "link" and name == "href":
+            elif tag == "link" and name == "href":
+                if scheme in ("http", "https") or is_protocol_relative(value):
                     self.errors.append(
                         f"external <link href={value!r}> would fetch at view "
                         "time — external stylesheets/resources are never allowed"

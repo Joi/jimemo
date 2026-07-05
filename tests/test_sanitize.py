@@ -5,7 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jimemo.sanitize import sanitize_html
+from jimemo.sanitize import is_allowed_image_data_uri, is_protocol_relative, sanitize_html
 
 
 # --- the three reviewer payloads ---
@@ -168,6 +168,63 @@ def test_data_uri_not_allowed_on_a_href():
 
 def test_relative_img_src_kept():
     assert sanitize_html('<img alt="a" src="figures/plot.png">') == '<img alt="a" src="figures/plot.png" />'
+
+
+# --- is_allowed_image_data_uri (shared helper, Fix 1) ---
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "data:image/png;base64,AAAA",
+        "data:image/jpeg;base64,AAAA",
+        "data:image/gif;base64,AAAA",
+        "data:image/webp;base64,AAAA",
+    ],
+)
+def test_is_allowed_image_data_uri_true_for_allowed_image_subtypes(value):
+    assert is_allowed_image_data_uri(value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "data:image/svg+xml,<svg onload=alert(1)>",
+        "data:image/svg+xml;base64,PHN2Zz4=",
+        "data:text/html,<script>alert(1)</script>",
+        "data:text/html;base64,PHNjcmlwdD4=",
+        "https://example.com/a.png",
+        "",
+    ],
+)
+def test_is_allowed_image_data_uri_false_for_svg_and_non_image(value):
+    assert is_allowed_image_data_uri(value) is False
+
+
+# --- is_protocol_relative (shared helper, Fix 2) ---
+
+@pytest.mark.parametrize(
+    "value",
+    ["//cdn.example/x.css", "//host", "//HOST/X.PNG"],
+)
+def test_is_protocol_relative_true(value):
+    assert is_protocol_relative(value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.com/x",
+        "http://example.com/x",
+        "/local/x.png",
+        "img/x.png",
+        "#frag",
+        "",
+        "data:image/png;base64,AAAA",
+        "///x",
+    ],
+)
+def test_is_protocol_relative_false(value):
+    assert is_protocol_relative(value) is False
 
 
 # --- structure / escaping ---

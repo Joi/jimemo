@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from ._paths import REPO_ROOT
 from .errors import ContentError, ManifestError
+from .sanitize import is_allowed_image_data_uri
 
 TOOLKIT_DIR = REPO_ROOT / "toolkit"
 
@@ -67,6 +68,13 @@ def inline_images(html: str, base_dir: Path) -> Tuple[str, List[str]]:
     sources are left alone (lint rejects them separately). Missing local
     files are collected and raised together as a ContentError.
 
+    A ``data:`` src is passed through unchanged, except a disallowed
+    image subtype (``svg+xml``, or a non-image ``data:`` URI entirely)
+    is rejected here too — defense in depth ahead of lint, which remains
+    the authoritative gate for slot values written straight into a
+    template's ``<img src>`` (bypassing markdown sanitization, and
+    possibly this function's regex, entirely).
+
     Content may be untrusted, and this function reads local files, so it
     fails closed on any src that could leak a file from outside the
     content's own directory: absolute paths, paths whose resolved real
@@ -80,7 +88,11 @@ def inline_images(html: str, base_dir: Path) -> Tuple[str, List[str]]:
 
     def replace(match: "re.Match") -> str:
         prefix, quote, src = match.group(1), match.group(2), match.group(3)
-        if not src or src.startswith("data:"):
+        if not src:
+            return match.group(0)
+        if src.startswith("data:"):
+            if not is_allowed_image_data_uri(src):
+                rejected.append(f"{src} (not an allowed image data URI)")
             return match.group(0)
         if _is_remote(src):
             warnings.append(f"external image not inlined: {src}")

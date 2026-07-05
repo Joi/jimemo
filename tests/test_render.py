@@ -170,6 +170,22 @@ def test_inline_subdirectory_image_within_base_dir_works(tmp_path):
     assert "data:image/png;base64," in html
 
 
+def test_render_page_svg_data_uri_image_slot_fails_closed(tmp_path):
+    # A text/data slot value (e.g. photo-catalog's `image` field) goes
+    # straight into a macro's <img src>, bypassing markdown sanitization
+    # entirely. data:image/svg+xml can itself carry markup/script, so it
+    # must never reach the written page.
+    template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
+    content = {
+        "title": "Hello",
+        "body": Markup("<p>World</p>"),
+        "image": "data:image/svg+xml,<svg onload=alert(1)>",
+    }
+
+    with pytest.raises(ContentError):
+        render_page(template_dir, content)
+
+
 def test_render_page_missing_local_image_raises(tmp_path):
     template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
     content_dir = tmp_path / "content"
