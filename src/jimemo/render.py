@@ -7,9 +7,11 @@ extra context names — ``chart_lib`` (the vendored Chart.js source,
 emitted once by the page skeleton as the single library <script>) and
 ``charts`` (one entry per declaration: id, type, title, and the full
 init-script body built by charts.chart_init_js as ``init_js``, the only
-value the chart macro may be called with — lint accepts no other inline
-script body on a chart page). A chartless manifest injects neither
-name, leaving the Phase 3 no-script output byte-identical.
+value the chart macro may be called with). The renderer then hands lint
+the exact bodies it emitted (library + every init), and lint requires
+the page's inline scripts to equal that set — nothing forged, extra,
+duplicated, or missing. A chartless manifest injects neither name,
+leaving the Phase 3 no-script output byte-identical.
 """
 import sys
 from pathlib import Path
@@ -115,8 +117,9 @@ def render_page(
 
     Raises ContentError if lint finds a hard error (any resource
     reference outside lint's self-contained allowlist, script tags where
-    the manifest declares no charts, any <script src>, or an inline
-    script on a chart page that is not one the renderer emits) — callers
+    the manifest declares no charts, any <script src>, or a chart page
+    whose inline scripts are not exactly the ones this renderer emitted
+    for it — forged, extra, duplicated, or missing bodies all) — callers
     must not write output in that case — and for chart data that is
     missing or does not fit the {labels, series} contract (see charts.py).
     """
@@ -152,9 +155,21 @@ def render_page(
     # in load_manifest (manifest.py), which this function has already
     # called above to obtain `manifest` — so it cannot reach this point
     # uncaught, and re-checking it here would be dead code.
+    allowed_scripts: Optional[List[str]] = None
     if manifest["charts"]:
         context["chart_lib"] = _chart_lib()
         context["charts"] = _charts_context(manifest, content)
+        # The renderer is the source of truth for what inline script a
+        # chart page may carry: exactly the library body and each
+        # chart's init body — the very values injected into the context
+        # above. lint_html gets this list and requires the page's
+        # inline scripts to EQUAL it, so a template cannot add, drop,
+        # duplicate, or forge a script body — not even one that apes
+        # the init shape for a declared id with different config bytes,
+        # which lint's structural fallback alone could not tell apart.
+        allowed_scripts = [str(context["chart_lib"])] + [
+            str(chart["init_js"]) for chart in context["charts"]
+        ]
 
     try:
         html = template.render(**context)
@@ -170,7 +185,7 @@ def render_page(
 
     html, img_warnings = inline_images(html, Path(base_dir) if base_dir else Path.cwd())
 
-    errors, warnings = lint_html(html, manifest)
+    errors, warnings = lint_html(html, manifest, allowed_scripts=allowed_scripts)
     if errors:
         raise ContentError("; ".join(errors))
 

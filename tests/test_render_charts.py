@@ -14,6 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo import cli
 from jimemo._paths import CHARTJS_BUNDLE
+from jimemo.charts import (
+    build_chart_config,
+    chart_init_js,
+    chart_lib_inline_text,
+    serialize_chart_config,
+)
 from jimemo.errors import ContentError, ManifestError
 from jimemo.lint import lint_html
 from jimemo.manifest import load_manifest
@@ -587,3 +593,115 @@ def test_cli_render_auto_exits_1_cleanly_when_only_chart_template_has_malformed_
     assert not out_path.exists()
     assert "Traceback" not in err
     assert "no template accepts this content" in err
+
+
+# --- exact renderer-emitted script set (render -> lint handoff) --------------
+# render_page hands lint the exact inline-script bodies it emitted, and
+# lint requires the page's scripts to equal that multiset. These tests
+# pin the handoff and the three failure classes a template author could
+# produce: a forged/extra body, a duplicate, and a dropped script.
+
+# Structurally flawless for the declared chart id "sales" — chart_init_js
+# shape, valid JSON config, no raw "<" in the body — but NOT the bytes
+# the renderer builds from SALES_DATA. Before the exact-match handoff,
+# lint's structural check accepted this; only string equality against
+# render's own output can tell them apart.
+FORGED_INIT = 'new Chart(document.getElementById("sales"), {"type":"pie"});'
+
+
+def expected_script_bodies(template_dir):
+    """The inline-script bodies render_page must emit for SALES_DATA
+    through `template_dir`, recomputed independently of render.py's own
+    assembly: the inlined library plus one init per declared chart."""
+    manifest = load_manifest(template_dir)
+    bodies = [chart_lib_inline_text(CHARTJS_BUNDLE)]
+    for decl in manifest["charts"]:
+        config = build_chart_config(decl, SALES_DATA)
+        bodies.append(chart_init_js(decl["id"], serialize_chart_config(config)))
+    return manifest, bodies
+
+
+def inline_script_bodies(html):
+    # Safe on jimemo output: chart_lib_inline_text guarantees the inlined
+    # library contains no "</script", so the non-greedy match cannot end
+    # a body early.
+    return re.findall(r"<script>(.*?)</script>", html, re.DOTALL)
+
+
+def test_rendered_page_scripts_equal_renderer_emitted_set(tmp_path):
+    template_dir = make_chart_template_dir(tmp_path)
+    html = render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})
+    manifest, expected = expected_script_bodies(template_dir)
+
+    found = inline_script_bodies(html)
+    assert sorted(b.strip() for b in found) == sorted(b.strip() for b in expected)
+    # And the exact-mode lint the render pipeline runs agrees.
+    errors, _ = lint_html(html, manifest, allowed_scripts=expected)
+    assert errors == []
+
+
+def test_forged_init_rejected_by_exact_lint_though_fallback_accepts(tmp_path):
+    template_dir = make_chart_template_dir(tmp_path)
+    html = render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})
+    manifest, expected = expected_script_bodies(template_dir)
+    tampered = html.replace(
+        "</body>", "<script>" + FORGED_INIT + "</script></body>"
+    )
+
+    # The structural fallback cannot distinguish the forged init from
+    # renderer output (declared id, valid JSON, no raw "<")...
+    errors, _ = lint_html(tampered, manifest)
+    assert errors == []
+    # ...the exact set can, and the render pipeline always passes it.
+    errors, _ = lint_html(tampered, manifest, allowed_scripts=expected)
+    assert any("unexpected inline" in e for e in errors)
+
+
+def test_template_forging_structural_init_fails_render(tmp_path):
+    # End to end: a template that hand-writes its own init for the
+    # declared chart id — bypassing c.init_js, so bypassing
+    # build_chart_config and the palette — fails the render outright.
+    template = CHART_TEMPLATE.replace(
+        "{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}",
+        "{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}\n"
+        "<script>" + FORGED_INIT + "</script>",
+    )
+    template_dir = make_chart_template_dir(tmp_path, template_source=template)
+    with pytest.raises(ContentError, match="unexpected inline"):
+        render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})
+
+
+def test_template_with_extra_inline_script_fails_render(tmp_path):
+    template = CHART_TEMPLATE.replace(
+        "{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}",
+        "{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}\n"
+        "<script>alert(1)</script>",
+    )
+    template_dir = make_chart_template_dir(tmp_path, template_source=template)
+    with pytest.raises(ContentError, match="unexpected inline"):
+        render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})
+
+
+def test_template_duplicating_init_fails_render(tmp_path):
+    template = CHART_TEMPLATE.replace(
+        "{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}",
+        "{% for c in charts %}"
+        "{{ ui.chart(c.id, c.init_js) }}{{ ui.chart(c.id, c.init_js) }}"
+        "{% endfor %}",
+    )
+    template_dir = make_chart_template_dir(tmp_path, template_source=template)
+    with pytest.raises(ContentError, match="duplicate"):
+        render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})
+
+
+def test_template_dropping_chart_init_fails_render(tmp_path):
+    # The template never draws the declared chart: the page is missing a
+    # renderer-emitted script (the skeleton still inlines the library),
+    # so the render fails instead of silently shipping a chartless
+    # "chart page".
+    template = CHART_TEMPLATE.replace(
+        "{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}", ""
+    )
+    template_dir = make_chart_template_dir(tmp_path, template_source=template)
+    with pytest.raises(ContentError, match="missing"):
+        render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})

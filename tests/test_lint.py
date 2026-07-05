@@ -932,3 +932,103 @@ def test_two_declared_inits_both_accepted():
     )
     errors, _ = lint_html(html, manifest)
     assert errors == []
+
+
+# --- exact-match mode (allowed_scripts) --------------------------------------
+# The render path passes lint_html the exact inline-script bodies it
+# emitted; the page's scripts must equal that multiset. The structural
+# fallback above still governs direct calls without a render context.
+
+INIT_SALES = 'new Chart(document.getElementById("sales"), {"type":"bar"});'
+INIT_TREND = 'new Chart(document.getElementById("trend"), {"type":"line"});'
+# Structurally valid for the declared id "sales" — right shape, valid
+# JSON, no raw "<" — but not the body the renderer emitted.
+INIT_FORGED = 'new Chart(document.getElementById("sales"), {"type":"pie"});'
+
+EXACT_MANIFEST = {"charts": ["sales"]}
+
+
+def _scripts_page(*bodies):
+    scripts = "".join(f"<script>{body}</script>" for body in bodies)
+    return f"<html><body>{scripts}</body></html>"
+
+
+def test_allowed_scripts_exact_set_passes():
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES), EXACT_MANIFEST, allowed_scripts=[INIT_SALES]
+    )
+    assert errors == []
+
+
+def test_allowed_scripts_rejects_forged_body_the_fallback_accepts():
+    # The exact-match win: a hand-forged init for the DECLARED id with
+    # different config bytes passes the structural fallback...
+    errors, _ = lint_html(_scripts_page(INIT_FORGED), EXACT_MANIFEST)
+    assert errors == []
+    # ...but exact mode knows the renderer never emitted that body.
+    errors, _ = lint_html(
+        _scripts_page(INIT_FORGED), EXACT_MANIFEST, allowed_scripts=[INIT_SALES]
+    )
+    assert any("unexpected inline" in e for e in errors)
+    # And the body it replaced is reported missing.
+    assert any("missing" in e for e in errors)
+
+
+def test_allowed_scripts_rejects_extra_inline_script():
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES, "alert(1)"),
+        EXACT_MANIFEST,
+        allowed_scripts=[INIT_SALES],
+    )
+    assert any("unexpected inline" in e and "alert(1)" in e for e in errors)
+
+
+def test_allowed_scripts_rejects_duplicate():
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES, INIT_SALES),
+        EXACT_MANIFEST,
+        allowed_scripts=[INIT_SALES],
+    )
+    assert any("duplicate" in e for e in errors)
+
+
+def test_allowed_scripts_reports_missing_expected_script():
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES),
+        {"charts": ["sales", "trend"]},
+        allowed_scripts=[INIT_SALES, INIT_TREND],
+    )
+    assert any("missing" in e and "trend" in e for e in errors)
+
+
+def test_allowed_scripts_normalizes_surrounding_whitespace_only():
+    # Whitespace around a body is template indentation, stripped
+    # identically on both sides; whitespace INSIDE a body still breaks
+    # equality (it is a different script).
+    errors, _ = lint_html(
+        _scripts_page("\n  " + INIT_SALES + "\n"),
+        EXACT_MANIFEST,
+        allowed_scripts=[INIT_SALES],
+    )
+    assert errors == []
+    inner_ws = INIT_SALES.replace('"), ', '"),  ')
+    errors, _ = lint_html(
+        _scripts_page(inner_ws), EXACT_MANIFEST, allowed_scripts=[INIT_SALES]
+    )
+    assert any("unexpected inline" in e for e in errors)
+
+
+def test_allowed_scripts_does_not_bless_scripts_on_chartless_page():
+    # Exact mode never engages without declared charts: the chartless
+    # no-script rule stays absolute regardless of what a caller passes.
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES), {"charts": []}, allowed_scripts=[INIT_SALES]
+    )
+    assert any("declares no charts" in e for e in errors)
+
+
+def test_allowed_scripts_none_keeps_structural_fallback():
+    # No render context: the structural judgment of the sections above
+    # is unchanged (renderer-shaped init for a declared id passes).
+    errors, _ = lint_html(_scripts_page(INIT_SALES), EXACT_MANIFEST)
+    assert errors == []

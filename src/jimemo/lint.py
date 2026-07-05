@@ -58,16 +58,29 @@ restricted: without script it is an inert blank box, and the script
 rules already gate execution.
 
 On a chart page the inline-script opening is itself an allowlist over
-script BODIES: the only bodies accepted are the ones the RENDERER
-emits — the vendored Chart.js bundle (byte-compared against the file at
-CHARTJS_BUNDLE, read lazily at lint time) and, per declared chart, an
-init in exactly the shape charts.chart_init_js builds, whose id the
-manifest declares, whose config contains no raw ``<`` (the serializer
-u003c-escapes every one), and whose config parses as JSON — pure data,
-never code. Any other inline script is an error, so a shared
+script BODIES, in one of two modes. On the real render path,
+render_page passes ``allowed_scripts`` — the EXACT bodies it emitted
+(the inlined vendored Chart.js text plus one charts.chart_init_js body
+per declared chart) — and lint requires the page's inline scripts to
+equal that multiset: a forged or altered body, an extra script, a
+duplicate, or a missing one is each an error, so the page carries
+exactly the scripts the renderer built and nothing else (surrounding
+whitespace is normalized identically on both sides; it cannot arm or
+disarm a body). Without ``allowed_scripts`` (direct lint_html callers
+with no render context) the check falls back to STRUCTURAL recognition
+of the two renderer-emitted byte shapes: the vendored Chart.js bundle
+(byte-compared against the file at CHARTJS_BUNDLE, read lazily at lint
+time) and, per declared chart, an init in exactly the shape
+charts.chart_init_js builds, whose id the manifest declares, whose
+config contains no raw ``<`` (the serializer u003c-escapes every one),
+and whose config parses as JSON — pure data, never code. The
+structural mode cannot tell a hand-forged-but-well-shaped init from
+the renderer's own (same id, different config bytes); the exact mode
+can, which is why the render pipeline always passes allowed_scripts.
+Either way any other inline script is an error, so a shared
 third-party template cannot ride a chart declaration to embed its own
-JavaScript. This is still not a JavaScript judge: it recognizes the two
-renderer-emitted byte shapes and rejects everything else, fail closed.
+JavaScript, and neither mode is a JavaScript judge: each recognizes
+renderer output and rejects everything else, fail closed.
 """
 import json
 import re
@@ -163,6 +176,15 @@ _IMAGE_DATA_URI_ATTRS = frozenset({
 # Longest URL to echo back in an error message; a rejected data: URI can
 # be megabytes and the tail adds nothing to the diagnosis.
 _MAX_URL_IN_MESSAGE = 120
+
+
+def _shorten(text: str) -> str:
+    """`text` truncated for an error message (a script body or URL can
+    be megabytes and the tail adds nothing to the diagnosis)."""
+    if len(text) <= _MAX_URL_IN_MESSAGE:
+        return text
+    return text[:_MAX_URL_IN_MESSAGE] + "..."
+
 
 # Numeric character references. Python's html.unescape silently DROPS
 # references to controls and noncharacters (they decode to ""), while a
@@ -315,13 +337,30 @@ def _has_src_attr(attrs: List[Tuple[str, Optional[str]]]) -> bool:
 
 class _Linter(HTMLParser):
     def __init__(
-        self, charts_declared: bool, chart_ids: FrozenSet[str] = frozenset()
+        self,
+        charts_declared: bool,
+        chart_ids: FrozenSet[str] = frozenset(),
+        allowed_scripts: Optional[List[str]] = None,
     ) -> None:
         super().__init__(convert_charrefs=True)
         self.charts_declared = charts_declared
         self.chart_ids = chart_ids
         self.errors: List[str] = []
         self.warnings: List[str] = []
+        # Exact mode (see module docstring): the renderer's emitted
+        # inline-script bodies as a multiset of remaining expected
+        # occurrences, whitespace-stripped exactly as found bodies are
+        # in _check_script_body. Engaged only on a chart page — on a
+        # chartless page every script errors outright, and a caller-
+        # supplied allowlist must not soften that. None means the
+        # structural fallback judges each body instead.
+        self._allowed_remaining: Optional[Dict[str, int]] = None
+        if charts_declared and allowed_scripts is not None:
+            counts: Dict[str, int] = {}
+            for script in allowed_scripts:
+                key = script.strip()
+                counts[key] = counts.get(key, 0) + 1
+            self._allowed_remaining = counts
         # Buffers a <style> element's text until its end tag (or EOF,
         # for an unterminated element), then the sheet is scanned whole.
         self._style_parts: Optional[List[str]] = None
@@ -369,6 +408,19 @@ class _Linter(HTMLParser):
         super().close()
         self._flush_style()
         self._flush_script()
+        if self._allowed_remaining is not None:
+            # Exact mode's third failure class: every renderer-emitted
+            # body must actually appear. A chart page whose template
+            # dropped the library or an init script is not the page the
+            # renderer built, so silence here would break the "output is
+            # exactly what jimemo rendered" promise.
+            for expected, count in self._allowed_remaining.items():
+                if count:
+                    self.errors.append(
+                        "renderer-emitted inline <script> missing from "
+                        f"the page ({count} occurrence(s) not found): "
+                        f"{_shorten(expected)!r}"
+                    )
 
     def _flush_style(self) -> None:
         if self._style_parts is None:
@@ -402,28 +454,52 @@ class _Linter(HTMLParser):
         return self._chart_lib_cache
 
     def _check_script_body(self, body: str) -> None:
-        """Chart pages only: an inline script body is legal in exactly
-        two byte shapes — the vendored Chart.js bundle, or a
-        charts.chart_init_js body whose id the manifest declares and
-        whose config argument is the safe-serialized JSON (no raw "<",
-        parses as JSON: data, never code). The allowlist is the set of
-        scripts the RENDERER emits, so a template author cannot ride a
-        chart declaration to embed their own JavaScript. Surrounding
-        whitespace is ignored; it cannot arm an otherwise-legal body."""
+        """Chart pages only. In exact mode (the render path,
+        _allowed_remaining set) a body is legal iff it is one of the
+        bodies the renderer actually emitted for THIS page, each
+        consumable once — string equality against render's own output,
+        so even a well-shaped hand-forged init with different config
+        bytes fails. In the structural fallback (no render context) a
+        body is legal in exactly two byte shapes — the vendored
+        Chart.js bundle, or a charts.chart_init_js body whose id the
+        manifest declares and whose config argument is the
+        safe-serialized JSON (no raw "<", parses as JSON: data, never
+        code). Either way the allowlist is scripts the RENDERER emits,
+        so a template author cannot ride a chart declaration to embed
+        their own JavaScript. Surrounding whitespace is stripped
+        identically on both sides; it cannot arm an otherwise-legal
+        body."""
         stripped = body.strip()
+        if self._allowed_remaining is not None:
+            remaining = self._allowed_remaining.get(stripped)
+            if remaining:
+                self._allowed_remaining[stripped] = remaining - 1
+                return
+            if remaining == 0:
+                self.errors.append(
+                    "duplicate inline <script> on chart page: "
+                    f"{_shorten(stripped)!r} appears more times than the "
+                    "renderer emitted it"
+                )
+            else:
+                self.errors.append(
+                    "unexpected inline <script> on chart page: "
+                    f"{_shorten(stripped)!r} — the page's inline scripts "
+                    "must be exactly the ones the renderer emitted (the "
+                    "vendored Chart.js library and one built init per "
+                    "declared chart)"
+                )
+            return
         lib = self._chart_lib()
         if lib is not None and stripped == lib:
             return
         parsed = parse_chart_init_js(stripped)
         if parsed is None:
-            shown = stripped if len(stripped) <= _MAX_URL_IN_MESSAGE else (
-                stripped[:_MAX_URL_IN_MESSAGE] + "..."
-            )
             self.errors.append(
-                f"unexpected inline <script> on chart page: {shown!r} — "
-                "the only inline scripts allowed are the vendored "
-                "Chart.js library and one renderer-built init per "
-                "declared chart"
+                f"unexpected inline <script> on chart page: "
+                f"{_shorten(stripped)!r} — the only inline scripts "
+                "allowed are the vendored Chart.js library and one "
+                "renderer-built init per declared chart"
             )
             return
         chart_id, config_json = parsed
@@ -490,11 +566,13 @@ class _Linter(HTMLParser):
             # else: the ONE controlled opening in the no-script rule
             # (Phase 4 charts): an inline, src-less <script> may pass
             # when the manifest declares charts — but only if its BODY
-            # is one the renderer emits (the vendored bundle or a
-            # declared chart's init; see _check_script_body, fed by the
+            # is one the renderer emits: in exact mode, string-equal to
+            # a body render_page actually built for this page; in the
+            # structural fallback, the vendored bundle or a declared
+            # chart's init shape (see _check_script_body, fed by the
             # buffering in handle_starttag/handle_data). This is still
             # not a JavaScript judge — a lint that pretends to evaluate
-            # JS is a false promise — it recognizes two byte shapes and
+            # JS is a false promise — it recognizes renderer output and
             # rejects everything else, so the guarantee holds even for
             # a template someone else wrote. Every other Phase 3 rule
             # (script src, on*, script-scheme URLs, banned tags, the
@@ -650,10 +728,27 @@ def _declared_chart_ids(manifest: Dict[str, Any]) -> FrozenSet[str]:
     return frozenset(ids)
 
 
-def lint_html(html: str, manifest: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+def lint_html(
+    html: str,
+    manifest: Dict[str, Any],
+    allowed_scripts: Optional[List[str]] = None,
+) -> Tuple[List[str], List[str]]:
+    """Lint `html` against `manifest`; ``(errors, warnings)``.
+
+    ``allowed_scripts`` — the exact inline-script bodies the renderer
+    emitted for this page, in render_page's hands the inlined chart
+    library plus each chart's init body. When given (and the manifest
+    declares charts) the page's inline scripts must equal that multiset
+    exactly: forged/altered, extra, duplicate, and missing bodies are
+    each errors. When None (direct callers with no render context) each
+    inline script body is judged structurally instead — see the module
+    docstring. The render pipeline always passes it, so production
+    output is held to the exact set.
+    """
     linter = _Linter(
         charts_declared=bool(manifest.get("charts")),
         chart_ids=_declared_chart_ids(manifest),
+        allowed_scripts=allowed_scripts,
     )
     linter.feed(html)
     linter.close()
