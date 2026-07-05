@@ -305,9 +305,19 @@ body {
 /* ---- print ---- */
 
 @media print {
-  /* Paper decides the theme: force light tokens whatever the screen said. */
+  /* Paper decides the theme: force light tokens whatever the screen said.
+   * All three selectors must be listed explicitly: :root[data-theme="light"]
+   * and :root[data-theme="dark"] both carry higher specificity (0,2,0) than
+   * plain :root (0,1,0), so without listing them here too, tokens.css's own
+   * [data-theme] override rules would beat this block for a pinned page
+   * even though this rule comes later in source order — specificity wins
+   * ties before source order does. This block is duplicated verbatim in
+   * toolkit/print-force.css, which the renderer always re-appends last
+   * (after any theme file) so a theme's own :root rule can never win the
+   * print cascade either; keep both copies in sync. */
   :root,
-  :root[data-theme="dark"] {
+  :root[data-theme="dark"],
+  :root[data-theme="light"] {
     color-scheme: light;
 
     --jm-bg: #ffffff;

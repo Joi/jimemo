@@ -29,7 +29,17 @@ _IMG_SRC_RE = re.compile(r'(<img\b[^>]*?\ssrc=)(["\'])(.*?)\2', re.IGNORECASE | 
 
 def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
     """tokens.css + base.css + only the components the manifest lists
-    (+ a toolkit/themes/<theme>.css override, if one exists)."""
+    (+ a toolkit/themes/<theme>.css override, if one exists) + print-force.css,
+    always last.
+
+    print-force.css is re-appended unconditionally, after the theme, even
+    though base.css already contains the same rules: a theme file is free
+    to redefine `:root` at the same specificity as base.css's print block,
+    and CSS breaks specificity ties by source order, so an unguarded theme
+    `:root` rule occurring after base.css in the assembly would otherwise
+    win over the print force and leak screen colors into print output. See
+    toolkit/print-force.css's own header comment for the full explanation.
+    """
     parts = [
         (TOOLKIT_DIR / "tokens.css").read_text(encoding="utf-8"),
         (TOOLKIT_DIR / "base.css").read_text(encoding="utf-8"),
@@ -43,6 +53,7 @@ def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
         theme_path = TOOLKIT_DIR / "themes" / f"{theme}.css"
         if theme_path.is_file():
             parts.append(theme_path.read_text(encoding="utf-8"))
+    parts.append((TOOLKIT_DIR / "print-force.css").read_text(encoding="utf-8"))
     return "\n".join(parts)
 
 

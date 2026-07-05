@@ -7,8 +7,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jimemo import cli
+from jimemo import cli, inline
 from jimemo.errors import ContentError
+from jimemo.inline import assemble_css
 from jimemo.render import render_page, write_output
 from markupsafe import Markup
 
@@ -95,6 +96,32 @@ def test_render_page_no_theme_omits_data_theme_attribute(tmp_path):
     html = render_page(template_dir, content)
     html_tag = re.search(r"<html\b[^>]*>", html).group(0)
     assert "data-theme" not in html_tag
+
+
+def test_assemble_css_print_force_wins_over_theme_root_override(tmp_path, monkeypatch):
+    # A theme file is free to redefine `:root` at the same specificity as
+    # base.css's print block. assemble_css must re-append print-force.css
+    # after the theme so the print force is always the last occurrence in
+    # source order (see inline.assemble_css's docstring / toolkit/print-force.css).
+    fake_toolkit = tmp_path / "toolkit"
+    (fake_toolkit / "components").mkdir(parents=True)
+    (fake_toolkit / "themes").mkdir(parents=True)
+    (fake_toolkit / "tokens.css").write_text("/* TOKENS-MARKER */\n:root { --jm-bg: white; }\n")
+    (fake_toolkit / "base.css").write_text("/* BASE-MARKER */\n")
+    (fake_toolkit / "themes" / "dark-brand.css").write_text(
+        "/* THEME-MARKER */\n:root { --jm-bg: black; }\n"
+    )
+    (fake_toolkit / "print-force.css").write_text(
+        "/* PRINT-FORCE-MARKER */\n@media print { :root { --jm-bg: white; } }\n"
+    )
+
+    monkeypatch.setattr(inline, "TOOLKIT_DIR", fake_toolkit)
+
+    css = assemble_css({"components": []}, theme="dark-brand")
+
+    assert "THEME-MARKER" in css
+    assert "PRINT-FORCE-MARKER" in css
+    assert css.index("PRINT-FORCE-MARKER") > css.index("THEME-MARKER")
 
 
 def test_render_page_missing_local_image_raises(tmp_path):
