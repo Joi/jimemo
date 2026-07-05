@@ -1,14 +1,23 @@
 """Render a manifest-defined template + parsed content into a single,
 self-contained HTML page: Jinja2 render -> image inlining -> lint
 (fail closed on errors, warn to stderr otherwise).
+
+Charts: when the manifest declares charts, the renderer injects two
+extra context names — ``chart_lib`` (the vendored Chart.js source,
+emitted once by the page skeleton as the single library <script>) and
+``charts`` (one entry per declaration: id, type, title, and the
+serialize_chart_config output as ``config_json``, the only value the
+chart macro may be called with). A chartless manifest injects neither
+name, leaving the Phase 3 no-script output byte-identical.
 """
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from ._paths import REPO_ROOT
+from ._paths import CHARTS_VENDOR_DIR, REPO_ROOT
 from ._vendor import add_vendor_to_path
-from .errors import ContentError
+from .charts import build_chart_config, serialize_chart_config
+from .errors import ContentError, ManifestError
 from .inline import assemble_css, inline_images
 from .lint import lint_html
 from .manifest import load_manifest
@@ -25,6 +34,66 @@ from markupsafe import Markup  # noqa: E402
 
 TOOLKIT_DIR = REPO_ROOT / "toolkit"
 TEMPLATE_FILENAME = "template.html.j2"
+CHARTJS_BUNDLE = CHARTS_VENDOR_DIR / "chartjs" / "chart.umd.min.js"
+
+# Context names render_page injects only when the manifest declares
+# charts. manifest.py's RESERVED_SLOT_NAMES predates charts and does not
+# cover these, so the collision check lives here: a slot with one of
+# these names would be silently shadowed on chart pages.
+_CHART_CONTEXT_NAMES = ("charts", "chart_lib")
+
+
+def _chart_lib() -> Markup:
+    """The vendored Chart.js source, ready to emit verbatim inside the
+    page skeleton's library <script>. This is our pinned, checksummed
+    file (doctor verifies it), not content — hence Markup."""
+    try:
+        lib = CHARTJS_BUNDLE.read_text(encoding="utf-8")
+    except OSError as e:
+        raise ContentError(
+            f"cannot read vendored Chart.js at {CHARTJS_BUNDLE}: {e} "
+            "(run 'jimemo doctor')"
+        ) from e
+    # Inline-safety invariant, checked at every render as defense in
+    # depth beyond the checksum: script element text must not be able
+    # to close the element or open an HTML comment. The pinned bundle
+    # contains neither sequence.
+    if "</script" in lib.lower() or "<!--" in lib:
+        raise ContentError(
+            f"vendored Chart.js at {CHARTJS_BUNDLE} contains '</script' "
+            "or '<!--' and cannot be inlined safely"
+        )
+    return Markup(lib)
+
+
+def _charts_context(
+    manifest: Dict[str, Any], content: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """One entry per manifest chart declaration, each carrying the
+    breakout-safe serialized config the chart macro embeds verbatim
+    (Markup-wrapped: serialize_chart_config already u003c-escaped every
+    "<", and autoescaping it again would corrupt the JSON)."""
+    charts: List[Dict[str, Any]] = []
+    for decl in manifest["charts"]:
+        data_slot = decl["data_slot"]
+        if data_slot not in content:
+            raise ContentError(
+                f"chart {decl['id']!r} reads data slot {data_slot!r}, "
+                "but the content file provides no value for it"
+            )
+        try:
+            config = build_chart_config(decl, content[data_slot])
+        except ContentError as e:
+            raise ContentError(
+                f"chart {decl['id']!r} (data slot {data_slot!r}): {e}"
+            ) from e
+        charts.append({
+            "id": decl["id"],
+            "type": decl["type"],
+            "title": decl.get("title"),
+            "config_json": Markup(serialize_chart_config(config)),
+        })
+    return charts
 
 
 def render_page(
@@ -43,7 +112,8 @@ def render_page(
     Raises ContentError if lint finds a hard error (any resource
     reference outside lint's self-contained allowlist, script tags where
     the manifest declares no charts, or any <script src>) — callers must
-    not write output in that case.
+    not write output in that case — and for chart data that is missing
+    or does not fit the {labels, series} contract (see charts.py).
     """
     template_dir = Path(template_dir)
     manifest = load_manifest(template_dir)
@@ -70,6 +140,18 @@ def render_page(
     context["manifest"] = manifest
     context["styles"] = styles
     context["theme"] = theme
+
+    # Chartless manifests inject NOTHING here — their rendered output
+    # is byte-identical to Phase 3 (the goldens pin this).
+    if manifest["charts"]:
+        for name in _CHART_CONTEXT_NAMES:
+            if name in manifest["slots"]:
+                raise ManifestError(
+                    f"slot name {name!r} collides with the render context "
+                    "name injected for chart pages; rename the slot"
+                )
+        context["chart_lib"] = _chart_lib()
+        context["charts"] = _charts_context(manifest, content)
 
     try:
         html = template.render(**context)

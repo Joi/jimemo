@@ -700,3 +700,73 @@ def test_style_unparseable_url_construct_errors():
 def test_unclosed_style_element_still_scanned():
     errors, _ = _lint("<style>.x{background:url(https://evil.example/x)}")
     assert any("evil.example" in e for e in errors)
+
+
+# --- charts declared: the one controlled opening (Phase 4) -----------------
+#
+# When the manifest declares charts, an inline src-less <script> (and the
+# inert <canvas> it draws on) is allowed; EVERY other Phase 3 rule still
+# applies. Script content is deliberately not validated — the trust
+# boundary is upstream in charts.serialize_chart_config (see lint.py's
+# script-check comment).
+
+CHARTS_DECLARED = {
+    "charts": [{"id": "sales", "type": "bar", "data_slot": "sales_data"}]
+}
+
+
+def _lint_with_charts(markup):
+    return lint_html("<html><body>" + markup + "</body></html>", CHARTS_DECLARED)
+
+
+def test_canvas_and_inline_script_allowed_when_charts_declared():
+    errors, warnings = _lint_with_charts(
+        '<canvas id="sales"></canvas>'
+        '<script>new Chart(document.getElementById("sales"), {});</script>'
+    )
+    assert errors == []
+    assert warnings == []
+
+
+def test_event_handler_still_errors_when_charts_declared():
+    errors, _ = _lint_with_charts('<canvas id="x" onclick="alert(1)"></canvas>')
+    assert any("event handler" in e for e in errors)
+
+
+def test_javascript_uri_still_errors_when_charts_declared():
+    errors, _ = _lint_with_charts('<a href="javascript:alert(1)">x</a>')
+    assert any("javascript" in e for e in errors)
+
+
+def test_remote_resources_still_error_when_charts_declared():
+    errors, _ = _lint_with_charts('<img src="https://evil.example/x.png">')
+    assert any("https://evil.example/x.png" in e for e in errors)
+    errors, _ = _lint_with_charts(
+        '<link rel="stylesheet" href="https://fonts.example/f.css">'
+    )
+    assert any("https://fonts.example/f.css" in e for e in errors)
+
+
+def test_banned_tags_still_error_when_charts_declared():
+    errors, _ = _lint_with_charts('<iframe srcdoc="<script>x</script>"></iframe>')
+    assert any("<iframe>" in e and "never allowed" in e for e in errors)
+
+
+def test_meta_refresh_and_base_href_still_error_when_charts_declared():
+    errors, _ = _lint_with_charts(
+        '<meta http-equiv="refresh" content="0;url=https://evil.example/">'
+    )
+    assert any("refresh" in e for e in errors)
+    errors, _ = _lint_with_charts('<base href="https://evil.example/">')
+    assert any("base href" in e for e in errors)
+
+
+def test_css_fetches_still_error_when_charts_declared():
+    errors, _ = _lint_with_charts(
+        "<style>@import url(https://evil.example/x.css);</style>"
+    )
+    assert any("@import" in e for e in errors)
+    errors, _ = _lint_with_charts(
+        "<style>.x{background:url(https://evil.example/x.png)}</style>"
+    )
+    assert any("evil.example" in e for e in errors)

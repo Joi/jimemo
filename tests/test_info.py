@@ -144,3 +144,55 @@ def test_info_no_sample_dir_reports_empty(tmp_path, monkeypatch, capsys):
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert data["sample_files"] == []
+
+
+# --- chart declarations in info output (Phase 4) ---------------------------
+
+def make_charted_template_dir(tmp_path: Path) -> Path:
+    templates_root = tmp_path / "templates"
+    template_dir = templates_root / "chart-tpl"
+    template_dir.mkdir(parents=True)
+    (template_dir / "template.html.j2").write_text(TEMPLATE_SOURCE, encoding="utf-8")
+    manifest = {
+        "name": "chart-tpl",
+        "version": 1,
+        "title": "Chart Template",
+        "slots": {
+            "title": {"type": "text", "required": True},
+            "body": {"type": "markdown", "required": True},
+            "sales_data": {"type": "data"},
+            "trend_data": {"type": "data"},
+        },
+        "components": ["page-header"],
+        "charts": [
+            {"id": "sales", "type": "bar", "data_slot": "sales_data"},
+            {"id": "trend", "type": "line", "data_slot": "trend_data"},
+        ],
+    }
+    (template_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return templates_root
+
+
+def test_info_human_renders_charts_as_type_and_id(tmp_path, monkeypatch, capsys):
+    # Regression: manifest charts became objects in Phase 4;
+    # ", ".join(manifest["charts"]) over dicts crashed cmd_info.
+    templates_root = make_charted_template_dir(tmp_path)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_root])
+
+    rc = cli.main(["info", "chart-tpl"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Charts: bar#sales, line#trend" in out
+
+
+def test_info_json_carries_full_chart_declarations(tmp_path, monkeypatch, capsys):
+    templates_root = make_charted_template_dir(tmp_path)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_root])
+
+    rc = cli.main(["info", "chart-tpl", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["charts"] == [
+        {"id": "sales", "type": "bar", "data_slot": "sales_data"},
+        {"id": "trend", "type": "line", "data_slot": "trend_data"},
+    ]

@@ -182,3 +182,24 @@
   {%- endfor %}
 </ul>
 {%- endmacro %}
+
+{#- chart: a canvas + its single inline init <script> — the ONLY macro
+    that may emit script, and only from the renderer's `charts` context
+    entries: {{ ui.chart(c.id, c.config_json) }}.
+
+    SECURITY (see charts.py and the Phase 4 plan, "The security crux"):
+    config_json MUST be the renderer-supplied value — built by
+    charts.build_chart_config, serialized by charts.serialize_chart_config
+    (every "<" is u003c-escaped inside the JSON, so the payload cannot
+    close this script element), and Markup-wrapped by render.py so
+    autoescape emits it verbatim.
+    Nothing in this macro is marked |safe: passed a plain string instead,
+    autoescape entity-encodes it, which a browser never decodes inside a
+    script element — a broken chart, not an injection. chart_id is the
+    manifest-validated chart id (\A[a-zA-Z][\w-]*\Z), safe both as a DOM
+    id and inside the getElementById string literal. No other content
+    data may enter this macro. -#}
+{% macro chart(chart_id, config_json) -%}
+<canvas id="{{ chart_id }}"></canvas>
+<script>new Chart(document.getElementById("{{ chart_id }}"), {{ config_json }});</script>
+{%- endmacro %}

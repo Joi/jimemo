@@ -51,9 +51,12 @@ which has no allowed form, so any ``@import`` is an error.
 Separate from the fetch allowlist, execution checks remain: ``on*``
 attributes and ``javascript:``/``vbscript:`` URLs are never allowed
 anywhere, ``<script src>`` is never allowed, ``<script>`` requires the
-manifest to declare charts, ``<meta http-equiv="refresh">`` (a
-navigation at view time) is never allowed, and ``<base href>`` (which
-re-roots every relative URL) is never allowed.
+manifest to declare charts (and its CONTENT is deliberately not
+validated — see the trust-boundary comment at the script check),
+``<meta http-equiv="refresh">`` (a navigation at view time) is never
+allowed, and ``<base href>`` (which re-roots every relative URL) is
+never allowed. ``<canvas>`` is not restricted: without script it is an
+inert blank box, and the script rules above already gate execution.
 """
 import re
 from html import unescape
@@ -346,6 +349,20 @@ class _Linter(HTMLParser):
                     "<script> tag found but this template declares no charts "
                     "(manifest 'charts' is empty)"
                 )
+            # else: the ONE controlled opening in the no-script rule
+            # (Phase 4 charts): an inline, src-less <script> passes when
+            # the manifest declares charts. The rule is deliberately
+            # STRUCTURAL — script CONTENT is not validated here, because
+            # a lint that pretends to judge JavaScript is a false
+            # promise. The trust boundary is upstream: the only script
+            # emitters are the renderer (the vendored, checksummed
+            # Chart.js bundle) and the chart macro, whose payload is
+            # built by charts.build_chart_config from validated data and
+            # u003c-escaped by charts.serialize_chart_config so it
+            # cannot close the script element. Every other Phase 3 rule
+            # (script src, on*, script-scheme URLs, banned tags, the
+            # fetch-on-load and CSS allowlists) still applies on chart
+            # pages, unchanged.
 
         if tag == "meta":
             http_equiv = next(

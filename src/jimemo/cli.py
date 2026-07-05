@@ -7,7 +7,7 @@ import webbrowser
 from pathlib import Path
 
 from . import __version__
-from ._paths import REPO_ROOT
+from ._paths import CHARTS_VENDOR_DIR
 from ._vendor import VENDOR_DIR, add_vendor_to_path
 from .checksums import verify_checksums
 from .discovery import default_search_dirs, find_templates
@@ -22,11 +22,6 @@ from .scaffold import create_template
 # needs one of them imports it locally instead.
 
 PYTHON_FLOOR = (3, 9)
-
-# Chart.js is browser JS, never imported by Python -- it lives under its own
-# vendor dir with its own SHA256SUMS, checked by doctor but never added to
-# sys.path (see _vendor.py, which is the Python-importable vendor gate).
-CHARTS_VENDOR_DIR = REPO_ROOT / "charts" / "vendor"
 
 _CHARTJS_VERSION_RE = re.compile(r"Chart\.js v([0-9]+\.[0-9]+\.[0-9]+)")
 
@@ -286,7 +281,8 @@ def _print_info_human(manifest, template_dir: Path, sample_files: list) -> None:
     print()
 
     print(f"Components: {', '.join(manifest['components']) or '(none)'}")
-    print(f"Charts: {', '.join(manifest['charts']) or '(none)'}")
+    charts = ", ".join(f"{c['type']}#{c['id']}" for c in manifest["charts"])
+    print(f"Charts: {charts or '(none)'}")
     print()
 
     suitability = manifest.get("suitability", {})
