@@ -16,14 +16,18 @@ attribute (which bypass markdown sanitization entirely) fail closed too.
 
 The core rule is a strict ALLOWLIST over every attribute the browser
 fetches at page-load time (_FETCH_ON_LOAD_ATTRS). A resource reference
-there is legal in exactly two forms:
+there is legal in exactly one form: an inlined raster
+``data:image/{png,jpeg,jpg,gif,webp}`` URI, and only on an attribute
+that displays an image (_IMAGE_DATA_URI_ATTRS — what inline_images
+produces).
 
-  * an inlined raster ``data:image/{png,jpeg,jpg,gif,webp}`` URI, and
-    only on an attribute that displays an image (_IMAGE_DATA_URI_ATTRS
-    — what inline_images produces); or
-  * a pure ``#fragment``, which never fetches.
-
-Everything else is an error: remote http(s), protocol-relative
+Everything else is an error, INCLUDING a pure ``#fragment``: a
+fetch-on-load attribute still makes the browser attempt a
+same-document resource load for a fragment value — unlike ``<a
+href="#section">``, which only navigates within the page on click and
+is not in _FETCH_ON_LOAD_ATTRS at all. jimemo pages never legitimately
+put a fragment in a resource-load attribute, so it fails closed here
+too. Also an error: remote http(s), protocol-relative
 ``//host/...``, any other scheme, non-raster or non-image ``data:``
 payloads, ``data:`` anywhere outside an image attribute, empty values,
 and surviving bare local paths — a local path that reached the final
@@ -157,11 +161,16 @@ _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
 # CSS fetches on its own: a url(...) in any property (background,
 # cursor, @font-face src, ...) and an @import both load their target at
 # style-apply time, so <style> element text and style="..." attribute
-# values are scanned with the same allowlist as fetch-on-load
-# attributes: a url() may hold an inlined raster data:image URI or a
-# pure #fragment, nothing else. @import's target is a stylesheet — no
-# allowed form exists (a raster image or a fragment is never a
-# stylesheet) — so any @import is an error outright. Violations are
+# values are scanned against their own allowlist: a url() may hold an
+# inlined raster data:image URI or a pure #fragment (a same-document
+# paint-server reference, e.g. fill:url(#grad), which never fetches),
+# nothing else. This is broader than the HTML fetch-on-load attribute
+# allowlist above, which no longer accepts a fragment at all — a CSS
+# url() fragment is a reference to an element in the current document,
+# not a resource-load attribute pointing at an external resource, so
+# the two are judged differently on purpose. @import's target is a
+# stylesheet — no allowed form exists (a raster image or a fragment is
+# never a stylesheet) — so any @import is an error outright. Violations are
 # searched for in the comment-stripped text AND in a copy with CSS
 # escapes decoded, so `url/**/(x)`, `\75rl(x)` and `@\69mport` cannot
 # hide; the decoded copy only ever ADDS findings (allowances are judged
@@ -398,20 +407,33 @@ class _Linter(HTMLParser):
 
     def _check_fetch_on_load_url(self, tag: str, attr_name: str, value: str) -> None:
         """Strict allowlist (see module docstring): `value` is legal only
-        as a raster image data: URI on an image-displaying attribute, or
-        as a pure #fragment. Everything else appends an error naming the
-        tag, attribute, value, and reason."""
+        as a raster image data: URI on an image-displaying attribute.
+        Everything else — including a pure #fragment, which still makes
+        the browser attempt a same-document resource load on a
+        fetch-on-load attribute (unlike <a href>, which only navigates on
+        click and isn't checked here) — appends an error naming the tag,
+        attribute, value, and reason."""
         shown = value if len(value) <= _MAX_URL_IN_MESSAGE else (
             value[:_MAX_URL_IN_MESSAGE] + "..."
         )
         where = f"<{tag} {attr_name}={shown!r}>"
 
-        # Allowances are judged in the browser-faithful form (see
-        # browser_url_form): the over-normalized form may read "#x" or
-        # "data:..." out of a value the browser would actually treat as
-        # a relative path and fetch.
+        # Judged in the browser-faithful form (see browser_url_form): the
+        # over-normalized form may read "#x" out of a value the browser
+        # would actually treat as a relative path and fetch — so a value
+        # this form does NOT recognize as a fragment must still be judged
+        # as one below (it falls through to the local-path/empty checks,
+        # which fail closed too).
         if browser_url_form(value).startswith("#"):
-            return  # pure fragment: never fetches
+            self.errors.append(
+                f"{where}: a #fragment on a fetch-on-load resource "
+                "attribute still makes the browser attempt a "
+                "same-document resource load — only an inlined "
+                "data:image (image-displaying attributes only) is "
+                "allowed here; <a href> is the attribute for "
+                "same-document navigation"
+            )
+            return
 
         compact = normalize_url(value)
         scheme = url_scheme(value)
@@ -444,7 +466,7 @@ class _Linter(HTMLParser):
             self.errors.append(
                 f"{where}: scheme {scheme!r} is not allowed on a "
                 "fetch-on-load attribute — only an inlined data:image "
-                "(image attributes only) or a #fragment is"
+                "(image-displaying attributes only) is"
             )
             return
         if not compact:

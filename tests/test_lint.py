@@ -131,6 +131,9 @@ def test_escaped_prose_does_not_trigger_lint():
 
 
 def test_relative_and_data_and_fragment_urls_are_fine():
+    # <a href> is a click-time navigation attribute, not a fetch-on-load
+    # one — #fragment and relative hrefs there never fetch and stay fine
+    # even though the same values error on img/link/video (see below).
     html = (
         "<html><body>"
         '<img src="data:image/png;base64,AAAA">'
@@ -141,6 +144,24 @@ def test_relative_and_data_and_fragment_urls_are_fine():
     errors, warnings = lint_html(html, {"charts": []})
     assert errors == []
     assert warnings == []
+
+
+def test_fragment_on_resource_attrs_errors_but_anchor_href_is_fine():
+    # roborev finding: a pure #fragment on a fetch-on-load RESOURCE
+    # attribute still makes the browser attempt a same-document resource
+    # load, so it must error there — unlike <a href="#section">, which
+    # only navigates on click and is not a fetch-on-load attribute.
+    for markup in (
+        '<img src="#x">',
+        '<link rel="stylesheet" href="#x">',
+        '<video src="#x"></video>',
+    ):
+        errors, _ = _lint(markup)
+        assert errors, f"{markup!r} must error"
+        assert any("#fragment" in e for e in errors), errors
+
+    errors, _ = _lint('<a href="#section">jump</a>')
+    assert errors == []
 
 
 # --- data: image URIs on <img src> (Fix 1) ---
@@ -314,15 +335,21 @@ def test_bare_local_img_srcset_errors_inlined_srcset_ok():
 
 # --- strict allowlist: terminal-class coverage (Fix 4) -------------------
 #
-# Every fetch-on-load attribute is validated against ONE allowlist:
-# a raster data:image URI (image-displaying attributes only) or a pure
-# #fragment. The matrices below pin the whole class shut so no further
+# Every fetch-on-load attribute is validated against ONE allowlist: a
+# raster data:image URI, and only on image-displaying attributes. A pure
+# #fragment is NOT in the allowlist for any fetch-on-load attribute — it
+# still makes the browser attempt a same-document resource load there,
+# unlike <a href="#...">, which only navigates on click and is not a
+# fetch-on-load attribute at all (see test_relative_and_data_and_fragment_urls_are_fine
+# and test_fragment_and_data_image_fine_bare_img_path_errors). The
+# matrices below pin the whole class shut so no further
 # per-scheme/per-attribute denylist patches are ever needed.
 
 # Markup shapes for attributes with NO self-contained form: data: URIs
-# of any kind are disallowed here, as is everything else but #fragment.
-# (iframe/object/embed, formerly in this matrix, are banned as tags now
-# and covered by the banned-tags section — even #fragment errors there.)
+# of any kind are disallowed here, and so is everything else, including
+# #fragment. (iframe/object/embed, formerly in this matrix, are banned
+# as tags now and covered by the banned-tags section — even #fragment
+# errors there.)
 NON_IMAGE_SHAPES = [
     ("link-href", '<link rel="stylesheet" href="{u}">'),
     ("video-src", '<video src="{u}"></video>'),
@@ -333,7 +360,8 @@ NON_IMAGE_SHAPES = [
 ]
 
 # Markup shapes for image-displaying attributes: an inlined raster
-# data:image URI is the one allowed non-fragment form.
+# data:image URI is the one allowed form — #fragment is rejected here
+# too.
 IMAGE_SHAPES = [
     ("img-src", '<img src="{u}">'),
     ("img-srcset", '<img srcset="{u} 2x">'),
@@ -355,19 +383,24 @@ def _lint(markup):
     return lint_html("<html><body>" + markup + "</body></html>", {"charts": []})
 
 
-@pytest.mark.parametrize("url", DISALLOWED_EVERYWHERE + [DATA_PNG, "x.bin", ""])
+@pytest.mark.parametrize("url", DISALLOWED_EVERYWHERE + [DATA_PNG, "#frag", "x.bin", ""])
 @pytest.mark.parametrize("name, shape", NON_IMAGE_SHAPES, ids=[s[0] for s in NON_IMAGE_SHAPES])
-def test_non_image_fetch_attrs_reject_everything_but_fragment(name, shape, url):
+def test_non_image_fetch_attrs_reject_everything(name, shape, url):
     # Note data:image/png is ALSO rejected here: only image-displaying
-    # attributes may carry an inlined image.
+    # attributes may carry an inlined image. #frag is rejected too: it
+    # has no self-contained fetch-on-load form.
     errors, _ = _lint(shape.format(u=url))
     assert errors, f"{name} with {url!r} must error"
 
 
 @pytest.mark.parametrize("name, shape", NON_IMAGE_SHAPES, ids=[s[0] for s in NON_IMAGE_SHAPES])
-def test_non_image_fetch_attrs_allow_pure_fragment(name, shape):
+def test_non_image_fetch_attrs_reject_pure_fragment(name, shape):
+    # A #fragment still triggers a same-document resource load on a
+    # fetch-on-load attribute — it is not a legal form here even though
+    # it never fetches on <a href> (which isn't a fetch-on-load attribute
+    # at all).
     errors, _ = _lint(shape.format(u="#frag"))
-    assert errors == []
+    assert any("#fragment" in e for e in errors), f"{name} must error: {errors!r}"
 
 
 @pytest.mark.parametrize("url", DISALLOWED_EVERYWHERE + ["img/x.png", ""])
@@ -379,11 +412,19 @@ def test_image_fetch_attrs_reject_non_inlined_urls(name, shape, url):
     assert errors, f"{name} with {url!r} must error"
 
 
-@pytest.mark.parametrize("url", [DATA_PNG, "#frag"])
 @pytest.mark.parametrize("name, shape", IMAGE_SHAPES, ids=[s[0] for s in IMAGE_SHAPES])
-def test_image_fetch_attrs_allow_inlined_data_image_and_fragment(name, shape, url):
-    errors, _ = _lint(shape.format(u=url))
+def test_image_fetch_attrs_allow_inlined_data_image(name, shape):
+    errors, _ = _lint(shape.format(u=DATA_PNG))
     assert errors == []
+
+
+@pytest.mark.parametrize("name, shape", IMAGE_SHAPES, ids=[s[0] for s in IMAGE_SHAPES])
+def test_image_fetch_attrs_reject_pure_fragment(name, shape):
+    # Even on an image-displaying attribute, #fragment is not the same
+    # as an inlined data:image — it still triggers a same-document
+    # resource load.
+    errors, _ = _lint(shape.format(u="#frag"))
+    assert any("#fragment" in e for e in errors), f"{name} must error: {errors!r}"
 
 
 @pytest.mark.parametrize(
@@ -421,12 +462,14 @@ def test_link_imagesrcset_candidates_validated():
     assert errors
 
 
-def test_svg_use_remote_errors_fragment_sprite_ok():
+def test_svg_use_remote_and_fragment_sprite_both_error():
     errors, _ = _lint('<svg><use href="https://evil.example/s.svg#i"/></svg>')
     assert any("evil.example" in e for e in errors)
-    # The common same-document sprite reference is a pure fragment.
+    # <use> is a fetch-on-load attribute (jimemo never emits it, but the
+    # allowlist covers it defensively); a same-document sprite reference
+    # via #fragment still errors here — <use> is not <a href>.
     errors, _ = _lint('<svg><use href="#icon"/></svg>')
-    assert errors == []
+    assert any("#fragment" in e for e in errors)
 
 
 def test_image_tag_alias_of_img_is_checked():
