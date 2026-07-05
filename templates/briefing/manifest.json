@@ -1,0 +1,29 @@
+{
+  "name": "briefing",
+  "version": 1,
+  "title": "Briefing / memo",
+  "description": "A status memo: masthead, optional stat row, prose summary, optional sections.",
+  "slots": {
+    "title": {"type": "text", "required": true},
+    "date": {"type": "text"},
+    "kicker": {"type": "text"},
+    "subtitle": {"type": "text"},
+    "body": {"type": "markdown", "required": true},
+    "stats": {
+      "type": "data",
+      "items": {"label": "text", "value": "text"}
+    },
+    "sections": {
+      "type": "data",
+      "items": {"heading": "text", "body": "markdown"}
+    }
+  },
+  "components": ["page-header", "stat-tile"],
+  "charts": [],
+  "suitability": {
+    "keywords": ["briefing", "memo", "report", "status", "update", "summary"],
+    "content_kinds": ["narrative"],
+    "good_for": "Short status memos and briefings: a summary plus a few key figures.",
+    "labeled_hash": "d02470f3beef410689610749f953a9f7577472a4b4dacfbced043ba46e089af3"
+  }
+}
