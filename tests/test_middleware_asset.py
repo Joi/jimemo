@@ -103,6 +103,18 @@ def test_headers_file_exists_and_sets_noindex():
     assert "noindex" in src.lower()
 
 
+def test_headers_file_sets_no_store_on_live_pages():
+    """Live hash pages must never be cached by browsers/intermediaries --
+    otherwise a purge (which tombstones the hash) can leave a stale cached
+    copy viewable after the page is supposed to be gone. _middleware.js
+    already sets `cache-control: no-store` on its own purge/confirm/error
+    responses, but those are a distinct code path from the `next()` fall-
+    through that serves the static hash pages themselves; this asserts the
+    static-serving path (governed by _headers) gets the same guarantee."""
+    src = HEADERS.read_text(encoding="utf-8")
+    assert "Cache-Control: no-store" in src
+
+
 def test_index_html_exists_and_is_self_contained():
     assert INDEX.is_file()
     src = INDEX.read_text(encoding="utf-8")
