@@ -1,0 +1,29 @@
+{
+  "name": "photo-catalog",
+  "version": 1,
+  "title": "Photo catalog",
+  "description": "A card grid of photographed specimens with captions and optional attribute tables.",
+  "slots": {
+    "title": {"type": "text", "required": true},
+    "subtitle": {"type": "text"},
+    "intro": {"type": "markdown"},
+    "images": {
+      "type": "data",
+      "required": true,
+      "items": {
+        "name": "text",
+        "image": "text",
+        "caption": "markdown",
+        "fields": "markdown"
+      }
+    }
+  },
+  "components": ["page-header", "card-grid"],
+  "charts": [],
+  "suitability": {
+    "keywords": ["catalog", "gallery", "collection", "plants", "photos", "specimens"],
+    "content_kinds": ["photo-heavy"],
+    "good_for": "A photographed collection -- a plant survey, gallery walk, or specimen set -- browsed as mounted plates rather than prose.",
+    "labeled_hash": "3b801b97be4ced0e4d065933b9e33dd868d8ff8c9c11a31c83944d53871406d1"
+  }
+}

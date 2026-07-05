@@ -1,0 +1,53 @@
+title: The Wabana Plant Catalog
+subtitle: A working collection for the tea room's seasonal chabana, Thimphu
+intro: |
+  Six specimens from the wabana, the roji-adjacent garden bed that feeds
+  the tea room's chabana through the year. Photographs and field notes
+  below, updated as new plants are added to the collection.
+images:
+  - name: Rhododendron arboreum
+    image: plant-1.png
+    caption: Crimson trusses light up the ridge line each spring; Bhutan's national flower.
+    fields: |
+      | Attribute | Value |
+      |---|---|
+      | Season | Early spring |
+      | Height | 8-12 m (tree form) |
+  - name: Camellia sinensis
+    image: plant-2.png
+    caption: The tea plant itself -- leaves picked two-and-a-bud, the way the tea room begins.
+    fields: |
+      | Attribute | Value |
+      |---|---|
+      | Season | Evergreen, year-round |
+      | Height | 1-1.5 m (hedge-pruned) |
+  - name: Meconopsis grandis
+    image: plant-3.png
+    caption: A blue no dye has ever matched, four petals held level to the sky.
+    fields: |
+      | Attribute | Value |
+      |---|---|
+      | Season | Midsummer |
+      | Height | 60-90 cm |
+  - name: Magnolia campbellii
+    image: plant-4.png
+    caption: Blooms before a single leaf shows, bare branches carrying pink saucers.
+    fields: |
+      | Attribute | Value |
+      |---|---|
+      | Season | Late winter |
+      | Height | 15-20 m |
+  - name: Primula denticulata
+    image: plant-5.png
+    caption: Lilac globes on bare stalks, the first color back after frost.
+    # No fields: this clump was divided last week and not yet remeasured --
+    # the card should still read cleanly without an attributes table.
+  - name: Iris kemaonensis
+    image: plant-6.png
+    # No caption: a field note wasn't taken on this specimen -- the card
+    # should still read cleanly with only a name, photo, and attributes.
+    fields: |
+      | Attribute | Value |
+      |---|---|
+      | Season | Late spring |
+      | Height | 8-10 cm |
