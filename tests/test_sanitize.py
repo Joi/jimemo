@@ -5,7 +5,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jimemo.sanitize import is_allowed_image_data_uri, is_protocol_relative, sanitize_html
+from jimemo.sanitize import (
+    is_allowed_image_data_uri,
+    is_protocol_relative,
+    parse_srcset,
+    sanitize_html,
+)
 
 
 # --- the three reviewer payloads ---
@@ -194,10 +199,60 @@ def test_is_allowed_image_data_uri_true_for_allowed_image_subtypes(value):
         "data:text/html;base64,PHNjcmlwdD4=",
         "https://example.com/a.png",
         "",
+        # Raster allowlist: non-raster image subtypes are excluded
+        # wholesale, not enumerated (bmp/tiff/avif/x-icon/...).
+        "data:image/bmp;base64,AAAA",
+        "data:image/tiff;base64,AAAA",
+        "data:image/avif;base64,AAAA",
+        "data:image/x-icon;base64,AAAA",
     ],
 )
 def test_is_allowed_image_data_uri_false_for_svg_and_non_image(value):
     assert is_allowed_image_data_uri(value) is False
+
+
+def test_is_allowed_image_data_uri_judges_browser_form_too():
+    # \x01 survives browser URL parsing, so the browser treats the value
+    # as a relative path and fetches it — the paranoid normalization
+    # alone would strip the control char and wrongly bless it.
+    assert is_allowed_image_data_uri("da\x01ta:image/png;base64,AAAA") is False
+    # A raw entity (already decoded once upstream) is literal text to
+    # the browser; the allow side must not double-decode it into data:.
+    assert is_allowed_image_data_uri("&#100;ata:image/png;base64,AAAA") is False
+    # Tab/newline ARE stripped by browser URL parsing, so these really
+    # are data: URIs to the browser and both forms agree.
+    assert is_allowed_image_data_uri("da\tta:image/png;base64,AAAA") is True
+    assert is_allowed_image_data_uri(" data:image/png;base64,AAAA ") is True
+
+
+# --- parse_srcset (shared srcset splitter, Fix 4) ---
+
+def test_parse_srcset_simple_candidates():
+    assert parse_srcset("a.png 1x, b.png 2x") == [("a.png", "1x"), ("b.png", "2x")]
+    assert parse_srcset("a.png") == [("a.png", "")]
+    assert parse_srcset("a.png 600w") == [("a.png", "600w")]
+
+
+def test_parse_srcset_keeps_data_uri_commas_inside_url():
+    # The whole reason for spec-style splitting: a data: URI's payload
+    # comma must not shear the candidate into a bogus URL + a tail that
+    # looks like a bare local path.
+    value = "data:image/png;base64,AAAA 1x, b.png 2x"
+    assert parse_srcset(value) == [("data:image/png;base64,AAAA", "1x"), ("b.png", "2x")]
+
+
+def test_parse_srcset_trailing_commas_and_whitespace():
+    assert parse_srcset(" a.png , b.png 2x ,") == [("a.png", ""), ("b.png", "2x")]
+    assert parse_srcset("a.png,") == [("a.png", "")]
+    assert parse_srcset("") == []
+    assert parse_srcset(" , ,, ") == []
+
+
+def test_parse_srcset_commaless_glue_is_one_url():
+    # Spec parsing: a comma with no whitespace stays inside the URL run;
+    # the browser fetches the glued value as one (broken) URL, so the
+    # validator must judge exactly that one URL.
+    assert parse_srcset("a.png,b.png") == [("a.png,b.png", "")]
 
 
 # --- is_protocol_relative (shared helper, Fix 2) ---

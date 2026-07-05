@@ -21,10 +21,10 @@ Rules:
   * ``href``/``src`` values are scheme-checked after entity decoding
     and whitespace/control stripping, so ``java&#09;script:`` and
     friends are rejected; only relative URLs, http(s), ``#fragment``,
-    ``mailto:`` (href) and ``data:image/`` other than ``svg+xml`` (img
-    src) survive — SVG is the one image subtype that can itself carry
-    markup/script, so it's excluded even though ``<img>`` never executes
-    it, as defense in depth.
+    ``mailto:`` (href) and raster ``data:image/{png,jpeg,jpg,gif,webp}``
+    (img src) survive — SVG can itself carry markup/script, so it's
+    excluded even though ``<img>`` never executes it, and every other
+    ``data:`` subtype is excluded wholesale rather than enumerated.
 """
 import html
 import re
@@ -92,17 +92,91 @@ def url_scheme(value: str) -> str:
     return head.split(":", 1)[0]
 
 
+# The chars the WHATWG URL parser strips from the ends of an input URL
+# (C0 controls and space) before parsing.
+_URL_EDGE_STRIP = "".join(chr(c) for c in range(0x21))
+
+# data: image subtypes that are pure raster pixels. svg+xml is excluded
+# (it can carry markup/script); everything else — bmp, tiff, avif,
+# x-icon, future subtypes — is excluded wholesale rather than judged.
+_RASTER_IMAGE_SUBTYPES = frozenset({"png", "jpeg", "jpg", "gif", "webp"})
+
+
+def browser_url_form(value: str) -> str:
+    """`value` as a browser's URL parser would first see it: leading and
+    trailing C0-control/space characters stripped, ASCII tab/newline/CR
+    removed everywhere (the WHATWG URL spec's preprocessing), lowercased.
+    Unlike `normalize_url` this does NOT entity-decode a second time or
+    strip other mid-URL control characters — it mirrors, rather than
+    exceeds, what the browser does. Allow-side decisions (lint's
+    ``#fragment`` allowance, `is_allowed_image_data_uri`) must hold in
+    THIS form too: judging an allowance only on the over-normalized form
+    could bless a value the browser actually treats as a relative fetch
+    (e.g. ``da\\x01ta:image/png,...``, whose control char survives URL
+    parsing and demotes it to a path)."""
+    compact = value.strip(_URL_EDGE_STRIP)
+    for ch in ("\t", "\n", "\r"):
+        compact = compact.replace(ch, "")
+    return compact.lower()
+
+
+def _is_raster_image_data_uri(form: str) -> bool:
+    if not form.startswith("data:image/"):
+        return False
+    subtype = re.split(r"[;,]", form[len("data:image/"):], maxsplit=1)[0]
+    return subtype in _RASTER_IMAGE_SUBTYPES
+
+
 def is_allowed_image_data_uri(value: str) -> bool:
-    """True if `value`, normalized, is a ``data:image/`` URI other than
-    ``svg+xml`` — the sanitizer's own allowance for ``img src`` (SVG can
-    itself carry markup/script, so it's excluded even though ``<img>``
-    never executes it; see module docstring). Shared with lint's
-    last-gate check on template-authored ``<img src>`` values (a
-    text/data slot written straight into a macro's ``<img src>`` bypasses
-    markdown sanitization entirely) and with inline_images' earlier,
-    non-authoritative check on the same values."""
-    compact = normalize_url(value)
-    return compact.startswith("data:image/") and not compact.startswith("data:image/svg+xml")
+    """True if `value` is a raster ``data:image/{png,jpeg,jpg,gif,webp}``
+    URI in BOTH normalizations: `normalize_url` (paranoid — catches
+    obfuscation on the block side) and `browser_url_form` (faithful —
+    guarantees the browser really sees a data: URI and not a relative
+    path it would fetch; see that function's docstring). SVG is excluded
+    because it can itself carry markup/script; every other subtype is
+    excluded because nothing in this pipeline legitimately produces it
+    (inline_images emits exactly these five). Shared by the sanitizer's
+    ``img src`` allowance, inline_images' early check, and lint's
+    last-gate allowlist, so all three judge identically."""
+    return _is_raster_image_data_uri(normalize_url(value)) and _is_raster_image_data_uri(
+        browser_url_form(value)
+    )
+
+
+def parse_srcset(value: str) -> List[Tuple[str, str]]:
+    """``(url, descriptor)`` pairs from a ``srcset`` attribute value,
+    split the way the HTML spec (and therefore the browser) does: a
+    candidate URL is a maximal run of non-whitespace characters — so a
+    ``data:`` URI's own commas stay inside one URL — and a comma only
+    separates candidates when it trails a URL or follows a descriptor.
+    Descriptor is ``""`` when absent. Shared by lint (which validates
+    every candidate URL) and inline_images (which rewrites local ones),
+    so both judge exactly the candidates a browser would fetch; naive
+    comma-splitting would shred inlined data: URIs into a bogus "URL"
+    prefix and a payload tail that looks like a local path."""
+    out: List[Tuple[str, str]] = []
+    pos, n = 0, len(value)
+    while pos < n:
+        while pos < n and (value[pos] in " \t\n\f\r" or value[pos] == ","):
+            pos += 1
+        if pos >= n:
+            break
+        start = pos
+        while pos < n and value[pos] not in " \t\n\f\r":
+            pos += 1
+        url = value[start:pos]
+        if url.endswith(","):
+            url = url.rstrip(",")
+            if url:
+                out.append((url, ""))
+            continue
+        desc_start = pos
+        while pos < n and value[pos] != ",":
+            pos += 1
+        descriptor = value[desc_start:pos].strip(" \t\n\f\r")
+        pos += 1  # past the separating comma (or harmlessly off the end)
+        out.append((url, descriptor))
+    return out
 
 
 def is_protocol_relative(value: str) -> bool:

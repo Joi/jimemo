@@ -34,9 +34,10 @@ def render_page(
     file's parent); it defaults to the current working directory when
     omitted, which is only correct if content carries no local images.
 
-    Raises ContentError if lint finds a hard error (script tags where
-    the manifest declares no charts, or any external <script src>) —
-    callers must not write output in that case.
+    Raises ContentError if lint finds a hard error (any resource
+    reference outside lint's self-contained allowlist, script tags where
+    the manifest declares no charts, or any <script src>) — callers must
+    not write output in that case.
     """
     template_dir = Path(template_dir)
     manifest = load_manifest(template_dir)

@@ -9,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo import cli, inline
 from jimemo.errors import ContentError
-from jimemo.inline import assemble_css
+from jimemo.inline import assemble_css, inline_images
+from jimemo.lint import lint_html
 from jimemo.render import render_page, write_output
 from markupsafe import Markup
 
@@ -168,6 +169,109 @@ def test_inline_subdirectory_image_within_base_dir_works(tmp_path):
 
     html = render_page(template_dir, content, base_dir=content_dir)
     assert "data:image/png;base64," in html
+
+
+def test_inline_images_rewrites_srcset_candidates(tmp_path):
+    (tmp_path / "a.png").write_bytes(TINY_PNG)
+    (tmp_path / "b.png").write_bytes(TINY_PNG)
+    html = '<img src="a.png" srcset="a.png 1x, b.png 2x" alt="x">'
+
+    out, warnings = inline_images(html, tmp_path)
+
+    assert out.count("data:image/png;base64,") == 3  # src + both candidates
+    assert "a.png" not in out and "b.png" not in out
+    assert warnings == []
+    # The rewritten page is self-contained: it passes the lint allowlist,
+    # including the commas inside each inlined data: URI candidate.
+    errors, _ = lint_html(out, {"charts": []})
+    assert errors == []
+
+
+def test_inline_images_rewrites_source_src_and_video_poster(tmp_path):
+    (tmp_path / "a.png").write_bytes(TINY_PNG)
+    html = (
+        '<video poster="a.png"><source srcset="a.png 2x"></video>'
+        '<picture><source src="a.png"><img src="a.png"></picture>'
+    )
+
+    out, _ = inline_images(html, tmp_path)
+
+    assert out.count("data:image/png;base64,") == 4
+    assert "a.png" not in out
+
+
+def test_inline_images_srcset_missing_candidate_raises(tmp_path):
+    (tmp_path / "a.png").write_bytes(TINY_PNG)
+    html = '<img src="a.png" srcset="a.png 1x, nope.png 2x">'
+
+    with pytest.raises(ContentError, match="nope.png"):
+        inline_images(html, tmp_path)
+
+
+def test_inline_images_srcset_traversal_and_extension_rejected(tmp_path):
+    content_dir = tmp_path / "content"
+    content_dir.mkdir()
+    (tmp_path / "secret.png").write_bytes(TINY_PNG)
+
+    with pytest.raises(ContentError, match=r"\.\./secret\.png.*escapes"):
+        inline_images('<img srcset="../secret.png 2x">', content_dir)
+
+    (content_dir / "notes.txt").write_text("not an image")
+    with pytest.raises(ContentError, match=r"notes\.txt.*image type"):
+        inline_images('<img srcset="notes.txt 2x">', content_dir)
+
+
+def test_inline_images_srcset_remote_candidate_left_with_warning(tmp_path):
+    (tmp_path / "a.png").write_bytes(TINY_PNG)
+    html = '<img srcset="a.png 1x, https://evil.example/x.png 2x">'
+
+    out, warnings = inline_images(html, tmp_path)
+
+    assert "data:image/png;base64," in out
+    assert "https://evil.example/x.png 2x" in out  # left for lint to reject
+    assert any("https://evil.example/x.png" in w for w in warnings)
+    errors, _ = lint_html(out, {"charts": []})
+    assert any("https://evil.example/x.png" in e for e in errors)
+
+
+def test_inline_images_srcset_data_uri_candidate_preserved(tmp_path):
+    (tmp_path / "a.png").write_bytes(TINY_PNG)
+    html = '<img srcset="data:image/png;base64,AAAA 1x, a.png 2x">'
+
+    out, warnings = inline_images(html, tmp_path)
+
+    assert "data:image/png;base64,AAAA 1x" in out
+    assert out.count("data:image/png;base64,") == 2
+    assert "a.png" not in out
+    errors, _ = lint_html(out, {"charts": []})
+    assert errors == []
+
+
+def test_inline_images_local_svg_rejected(tmp_path):
+    # .svg is not inlineable: it could only ever produce the
+    # data:image/svg+xml URI that lint rejects (SVG can carry markup),
+    # so it is rejected here with the clearer, earlier message.
+    (tmp_path / "a.svg").write_text("<svg/>")
+
+    with pytest.raises(ContentError, match=r"a\.svg.*image type"):
+        inline_images('<img src="a.svg">', tmp_path)
+
+
+def test_render_page_inlines_img_srcset_end_to_end(tmp_path):
+    srcset_template = BASIC_TEMPLATE.replace(
+        '<img src="{{ image }}" alt="a plate">',
+        '<img src="{{ image }}" srcset="{{ image }} 1x, {{ image }} 2x" alt="a plate">',
+    )
+    template_dir = make_template_dir(tmp_path, "srcset-tpl", srcset_template)
+    content_dir = tmp_path / "content"
+    content_dir.mkdir()
+    (content_dir / "img.png").write_bytes(TINY_PNG)
+    content = {"title": "Hello", "body": Markup("<p>World</p>"), "image": "img.png"}
+
+    html = render_page(template_dir, content, base_dir=content_dir)
+
+    assert html.count("data:image/png;base64,") == 3
+    assert "img.png" not in html
 
 
 def test_render_page_svg_data_uri_image_slot_fails_closed(tmp_path):
