@@ -517,3 +517,31 @@ def test_cli_import_design_font_injection_returns_rc1_and_writes_nothing(tmp_pat
     assert rc == 1
     theme = tmp_path / ".jimemo" / "themes" / "evil.css"
     assert not theme.exists()
+
+
+# -- security: malformed manifest shape fails closed (not a traceback) ----
+
+
+def test_cli_import_design_malformed_manifest_shape_returns_rc1(tmp_path, monkeypatch, capsys):
+    # {"fonts": 1} used to reach an unguarded `for f in 1 or []:` in the
+    # reader and raise a raw TypeError -- cmd_import_design only catches
+    # DesignImportError, so that would have escaped as an unhandled
+    # traceback instead of a clean rc=1.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = tmp_path / "malformed-export"
+    export_dir.mkdir()
+    manifest = {
+        "namespace": "Evil",
+        "tokens": [{"name": "--ok", "value": "#111111", "kind": "color"}],
+        "fonts": 1,
+        "brandFonts": [],
+        "globalCssPaths": [],
+        "themes": [],
+    }
+    (export_dir / "_ds_manifest.json").write_text(json.dumps(manifest))
+
+    rc = main(["import-design", str(export_dir), "--name", "evil"])
+
+    assert rc == 1
+    assert not (tmp_path / ".jimemo" / "themes" / "evil.css").exists()
+    assert "Traceback" not in capsys.readouterr().err

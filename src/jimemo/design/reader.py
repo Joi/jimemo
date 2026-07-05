@@ -121,6 +121,29 @@ def _read_manifest(export_dir: Path) -> Optional[dict]:
     return data
 
 
+def _manifest_list(value: object, description: str) -> list:
+    """Coerce a manifest field documented as a JSON array into a Python
+    list, or raise DesignImportError if it's present but some other JSON
+    type. This replaces the `value or []` idiom used below, which is only
+    safe when the field is MISSING (`None`): for a malformed manifest
+    where the field is present but e.g. an int, bool, or string, `value or
+    []` evaluates to `value` itself (if truthy) and the caller's
+    `for x in value` then either raises a raw TypeError (int, bool) or
+    silently iterates the wrong thing (a string's characters, a dict's
+    keys) instead of the intended list of entries. A manifest is untrusted
+    DATA, so any shape mismatch must fail closed here with a clean
+    DesignImportError, not surface an implementation-detail TypeError past
+    cmd_import_design's DesignImportError-only catch."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise DesignImportError(
+            f"manifest {description} must be a list, got "
+            f"{type(value).__name__}: {value!r}"
+        )
+    return value
+
+
 def _from_manifest(manifest: dict) -> DesignExport:
     raw_tokens = manifest.get("tokens")
     if not isinstance(raw_tokens, list) or not raw_tokens:
@@ -152,10 +175,14 @@ def _from_manifest(manifest: dict) -> DesignExport:
         )
 
     fonts: List[FontFace] = []
-    for f in manifest.get("fonts") or []:
+    for f in _manifest_list(manifest.get("fonts"), "'fonts'"):
         if not isinstance(f, dict):
             continue
-        files = [p for p in (f.get("files") or []) if isinstance(p, str)]
+        files = [
+            p
+            for p in _manifest_list(f.get("files"), "font 'files'")
+            if isinstance(p, str)
+        ]
         family = f.get("family")
         family = family if isinstance(family, str) else ""
         raw_weight = f.get("weight")
@@ -171,10 +198,14 @@ def _from_manifest(manifest: dict) -> DesignExport:
         )
 
     brand_fonts: List[BrandFont] = []
-    for b in manifest.get("brandFonts") or []:
+    for b in _manifest_list(manifest.get("brandFonts"), "'brandFonts'"):
         if not isinstance(b, dict):
             continue
-        referencing = [tn for tn in (b.get("tokens") or []) if isinstance(tn, str)]
+        referencing = [
+            tn
+            for tn in _manifest_list(b.get("tokens"), "brandFont 'tokens'")
+            if isinstance(tn, str)
+        ]
         family = b.get("family")
         family = family if isinstance(family, str) else ""
         # BrandFont.family flows into mapping._font_declaration's quoted

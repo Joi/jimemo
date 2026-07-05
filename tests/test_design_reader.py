@@ -452,6 +452,99 @@ def test_brand_font_family_injection_rejected(tmp_path):
         read_export(export_dir)
 
 
+# -- security: manifest shape validation (fail closed, not TypeError) -----
+#
+# A manifest is untrusted DATA (see module docstring): a malformed shape
+# -- the wrong JSON type for a field that's normally a list, or a list
+# entry that isn't a dict -- must never surface a raw TypeError from an
+# unguarded `for x in <field>` or `<field>[i]`. cmd_import_design only
+# catches DesignImportError, so anything else would escape as an
+# unhandled traceback instead of the CLI's clean rc=1 message.
+
+
+def _write_manifest(tmp_path: Path, manifest: dict, *, dirname: str = "malformed-export") -> Path:
+    export_dir = tmp_path / dirname
+    export_dir.mkdir()
+    (export_dir / "_ds_manifest.json").write_text(json.dumps(manifest))
+    return export_dir
+
+
+def _base_manifest(**overrides) -> dict:
+    manifest = {
+        "namespace": "Evil",
+        "tokens": [{"name": "--ok", "value": "#111111", "kind": "color"}],
+        "fonts": [],
+        "brandFonts": [],
+        "globalCssPaths": [],
+        "themes": [],
+    }
+    manifest.update(overrides)
+    return manifest
+
+
+@pytest.mark.parametrize("bad_field", ["tokens", "fonts", "brandFonts"])
+def test_manifest_top_level_field_wrong_type_rejected(tmp_path, bad_field):
+    # e.g. {"fonts": 1} used to reach `for f in 1 or []:` -> raw TypeError.
+    export_dir = _write_manifest(tmp_path, _base_manifest(**{bad_field: 1}))
+    with pytest.raises(DesignImportError):
+        read_export(export_dir)
+
+
+def test_manifest_font_files_wrong_type_rejected(tmp_path):
+    manifest = _base_manifest(
+        fonts=[{"family": "Legit", "weight": "400", "style": "normal", "files": 1}]
+    )
+    export_dir = _write_manifest(tmp_path, manifest)
+    with pytest.raises(DesignImportError, match="files"):
+        read_export(export_dir)
+
+
+def test_manifest_brand_font_tokens_wrong_type_rejected(tmp_path):
+    manifest = _base_manifest(
+        brandFonts=[{"family": "Legit", "status": "ok", "tokens": 1}]
+    )
+    export_dir = _write_manifest(tmp_path, manifest)
+    with pytest.raises(DesignImportError, match="tokens"):
+        read_export(export_dir)
+
+
+def test_manifest_non_dict_font_entry_skipped(tmp_path):
+    # Consistent with the existing `if not isinstance(f, dict): continue`
+    # behavior for a malformed individual entry (as opposed to a
+    # malformed 'fonts' container, which is rejected above).
+    export_dir = _write_manifest(tmp_path, _base_manifest(fonts=[1, "x"]))
+    export = read_export(export_dir)
+    assert export.fonts == []
+
+
+def test_manifest_non_dict_brand_font_entry_skipped(tmp_path):
+    export_dir = _write_manifest(tmp_path, _base_manifest(brandFonts=[1, "x"]))
+    export = read_export(export_dir)
+    assert export.brand_fonts == []
+
+
+def test_manifest_non_dict_token_entry_rejected(tmp_path):
+    export_dir = _write_manifest(tmp_path, _base_manifest(tokens=[1]))
+    with pytest.raises(DesignImportError, match=r"tokens\[0\]"):
+        read_export(export_dir)
+
+
+def test_manifest_token_missing_name_rejected(tmp_path):
+    export_dir = _write_manifest(
+        tmp_path, _base_manifest(tokens=[{"value": "#111111"}])
+    )
+    with pytest.raises(DesignImportError, match=r"tokens\[0\]"):
+        read_export(export_dir)
+
+
+def test_manifest_token_non_string_name_rejected(tmp_path):
+    export_dir = _write_manifest(
+        tmp_path, _base_manifest(tokens=[{"name": 1, "value": "#111111"}])
+    )
+    with pytest.raises(DesignImportError, match=r"tokens\[0\]"):
+        read_export(export_dir)
+
+
 def test_chiba_fixture_fonts_still_import_cleanly():
     # Every real font in the checked-in fixture is legit (Finder / Ro NOW
     # Std, weights 300/400/500/700/900, style normal), so the fix must not
