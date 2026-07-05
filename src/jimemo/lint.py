@@ -51,18 +51,32 @@ which has no allowed form, so any ``@import`` is an error.
 Separate from the fetch allowlist, execution checks remain: ``on*``
 attributes and ``javascript:``/``vbscript:`` URLs are never allowed
 anywhere, ``<script src>`` is never allowed, ``<script>`` requires the
-manifest to declare charts (and its CONTENT is deliberately not
-validated — see the trust-boundary comment at the script check),
-``<meta http-equiv="refresh">`` (a navigation at view time) is never
-allowed, and ``<base href>`` (which re-roots every relative URL) is
-never allowed. ``<canvas>`` is not restricted: without script it is an
-inert blank box, and the script rules above already gate execution.
+manifest to declare charts, ``<meta http-equiv="refresh">`` (a
+navigation at view time) is never allowed, and ``<base href>`` (which
+re-roots every relative URL) is never allowed. ``<canvas>`` is not
+restricted: without script it is an inert blank box, and the script
+rules already gate execution.
+
+On a chart page the inline-script opening is itself an allowlist over
+script BODIES: the only bodies accepted are the ones the RENDERER
+emits — the vendored Chart.js bundle (byte-compared against the file at
+CHARTJS_BUNDLE, read lazily at lint time) and, per declared chart, an
+init in exactly the shape charts.chart_init_js builds, whose id the
+manifest declares, whose config contains no raw ``<`` (the serializer
+u003c-escapes every one), and whose config parses as JSON — pure data,
+never code. Any other inline script is an error, so a shared
+third-party template cannot ride a chart declaration to embed its own
+JavaScript. This is still not a JavaScript judge: it recognizes the two
+renderer-emitted byte shapes and rejects everything else, fail closed.
 """
+import json
 import re
 from html import unescape
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
+from ._paths import CHARTJS_BUNDLE
+from .charts import parse_chart_init_js
 from .sanitize import (
     browser_url_form,
     is_allowed_image_data_uri,
@@ -281,35 +295,68 @@ def _css_reference_errors(css: str) -> List[str]:
     return errors
 
 
+# Sentinel for "vendored bundle not read yet" (None means "read failed",
+# which fails closed: no script body can match the library form).
+_UNSET = object()
+
+
 class _Linter(HTMLParser):
-    def __init__(self, charts_declared: bool) -> None:
+    def __init__(
+        self, charts_declared: bool, chart_ids: FrozenSet[str] = frozenset()
+    ) -> None:
         super().__init__(convert_charrefs=True)
         self.charts_declared = charts_declared
+        self.chart_ids = chart_ids
         self.errors: List[str] = []
         self.warnings: List[str] = []
         # Buffers a <style> element's text until its end tag (or EOF,
         # for an unterminated element), then the sheet is scanned whole.
         self._style_parts: Optional[List[str]] = None
+        # Same for an inline <script> on a chart page, whose body is
+        # then checked against the renderer-emitted allowlist. (html.
+        # parser treats script/style as CDATA: their text arrives raw
+        # via handle_data, charrefs unconverted — the same bytes the
+        # browser's tokenizer would see.)
+        self._script_parts: Optional[List[str]] = None
+        self._chart_lib_cache: Any = _UNSET
 
     def handle_starttag(self, tag, attrs):
         self._check_tag(tag, attrs)
         if tag == "style":
             self._style_parts = []
+        elif tag == "script" and self.charts_declared:
+            src = next((v for n, v in attrs if n.lower() == "src"), None)
+            # A src'd script already errored in _check_tag; only an
+            # inline body is buffered for the allowlist check.
+            if src is None:
+                self._script_parts = []
 
     def handle_startendtag(self, tag, attrs):
         self._check_tag(tag, attrs)  # a <style/> has no text to buffer
+        if tag == "script" and self.charts_declared:
+            src = next((v for n, v in attrs if n.lower() == "src"), None)
+            if src is None:
+                # A body-less <script/> is nothing the renderer emits;
+                # judge its empty body so it fails closed like any other
+                # unexpected inline script.
+                self._check_script_body("")
 
     def handle_endtag(self, tag):
         if tag == "style":
             self._flush_style()
+        elif tag == "script":
+            self._flush_script()
 
     def handle_data(self, data):
         if self._style_parts is not None:
             self._style_parts.append(data)
+        elif self._script_parts is not None:
+            self._script_parts.append(data)
 
     def close(self):
         super().close()
         self._flush_style()
+        self._flush_script()
 
     def _flush_style(self) -> None:
         if self._style_parts is None:
@@ -318,6 +365,76 @@ class _Linter(HTMLParser):
         self._style_parts = None
         for problem in _css_reference_errors(css):
             self.errors.append(f"in <style> CSS: {problem}")
+
+    def _flush_script(self) -> None:
+        if self._script_parts is None:
+            return
+        body = "".join(self._script_parts)
+        self._script_parts = None
+        self._check_script_body(body)
+
+    def _chart_lib(self) -> Optional[str]:
+        """The vendored Chart.js bundle text (stripped), read lazily on
+        the first inline script judged — never at module import — and
+        None if unreadable, in which case no body can match the library
+        form and everything but a valid chart init fails closed."""
+        if self._chart_lib_cache is _UNSET:
+            try:
+                self._chart_lib_cache = CHARTJS_BUNDLE.read_text(
+                    encoding="utf-8"
+                ).strip()
+            except OSError:
+                self._chart_lib_cache = None
+        return self._chart_lib_cache
+
+    def _check_script_body(self, body: str) -> None:
+        """Chart pages only: an inline script body is legal in exactly
+        two byte shapes — the vendored Chart.js bundle, or a
+        charts.chart_init_js body whose id the manifest declares and
+        whose config argument is the safe-serialized JSON (no raw "<",
+        parses as JSON: data, never code). The allowlist is the set of
+        scripts the RENDERER emits, so a template author cannot ride a
+        chart declaration to embed their own JavaScript. Surrounding
+        whitespace is ignored; it cannot arm an otherwise-legal body."""
+        stripped = body.strip()
+        lib = self._chart_lib()
+        if lib is not None and stripped == lib:
+            return
+        parsed = parse_chart_init_js(stripped)
+        if parsed is None:
+            shown = stripped if len(stripped) <= _MAX_URL_IN_MESSAGE else (
+                stripped[:_MAX_URL_IN_MESSAGE] + "..."
+            )
+            self.errors.append(
+                f"unexpected inline <script> on chart page: {shown!r} — "
+                "the only inline scripts allowed are the vendored "
+                "Chart.js library and one renderer-built init per "
+                "declared chart"
+            )
+            return
+        chart_id, config_json = parsed
+        if chart_id not in self.chart_ids:
+            self.errors.append(
+                f"chart init <script> references chart id {chart_id!r}, "
+                "which the manifest does not declare"
+            )
+            return
+        if "<" in config_json:
+            self.errors.append(
+                f"chart init <script> for {chart_id!r} contains a raw "
+                "'<' in its config — serialize_chart_config always "
+                "\\u003c-escapes '<', so this is not renderer-built "
+                "output"
+            )
+            return
+        try:
+            json.loads(config_json)
+        except ValueError:
+            self.errors.append(
+                f"chart init <script> for {chart_id!r} has a config "
+                "argument that is not valid JSON — renderer-built "
+                "configs are pure data, never code"
+            )
 
     def _check_tag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         raw_tag = self.get_starttag_text() or ""
@@ -350,16 +467,15 @@ class _Linter(HTMLParser):
                     "(manifest 'charts' is empty)"
                 )
             # else: the ONE controlled opening in the no-script rule
-            # (Phase 4 charts): an inline, src-less <script> passes when
-            # the manifest declares charts. The rule is deliberately
-            # STRUCTURAL — script CONTENT is not validated here, because
-            # a lint that pretends to judge JavaScript is a false
-            # promise. The trust boundary is upstream: the only script
-            # emitters are the renderer (the vendored, checksummed
-            # Chart.js bundle) and the chart macro, whose payload is
-            # built by charts.build_chart_config from validated data and
-            # u003c-escaped by charts.serialize_chart_config so it
-            # cannot close the script element. Every other Phase 3 rule
+            # (Phase 4 charts): an inline, src-less <script> may pass
+            # when the manifest declares charts — but only if its BODY
+            # is one the renderer emits (the vendored bundle or a
+            # declared chart's init; see _check_script_body, fed by the
+            # buffering in handle_starttag/handle_data). This is still
+            # not a JavaScript judge — a lint that pretends to evaluate
+            # JS is a false promise — it recognizes two byte shapes and
+            # rejects everything else, so the guarantee holds even for
+            # a template someone else wrote. Every other Phase 3 rule
             # (script src, on*, script-scheme URLs, banned tags, the
             # fetch-on-load and CSS allowlists) still applies on chart
             # pages, unchanged.
@@ -499,8 +615,25 @@ class _Linter(HTMLParser):
         )
 
 
+def _declared_chart_ids(manifest: Dict[str, Any]) -> FrozenSet[str]:
+    """Chart ids from the manifest's ``charts`` list. load_manifest
+    guarantees objects with validated string ids; bare-string entries
+    are accepted too so hand-built manifest dicts passed straight to
+    lint_html behave predictably."""
+    ids = set()
+    for chart in manifest.get("charts") or []:
+        if isinstance(chart, str):
+            ids.add(chart)
+        elif isinstance(chart, dict) and isinstance(chart.get("id"), str):
+            ids.add(chart["id"])
+    return frozenset(ids)
+
+
 def lint_html(html: str, manifest: Dict[str, Any]) -> Tuple[List[str], List[str]]:
-    linter = _Linter(charts_declared=bool(manifest.get("charts")))
+    linter = _Linter(
+        charts_declared=bool(manifest.get("charts")),
+        chart_ids=_declared_chart_ids(manifest),
+    )
     linter.feed(html)
     linter.close()
 

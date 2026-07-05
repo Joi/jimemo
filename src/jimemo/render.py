@@ -5,18 +5,19 @@ self-contained HTML page: Jinja2 render -> image inlining -> lint
 Charts: when the manifest declares charts, the renderer injects two
 extra context names — ``chart_lib`` (the vendored Chart.js source,
 emitted once by the page skeleton as the single library <script>) and
-``charts`` (one entry per declaration: id, type, title, and the
-serialize_chart_config output as ``config_json``, the only value the
-chart macro may be called with). A chartless manifest injects neither
+``charts`` (one entry per declaration: id, type, title, and the full
+init-script body built by charts.chart_init_js as ``init_js``, the only
+value the chart macro may be called with — lint accepts no other inline
+script body on a chart page). A chartless manifest injects neither
 name, leaving the Phase 3 no-script output byte-identical.
 """
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ._paths import CHARTS_VENDOR_DIR, REPO_ROOT
+from ._paths import CHARTJS_BUNDLE, REPO_ROOT
 from ._vendor import add_vendor_to_path
-from .charts import build_chart_config, serialize_chart_config
+from .charts import build_chart_config, chart_init_js, serialize_chart_config
 from .errors import ContentError, ManifestError
 from .inline import assemble_css, inline_images
 from .lint import lint_html
@@ -34,7 +35,6 @@ from markupsafe import Markup  # noqa: E402
 
 TOOLKIT_DIR = REPO_ROOT / "toolkit"
 TEMPLATE_FILENAME = "template.html.j2"
-CHARTJS_BUNDLE = CHARTS_VENDOR_DIR / "chartjs" / "chart.umd.min.js"
 
 # Context names render_page injects only when the manifest declares
 # charts. manifest.py's RESERVED_SLOT_NAMES predates charts and does not
@@ -69,10 +69,12 @@ def _chart_lib() -> Markup:
 def _charts_context(
     manifest: Dict[str, Any], content: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
-    """One entry per manifest chart declaration, each carrying the
-    breakout-safe serialized config the chart macro embeds verbatim
+    """One entry per manifest chart declaration, each carrying the full
+    breakout-safe init-script body the chart macro embeds verbatim
     (Markup-wrapped: serialize_chart_config already u003c-escaped every
-    "<", and autoescaping it again would corrupt the JSON)."""
+    "<" in the config, and autoescaping the body would corrupt it).
+    chart_init_js builds the exact bytes; lint.py recognizes exactly
+    that shape and rejects every other inline script on a chart page."""
     charts: List[Dict[str, Any]] = []
     for decl in manifest["charts"]:
         data_slot = decl["data_slot"]
@@ -94,7 +96,9 @@ def _charts_context(
             # so a missing/empty title must fall back to the chart id
             # here rather than relying on the template's default(c.id).
             "title": decl.get("title") or decl["id"],
-            "config_json": Markup(serialize_chart_config(config)),
+            "init_js": Markup(
+                chart_init_js(decl["id"], serialize_chart_config(config))
+            ),
         })
     return charts
 
@@ -114,9 +118,10 @@ def render_page(
 
     Raises ContentError if lint finds a hard error (any resource
     reference outside lint's self-contained allowlist, script tags where
-    the manifest declares no charts, or any <script src>) — callers must
-    not write output in that case — and for chart data that is missing
-    or does not fit the {labels, series} contract (see charts.py).
+    the manifest declares no charts, any <script src>, or an inline
+    script on a chart page that is not one the renderer emits) — callers
+    must not write output in that case — and for chart data that is
+    missing or does not fit the {labels, series} contract (see charts.py).
     """
     template_dir = Path(template_dir)
     manifest = load_manifest(template_dir)

@@ -53,7 +53,7 @@ contracts are in `docs/superpowers/plans/2026-07-05-jimemo-phase3-core.md`.
   print), `components/<name>.css` (one file per toolkit component,
   including `chart-block.css` for the chart-dashboard layout),
   `macros.html.j2` (the matching Jinja2 macro for each component,
-  including the `chart(id, config_json)` macro — the only macro that
+  including the `chart(id, init_js)` macro — the only macro that
   emits a `<script>`), `page.html.j2` (the base template every
   seed/personal template extends).
 - `templates/<name>/` — a template is a folder: `template.html.j2`,
@@ -71,11 +71,18 @@ contracts are in `docs/superpowers/plans/2026-07-05-jimemo-phase3-core.md`.
 
 **Chart security model:** a template that declares `charts` in its
 manifest lets `lint.py` reopen exactly one door it otherwise keeps
-shut for every template — an inline, src-less `<script>` — and only
-`toolkit/macros.html.j2`'s `chart` macro may use it. Everything placed
-in that script is config-as-data: `charts.py` builds a plain dict from
-validated content, `json.dumps`-serializes it, and escapes every `<`
-so untrusted labels or values can never terminate the script element
-or start a new one. `src`, `on*` handlers, `javascript:`, and remote
-resources are still hard lint errors on every template, chart-bearing
-or not.
+shut for every template — an inline, src-less `<script>` — but only
+for the exact script BODIES the renderer emits: the vendored Chart.js
+library, byte-compared against the pinned bundle, and one init per
+declared chart in exactly `charts.chart_init_js`'s shape (declared id,
+JSON config with no raw `<`). `render.py` builds each init body via the
+same `chart_init_js`, so the text lint accepts and the text the macro
+emits have one source of truth; any other inline script — even on a
+chart page — is a hard error, so a shared third-party template cannot
+ride a chart declaration to smuggle its own JavaScript. Everything
+placed in the config is config-as-data: `charts.py` builds a plain
+dict from validated content, `json.dumps`-serializes it, and escapes
+every `<` so untrusted labels or values can never terminate the script
+element or start a new one. `src`, `on*` handlers, `javascript:`, and
+remote resources are still hard lint errors on every template,
+chart-bearing or not.

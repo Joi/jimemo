@@ -36,6 +36,6 @@
     "keywords": ["metrics", "kpi", "chart", "visualization", "analytics"],
     "content_kinds": ["tabular-data"],
     "good_for": "Metrics dashboards where the story is a trend or a breakdown: headline KPIs plus a line and bar chart backed by a supporting table.",
-    "labeled_hash": "4d352ebaa47455ddde6d9819cd442dd822c90f77075aa12cc6dd1141e06fcf7b"
+    "labeled_hash": "922c18c90421a2b237a2fa2e4e4098c8c75543423078996d3a33242458fa2572"
   }
 }

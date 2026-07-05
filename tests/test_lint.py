@@ -5,6 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from jimemo._paths import CHARTJS_BUNDLE
 from jimemo.lint import MAX_OUTPUT_BYTES, lint_html
 
 
@@ -21,10 +22,24 @@ def test_script_tag_errors_when_no_charts_declared():
     assert any("script" in e for e in errors)
 
 
-def test_script_tag_allowed_when_charts_declared():
-    html = "<html><body><script>drawChart();</script></body></html>"
+def test_renderer_shaped_init_script_allowed_when_charts_declared():
+    # An inline script whose body is a chart init in the exact shape the
+    # renderer emits, for a declared chart id, passes.
+    html = (
+        "<html><body>"
+        '<script>new Chart(document.getElementById("bar-chart"), {});</script>'
+        "</body></html>"
+    )
     errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
     assert errors == []
+
+
+def test_arbitrary_inline_script_rejected_even_when_charts_declared():
+    # The Phase 4 tightening: declaring charts no longer blesses ANY
+    # inline script — only the renderer-emitted library and chart inits.
+    html = "<html><body><script>drawChart();</script></body></html>"
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("unexpected inline" in e for e in errors)
 
 
 def test_external_script_src_always_errors_even_with_charts():
@@ -770,3 +785,93 @@ def test_css_fetches_still_error_when_charts_declared():
         "<style>.x{background:url(https://evil.example/x.png)}</style>"
     )
     assert any("evil.example" in e for e in errors)
+
+
+# --- inline-script allowlist on a chart page (Phase 4 tightening) -----------
+#
+# Declaring charts no longer blesses ANY inline <script>. The only inline
+# script bodies accepted are the ones the RENDERER emits: the vendored
+# Chart.js library and, per declared chart, an init in exactly
+# charts.chart_init_js's byte shape whose id is declared and whose config
+# is the safe-serialized JSON. Everything else is an error — so a
+# third-party template cannot ride a chart declaration to embed its own
+# JavaScript.
+
+VALID_INIT = 'new Chart(document.getElementById("sales"), {"type":"bar"});'
+
+
+def test_extra_hand_added_inline_script_rejected_on_chart_page():
+    # The core adversarial case: a legit chart init AND a bolted-on
+    # arbitrary script. The init passes; the extra script is named and
+    # errors, so the page fails closed.
+    errors, _ = _lint_with_charts(
+        '<canvas id="sales"></canvas>'
+        f"<script>{VALID_INIT}</script>"
+        "<script>alert(1)</script>"
+    )
+    assert any("unexpected inline" in e and "alert(1)" in e for e in errors)
+
+
+def test_init_for_undeclared_chart_id_rejected():
+    errors, _ = _lint_with_charts(
+        '<script>new Chart(document.getElementById("ghost"), {});</script>'
+    )
+    assert any("ghost" in e and "does not declare" in e for e in errors)
+
+
+def test_init_with_raw_lt_in_config_rejected():
+    # A hand-forged config carrying an unescaped "<" is not
+    # serialize_chart_config output (which u003c-escapes every "<"), even
+    # though the init wrapper is well-formed and the id is declared.
+    errors, _ = _lint_with_charts(
+        '<script>new Chart(document.getElementById("sales"), '
+        '{"x":"<script>"});</script>'
+    )
+    assert any("raw" in e and "sales" in e for e in errors)
+
+
+def test_init_with_non_json_config_rejected():
+    # The init wrapper matches and the id is declared, but the config
+    # argument is code, not data — renderer output always parses as JSON.
+    errors, _ = _lint_with_charts(
+        '<script>new Chart(document.getElementById("sales"), '
+        "fetch('/x'));</script>"
+    )
+    assert any("not valid JSON" in e and "sales" in e for e in errors)
+
+
+def test_self_closing_inline_script_rejected_on_chart_page():
+    # A body-less <script/> is nothing the renderer emits.
+    errors, _ = _lint_with_charts("<script></script>")
+    assert any("unexpected inline" in e for e in errors)
+
+
+def test_whitespace_around_valid_init_is_fine():
+    errors, _ = _lint_with_charts(f"<script>\n  {VALID_INIT}\n</script>")
+    assert errors == []
+
+
+def test_vendored_chartjs_library_body_is_accepted():
+    # The other allowed body: the exact vendored bundle text, inlined as
+    # the page's single library <script>. Read the real file so the
+    # byte-equality path is exercised end to end.
+    lib = CHARTJS_BUNDLE.read_text(encoding="utf-8")
+    errors, _ = _lint_with_charts(f"<script>{lib}</script>")
+    assert errors == []
+
+
+def test_two_declared_inits_both_accepted():
+    manifest = {
+        "charts": [
+            {"id": "sales", "type": "bar", "data_slot": "s"},
+            {"id": "trend", "type": "line", "data_slot": "t"},
+        ]
+    }
+    html = (
+        "<html><body>"
+        '<script>new Chart(document.getElementById("sales"), {});</script>'
+        '<script>new Chart(document.getElementById("trend"), {});</script>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, manifest)
+    assert errors == []

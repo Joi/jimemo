@@ -50,7 +50,7 @@ CHART_TEMPLATE = """\
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 {{ ui.page_header(title) }}
-{% for c in charts %}{{ ui.chart(c.id, c.config_json) }}{% endfor %}
+{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}
 {% endblock %}
 """
 
@@ -137,9 +137,9 @@ def test_missing_chart_title_falls_back_to_chart_id(tmp_path):
         '    {"id": "sales", "type": "bar", "data_slot": "sales_data"}',
     )
     template = CHART_TEMPLATE.replace(
-        "{% for c in charts %}{{ ui.chart(c.id, c.config_json) }}{% endfor %}",
+        "{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}",
         "{% for c in charts %}<h2>{{ c.title }}</h2>"
-        "{{ ui.chart(c.id, c.config_json) }}{% endfor %}",
+        "{{ ui.chart(c.id, c.init_js) }}{% endfor %}",
     )
     template_dir = make_chart_template_dir(
         tmp_path, manifest_source=manifest, template_source=template
@@ -197,7 +197,7 @@ NO_CHART_MANIFEST = CHART_MANIFEST.replace(
 )
 
 NO_CHART_TEMPLATE = CHART_TEMPLATE.replace(
-    "{% for c in charts %}{{ ui.chart(c.id, c.config_json) }}{% endfor %}\n", ""
+    "{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}\n", ""
 )
 
 
@@ -348,31 +348,37 @@ def test_chart_injection_payloads_render_inert(tmp_path):
     tampered = html.replace("</body>", '<script src="x.js"></script></body>')
     errors, _ = lint_html(tampered, manifest)
     assert any("script" in e and "x.js" in e for e in errors)
+    # ...and so does an EXTRA hand-added inline script — the chart
+    # declaration only blesses the renderer's own init and library, so a
+    # third-party template that smuggles its own <script> fails lint.
+    tampered = html.replace("</body>", "<script>alert(1)</script></body>")
+    errors, _ = lint_html(tampered, manifest)
+    assert any("unexpected inline" in e and "alert(1)" in e for e in errors)
 
 
 def test_macro_misuse_with_plain_string_fails_closed(tmp_path):
-    # The chart macro takes config_json VERBATIM only via the renderer's
+    # The chart macro takes init_js VERBATIM only via the renderer's
     # Markup-wrapped value. A template author who passes raw content
-    # instead gets autoescaped entities — a broken chart, never markup.
+    # instead gets autoescaped entities — which lint then rejects as an
+    # unexpected inline script, so the render fails closed instead of
+    # shipping a script body the renderer did not build.
     manifest = CHART_MANIFEST.replace(
         '"title": {"type": "text", "required": true},',
         '"title": {"type": "text", "required": true},\n'
         '    "payload": {"type": "text"},',
     )
     template = CHART_TEMPLATE.replace(
-        "{% for c in charts %}{{ ui.chart(c.id, c.config_json) }}{% endfor %}",
+        "{% for c in charts %}{{ ui.chart(c.id, c.init_js) }}{% endfor %}",
         "{% for c in charts %}{{ ui.chart(c.id, payload) }}{% endfor %}",
     )
     template_dir = make_chart_template_dir(
         tmp_path, manifest_source=manifest, template_source=template
     )
-    html = render_page(
-        template_dir,
-        {"title": "T", "payload": EVIL_LABEL, "sales_data": SALES_DATA},
-    )
-    assert EVIL_LABEL not in html
-    assert "&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;" in html
-    assert script_open_tags(html) == ["<script>", "<script>"]
+    with pytest.raises(ContentError, match="unexpected inline"):
+        render_page(
+            template_dir,
+            {"title": "T", "payload": EVIL_LABEL, "sales_data": SALES_DATA},
+        )
 
 
 # --- CLI end to end ---------------------------------------------------------

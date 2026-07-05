@@ -24,7 +24,10 @@ CHART_TYPES = ("bar", "line", "pie", "doughnut", "radar")
 CHART_FIELDS = ("id", "type", "data_slot", "title")
 # ASCII-only so a chart id is always a safe DOM id / macro argument.
 # \A/\Z (not ^/$) so a trailing newline can't sneak past the anchor.
-CHART_ID_RE = re.compile(r"\A[a-zA-Z][\w-]*\Z", re.ASCII)
+# The bare pattern is shared with charts.py's init-script recognizer so
+# the id shape lint accepts is exactly the shape validated here.
+CHART_ID_PATTERN = r"[a-zA-Z][\w-]*"
+CHART_ID_RE = re.compile(r"\A" + CHART_ID_PATTERN + r"\Z", re.ASCII)
 CONTENT_KINDS = (
     "narrative",
     "photo-heavy",

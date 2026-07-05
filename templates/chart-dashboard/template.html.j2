@@ -5,11 +5,12 @@
     components used: page-header, stat-tile, chart, data-table.
 
     The renderer supplies `charts` (one entry per manifest declaration:
-    id, type, title, config_json) only because this manifest's `charts`
+    id, type, title, init_js) only because this manifest's `charts`
     list is non-empty; each entry is passed straight to ui.chart, the
     only macro that may emit a <script> (see toolkit/macros.html.j2 and
-    the Phase 4 plan's "security crux"). This template never touches
-    config_json itself. -#}
+    the Phase 4 plan's "security crux"). This template never builds or
+    alters init_js itself — lint rejects any script body the renderer
+    did not emit. -#}
 {% extends "page.html.j2" %}
 {% import "macros.html.j2" as ui %}
 
@@ -35,7 +36,7 @@
 {% for c in charts %}
 <section class="jm-chart-block">
   <h2 class="jm-chart-block__title">{{ c.title|default(c.id) }}</h2>
-  {{ ui.chart(c.id, c.config_json) }}
+  {{ ui.chart(c.id, c.init_js) }}
 </section>
 {% endfor %}
 

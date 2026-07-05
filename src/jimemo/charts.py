@@ -46,10 +46,11 @@ naming the problem, never silently passed into the config.
 """
 import json
 import math
-from typing import Any, Dict, List, Optional, Sequence
+import re
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .errors import ContentError, ManifestError
-from .manifest import CHART_TYPES
+from .manifest import CHART_ID_PATTERN, CHART_ID_RE, CHART_TYPES
 
 # The dataviz-toolkit categorical palette (8 hues, fixed CVD-optimized
 # order — see the dataviz skill's color-formula.md and palette.md).
@@ -246,6 +247,63 @@ def build_chart_config(
     # deliberately left unset here so the title never renders a second
     # time, in Chart.js's own font, inside the canvas.
     return config
+
+
+# --- the inline init script body -------------------------------------------
+# chart_init_js is the ONLY producer of a chart's init <script> body
+# (render.py Markup-wraps its output for the chart macro to emit
+# verbatim), and parse_chart_init_js is the matching recognizer lint.py
+# uses to accept nothing else inside <script> on a chart page. Building
+# both from the same three literal segments makes the byte-exact shape a
+# single source of truth that render and lint cannot drift apart on.
+# The '"), ' separator (with the space) is pinned by the goldens.
+_INIT_JS_PREFIX = 'new Chart(document.getElementById("'
+_INIT_JS_MIDDLE = '"), '
+_INIT_JS_SUFFIX = ');'
+
+_INIT_JS_RE = re.compile(
+    re.escape(_INIT_JS_PREFIX)
+    + "(" + CHART_ID_PATTERN + ")"
+    + re.escape(_INIT_JS_MIDDLE)
+    + "(.*)"
+    + re.escape(_INIT_JS_SUFFIX),
+    re.ASCII | re.DOTALL,
+)
+
+
+def chart_init_js(chart_id: str, config_json: str) -> str:
+    """The full JavaScript body of the single inline ``<script>`` that
+    initializes one chart::
+
+        new Chart(document.getElementById("<id>"), <config_json>);
+
+    ``chart_id`` must be a manifest-validated chart id and
+    ``config_json`` must be serialize_chart_config output; both are
+    re-checked here because this text is emitted verbatim inside a
+    script element and this module is the security boundary.
+    """
+    if not isinstance(chart_id, str) or not CHART_ID_RE.match(chart_id):
+        raise ManifestError(
+            f"chart id {chart_id!r} does not match {CHART_ID_RE.pattern} "
+            "and cannot be embedded in an init script"
+        )
+    if "<" in config_json:
+        raise ValueError(
+            "config_json contains a raw '<' — it must be "
+            "serialize_chart_config output, which \\u003c-escapes every '<'"
+        )
+    return _INIT_JS_PREFIX + chart_id + _INIT_JS_MIDDLE + config_json + _INIT_JS_SUFFIX
+
+
+def parse_chart_init_js(script_body: str) -> Optional[Tuple[str, str]]:
+    """``(chart_id, config_json)`` if ``script_body`` has exactly the
+    byte shape chart_init_js emits, else None. Recognition only — the
+    caller (lint) still judges whether the id is declared and the config
+    text is the safe-serialized form."""
+    match = _INIT_JS_RE.fullmatch(script_body)
+    if match is None:
+        return None
+    return match.group(1), match.group(2)
 
 
 def serialize_chart_config(config: Dict[str, Any]) -> str:
