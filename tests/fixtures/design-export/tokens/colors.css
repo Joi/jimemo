@@ -1,0 +1,62 @@
+/* ============================================================
+   Chiba Tech — Color
+   Foundation: black & white are the primary colors.
+   Core Blue (Purple Navy Blue / DIC-256) is reserved for core
+   academic events & ceremonies. A 21-swatch secondary palette
+   (7 hues x light/medium/dark) supports expressive layouts.
+   Values transcribed verbatim from the brand manual.
+   ============================================================ */
+:root {
+  /* ---- Core ---- */
+  --ct-black: #000000;
+  --ct-white: #ffffff;
+  --ct-blue-core: #4c4499; /* Purple Navy Blue — DIC-256, ceremonies only */
+
+  /* neutral surface used across manual + web (rgb 244,244,244) */
+  --ct-surface: #f4f4f4;
+  --ct-grey-64: #6a6a6a;  /* rgb 106,106,106 */
+  --ct-grey-a5: #a5a5a5;  /* rgb 165,165,165 */
+  --ct-grey-b9: #b9b9b9;  /* rgb 185,185,185 */
+
+  /* ---- Secondary palette — Red ---- */
+  --ct-red-light: #ffe3e2;
+  --ct-red: #cf1516;       /* Medium Red */
+  --ct-red-dark: #3a0706;
+
+  /* ---- Orange ---- */
+  --ct-orange-light: #fedec7;
+  --ct-orange: #e96524;    /* Medium Orange */
+  --ct-orange-dark: #6b1400;
+
+  /* ---- Green ---- */
+  --ct-green-light: #daf2c0;
+  --ct-green: #7ede3c;     /* Green */
+  --ct-green-dark: #0d530d;
+
+  /* ---- Yellow ---- */
+  --ct-yellow-light: #fffcd6;
+  --ct-yellow: #f9e81e;    /* Yellow */
+  --ct-yellow-dark: #876714;
+
+  /* ---- Turquoise ---- */
+  --ct-turquoise-light: #d1fffc;
+  --ct-turquoise: #29e2d0; /* Medium Turquoise */
+  --ct-turquoise-dark: #035e4f;
+
+  /* ---- Blue ---- */
+  --ct-blue-light: #bfe2fe;
+  --ct-blue: #2c40d3;      /* Medium Blue */
+  --ct-blue-dark: #081c4f;
+
+  /* ---- Pink / Purple ---- */
+  --ct-pink-light: #fedbf9;
+  --ct-pink: #db23dd;      /* Medium Pink */
+  --ct-purple-dark: #3c0d39;
+
+  /* ---- Semantic aliases ---- */
+  --ct-ink: var(--ct-black);          /* default text */
+  --ct-paper: var(--ct-white);        /* default background */
+  --ct-on-dark: var(--ct-white);      /* text on black / core blue */
+  --ct-ceremony: var(--ct-blue-core); /* ceremonial surface */
+  --ct-hairline: var(--ct-black);     /* rules & borders are pure black */
+}

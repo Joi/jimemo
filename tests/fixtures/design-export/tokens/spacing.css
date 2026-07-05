@@ -1,0 +1,43 @@
+/* ============================================================
+   Chiba Tech — Spacing, grid & shape
+   The manual works on a strict page frame: a 50px outer margin,
+   a 278px description rail, then content in 741px columns with a
+   30px gutter. Corners are square — the identity is pixel/carpentry
+   based, so radii stay at 0. The "pixel grid" tokens describe the
+   Ichimatsu drawing system (2/3/4/8-pixel densities).
+   ============================================================ */
+:root {
+  /* base spacing scale (px) */
+  --ct-space-1: 5px;
+  --ct-space-2: 10px;
+  --ct-space-3: 15px;
+  --ct-space-4: 20px;
+  --ct-space-5: 30px;
+  --ct-space-6: 50px;
+  --ct-space-7: 80px;
+  --ct-space-8: 120px;
+
+  /* page frame (1920-wide reference) */
+  --ct-margin: 50px;        /* outer page margin */
+  --ct-rail: 278px;         /* description / caption rail width */
+  --ct-gutter: 30px;        /* column gutter */
+  --ct-col: 741px;          /* content column width */
+
+  /* shape — square by doctrine */
+  --ct-radius: 0px;
+
+  /* rules & borders — pure black hairlines */
+  --ct-border: 2px;
+  --ct-border-thick: 4px;
+  --ct-rule: 2px solid var(--ct-black);
+
+  /* pixel / Ichimatsu drawing grid.
+     Layouts are built from these cell counts:
+     2px = bold marks & logos, 3px = signage,
+     4px = detailed compositions (web/print), 8px = fine imagery. */
+  --ct-pixel-2: 2; /* @kind other */
+  --ct-pixel-3: 3; /* @kind other */
+  --ct-pixel-4: 4; /* @kind other */
+  --ct-pixel-8: 8; /* @kind other */
+  --ct-pixel-cell: 37.5px;  /* logo/symbol native cell size */
+}
