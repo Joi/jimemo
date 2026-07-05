@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import jimemo.publish.cloudflare_backend as cloudflare_backend_mod
 from jimemo.config import load_config
 from jimemo.errors import PublishError
-from jimemo.publish.cloudflare_backend import _default_state_dir
+from jimemo.publish.cloudflare_backend import CloudflarePublisher, _default_state_dir
 from jimemo.publish.setup import (
     CLOUDFLARE_ASSETS_DIR,
     DEFAULT_PROJECT_NAME,
@@ -472,6 +472,94 @@ def test_existing_config_declining_overwrite_leaves_it_untouched(tmp_path, monke
 
     assert cfg_path.read_text() == original
     assert "aborted" in io.text().lower()
+
+
+def test_existing_config_declining_overwrite_makes_no_side_effects(tmp_path, monkeypatch):
+    """The overwrite confirm now happens near the START of run_setup (right
+    after the token/wrangler-availability checks) -- BEFORE any asset
+    install, deploy, or KV call -- not just before the final config write.
+    Declining must be a total no-op against the friend's Cloudflare
+    account: no deploy, no KV write, no local state directory, and the
+    existing config left untouched."""
+    cfg_path = tmp_path / "config.toml"
+    original = '[publish]\nbackend = "command"\ncommand = "notes-publish"\n'
+    cfg_path.write_text(original)
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "fake-token")
+    wrangler = MockWrangler()
+    io = FakeIO(prompts=["friend-notes", "acct123", "ns123"], confirms=[False])
+
+    run_setup(False, wrangler, cfg_path, io)
+
+    assert not any(
+        c[0] in ("pages_deploy", "kv_put", "kv_get") for c in wrangler.calls
+    )
+    state_dir = _default_state_dir("friend-notes")
+    assert not state_dir.exists()
+    assert cfg_path.read_text() == original
+
+
+# ---------------------------------------------------------------------------
+# Project name validation: Cloudflare Pages project names are lowercase
+# alphanumeric + hyphens. Rejected up front, before any side effect, since
+# the name flows into a state-dir path join (a "../"-containing name would
+# escape ~/.jimemo/cloudflare/), into base_url, and into a raw TOML write
+# (an embedded newline would produce invalid TOML).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "bad_name",
+    ["../evil", "Has Spaces", "UPPERCASE", "-leading-hyphen",
+     "trailing-hyphen-", "embedded\nnewline"],
+)
+def test_real_run_rejects_invalid_project_name(tmp_path, monkeypatch, bad_name):
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "fake-token")
+    wrangler = MockWrangler()
+    io = FakeIO(prompts=[bad_name, "acct123", "ns123"])
+    cfg_path = tmp_path / "config.toml"
+
+    with pytest.raises(PublishError) as exc:
+        run_setup(False, wrangler, cfg_path, io)
+
+    assert "invalid Cloudflare Pages project name" in str(exc.value)
+    assert not any(
+        c[0] in ("pages_deploy", "kv_put", "kv_get") for c in wrangler.calls
+    )
+    assert not cfg_path.exists()
+
+
+def test_real_run_accepts_a_valid_hyphenated_project_name(tmp_path, monkeypatch):
+    wrangler, io, cfg_path = _run_real(
+        tmp_path, monkeypatch, prompts=["a-valid-project-99", "acct123", "ns123"],
+    )
+
+    config = load_config(cfg_path)
+    assert config.publish.cloudflare.project == "a-valid-project-99"
+
+
+# ---------------------------------------------------------------------------
+# Regression: setup installs the middleware into the state directory, and a
+# later publish() (which always redeploys the WHOLE state directory -- see
+# cloudflare_backend.py's module docstring) must not silently drop it.
+# ---------------------------------------------------------------------------
+
+def test_setup_then_publish_keeps_middleware_and_adds_new_hash(tmp_path, monkeypatch):
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+    config = load_config(cfg_path)
+    state_dir = _default_state_dir("friend-notes")
+
+    html = tmp_path / "page.html"
+    html.write_text("<html><body>hi</body></html>")
+    publisher = CloudflarePublisher(config.publish, wrangler=wrangler, state_dir=state_dir)
+    publisher.publish(html)
+
+    assert (state_dir / "functions" / "_middleware.js").is_file()
+    assert (state_dir / "_headers").is_file()
+    assert (state_dir / "index.html").is_file()
+    hash_dirs = [d for d in state_dir.iterdir() if d.is_dir() and d.name != "functions"]
+    assert len(hash_dirs) == 1
+    assert (hash_dirs[0] / "index.html").is_file()
 
 
 # ---------------------------------------------------------------------------

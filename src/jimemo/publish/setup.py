@@ -82,6 +82,7 @@ call fail confusingly; wrangler resolves its own auth from that same
 environment variable.
 """
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -99,6 +100,15 @@ from .wrangler import NO_WRANGLER_MESSAGE
 CLOUDFLARE_ASSETS_DIR = REPO_ROOT / "publish" / "cloudflare"
 
 DEFAULT_PROJECT_NAME = "jimemo-notes"
+
+#: Cloudflare Pages project names: lowercase letters, digits, and
+#: hyphens; no leading or trailing hyphen; 1-63 characters. The project
+#: name flows unescaped into a filesystem path join (_default_state_dir
+#: -> ~/.jimemo/cloudflare/<project>/, so e.g. "../evil" would escape
+#: that directory), into base_url, and into a raw TOML write (an
+#: embedded newline would produce invalid TOML) -- so it is validated
+#: once, up front, before any of those uses.
+PROJECT_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 #: The KV binding name the ported middleware reads as `env.TOMBSTONES`
 #: (publish/cloudflare/_middleware.js). MUST match exactly -- see
@@ -345,6 +355,19 @@ def _post_deploy_binding_check(
     )
 
 
+def _validate_project_name(project: str) -> None:
+    """Raise PublishError if ``project`` isn't a valid Cloudflare Pages
+    project name (see PROJECT_NAME_RE). Called once, before the project
+    name is used to derive a state directory, a base URL, or config.toml
+    content."""
+    if not PROJECT_NAME_RE.match(project):
+        raise PublishError(
+            f"invalid Cloudflare Pages project name: {project!r} -- must "
+            "be lowercase letters, digits, and hyphens only, and may not "
+            'start or end with a hyphen (e.g. "jimemo-notes")'
+        )
+
+
 def _escape_toml_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -379,20 +402,26 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
     CLOUDFLARE_API_TOKEN, touches no local filesystem state, and writes
     no config. Fully offline and deterministic.
 
-    Otherwise: validates the token and wrangler are present, prompts for
-    a project name (default DEFAULT_PROJECT_NAME), an account id, and a
-    KV namespace id (printing manual instructions for the latter, since
-    no wrangler-seam call can create/bind one -- see module docstring),
-    installs the middleware/_headers/index.html into
-    ``~/.jimemo/cloudflare/<project>/`` (the SAME local state directory
-    cloudflare_backend.py's CloudflarePublisher deploys on every future
-    publish() call -- see module docstring for why this placement is
-    load-bearing, not cosmetic), deploys that directory, runs a
-    best-effort post-deploy KV check, and writes ~/.jimemo/config.toml
-    (confirming first if it already exists).
+    Otherwise: validates the token and wrangler are present, then --
+    before touching the filesystem, deploying, or making any KV call --
+    confirms overwriting config_path if it already exists (aborting
+    cleanly if declined, so a friend re-running setup by mistake can
+    never trigger a real deploy/KV write against their Cloudflare
+    account just by declining the config write at the very end). Then
+    prompts for a project name (default DEFAULT_PROJECT_NAME, validated
+    against PROJECT_NAME_RE), an account id, and a KV namespace id
+    (printing manual instructions for the latter, since no wrangler-seam
+    call can create/bind one -- see module docstring), installs the
+    middleware/_headers/index.html into ``~/.jimemo/cloudflare/<project>/``
+    (the SAME local state directory cloudflare_backend.py's
+    CloudflarePublisher deploys on every future publish() call -- see
+    module docstring for why this placement is load-bearing, not
+    cosmetic), deploys that directory, runs a best-effort post-deploy KV
+    check, and writes ~/.jimemo/config.toml.
 
     Raises PublishError if CLOUDFLARE_API_TOKEN is unset, wrangler/npx
-    is unavailable, or (non-dry-run) a wrangler call fails.
+    is unavailable, or (non-dry-run) a wrangler call fails or the
+    project name is invalid.
     """
     _print_intro(io)
 
@@ -405,6 +434,20 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
         io.print("[dry-run] would check: npx/wrangler available on PATH")
     elif not wrangler.check_available():
         raise PublishError(NO_WRANGLER_MESSAGE)
+
+    # Confirm BEFORE any side effect (asset install, deploy, KV call) --
+    # not just before the final config write. Declining here must be a
+    # clean, total no-op: the previous placement of this same confirm
+    # (right before _write_config, at the very end) let the deploy + KV
+    # round-trip already happen against a real Cloudflare account before
+    # the human got a chance to say no.
+    if not dry_run and config_path.exists():
+        overwrite = io.confirm(
+            f"{config_path} already exists. Overwrite?", default=False
+        )
+        if not overwrite:
+            io.print("aborted: config not written")
+            return
 
     if dry_run:
         project = DEFAULT_PROJECT_NAME
@@ -427,6 +470,8 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
         while not account_id:
             io.print("An account id is required.")
             account_id = io.prompt("Cloudflare account id")
+
+    _validate_project_name(project)
 
     base_url = f"https://{project}.pages.dev"
     # Same helper cloudflare_backend.py's CloudflarePublisher uses by
@@ -495,14 +540,6 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
             "  (no token -- see module docstring)"
         )
         return
-
-    if config_path.exists():
-        overwrite = io.confirm(
-            f"{config_path} already exists. Overwrite?", default=False
-        )
-        if not overwrite:
-            io.print("aborted: config not written")
-            return
 
     _write_config(config_path, project, account_id, kv_namespace_id, base_url)
     io.print(f"  wrote {config_path}")

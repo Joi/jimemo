@@ -223,6 +223,54 @@ def test_gc_ignores_tombstones_with_no_local_directory(tmp_path):
     assert not any(c[0] == "pages_deploy" for c in wrangler.calls)
 
 
+def test_list_filters_out_non_hash_kv_names(tmp_path):
+    """setup.py writes a non-hash sentinel key (__jimemo_setup_check__)
+    into the same KV namespace for its post-deploy round-trip check; that
+    key must never show up in the published-hash listing."""
+    wrangler = MockWrangler()
+    wrangler.kv_put("ns1", "__jimemo_setup_check__", "ok")
+    wrangler.kv_put("ns1", "ab" * 12, "2026-07-05T00:00:00.000Z")
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+
+    entries = publisher.list()
+
+    assert [e["hash"] for e in entries] == ["ab" * 12]
+
+
+def test_gc_ignores_non_hash_kv_names_when_collecting_tombstones(tmp_path):
+    wrangler = MockWrangler()
+    wrangler.kv_put("ns1", "__jimemo_setup_check__", "ok")
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    # A directory that happens to share the sentinel's name must survive
+    # gc even though a same-named KV key exists -- only a real hash-shaped
+    # KV key may mark a directory for removal.
+    (state_dir / "__jimemo_setup_check__").mkdir()
+
+    publisher.gc()
+
+    assert (state_dir / "__jimemo_setup_check__").is_dir()
+
+
+def test_gc_never_removes_a_non_hash_named_state_dir_child(tmp_path):
+    """Defense in depth: even if a KV key's name collided with a real,
+    non-hash state-dir child (e.g. a KV key literally named "functions"),
+    gc must never rmtree that child -- it only ever removes children whose
+    OWN name matches the hash pattern."""
+    wrangler = MockWrangler()
+    wrangler.kv_put("ns1", "functions", "2026-07-05T00:00:00.000Z")
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "functions").mkdir()
+    (state_dir / "functions" / "_middleware.js").write_text("// mw")
+
+    publisher.gc()
+
+    assert (state_dir / "functions" / "_middleware.js").is_file()
+
+
 def test_default_state_dir_is_under_home_jimemo_cloudflare(monkeypatch, tmp_path):
     import jimemo.publish.cloudflare_backend as mod
 

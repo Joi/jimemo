@@ -147,7 +147,10 @@ class CloudflarePublisher(Publisher):
         tombstones: Dict[str, str] = {}
         for entry in self._wrangler.kv_list(self._cf.kv_namespace_id):
             name = entry.get("name") if isinstance(entry, dict) else entry
-            if name:
+            # KV can hold non-hash keys too (e.g. setup.py's
+            # __jimemo_setup_check__ sentinel) -- only real published
+            # hashes belong in the published-hash listing.
+            if name and _HASH_RE.match(name):
                 tombstones[name] = self._wrangler.kv_get(self._cf.kv_namespace_id, name)
 
         local_hashes = set()
@@ -186,13 +189,24 @@ class CloudflarePublisher(Publisher):
         tombstoned_names = set()
         for entry in self._wrangler.kv_list(self._cf.kv_namespace_id):
             name = entry.get("name") if isinstance(entry, dict) else entry
-            if name:
+            # Same non-hash-key filter as list() -- a KV key that isn't a
+            # hash (e.g. setup.py's sentinel) must never be treated as a
+            # tombstoned hash directory to remove.
+            if name and _HASH_RE.match(name):
                 tombstoned_names.add(name)
 
         removed_any = False
         if self._state_dir.is_dir():
             for child in list(self._state_dir.iterdir()):
-                if child.is_dir() and child.name in tombstoned_names:
+                # Belt-and-suspenders: only ever rmtree a child whose own
+                # name is a hash, even if tombstoned_names somehow held a
+                # non-hash entry -- a KV key named e.g. "functions" must
+                # never delete the Functions bundle.
+                if (
+                    child.is_dir()
+                    and _HASH_RE.match(child.name)
+                    and child.name in tombstoned_names
+                ):
                     shutil.rmtree(child)
                     removed_any = True
 

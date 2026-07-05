@@ -48,7 +48,14 @@ class CommandPublisher(Publisher):
         self._run = runner
 
     def _invoke(self, args: List[str], action: str):
-        result = self._run([self._command] + args)
+        argv = [self._command] + args
+        try:
+            result = self._run(argv)
+        except FileNotFoundError:
+            raise PublishError(
+                f"publish command not found: {argv[0]} (check [publish] "
+                "command in your config)"
+            )
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
             raise PublishError(

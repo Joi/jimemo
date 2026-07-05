@@ -144,6 +144,21 @@ def test_uses_configured_command_name():
     assert runner.calls == [["my-publish-cli", "gc"]]
 
 
+def test_invoke_missing_command_raises_clean_publish_error(tmp_path):
+    """A configured command that doesn't exist on PATH makes the real
+    subprocess.run raise FileNotFoundError -- that must surface as a
+    clean PublishError, not an uncaught traceback."""
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    publisher = CommandPublisher(_config(command="definitely-not-a-real-command-xyz"))
+
+    with pytest.raises(PublishError) as exc:
+        publisher.publish(html)
+
+    assert "definitely-not-a-real-command-xyz" in str(exc.value)
+    assert "not found" in str(exc.value).lower()
+
+
 def test_default_runner_is_real_subprocess_argv_no_shell():
     import jimemo.publish.command_backend as mod
 
