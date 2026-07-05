@@ -250,6 +250,14 @@ class CloudflarePublisher(Publisher):
         separate dry-run mode at this layer -- Task 5's `--dry-run` wizard
         covers the "show me what would happen" need for setup; a plain
         `gc()` call here always applies.
+
+        Before that redeploy, self-heals the state directory's baseline
+        assets the same way publish() does (see _ensure_state_dir_assets):
+        gc() redeploys the WHOLE state directory too, so a damaged,
+        partially copied, or never-set-up state dir missing
+        functions/_middleware.js would otherwise go back out with no
+        tombstone Function, silently disabling ?purge for every hash gc
+        just redeployed.
         """
         self._ensure_wrangler_available()
         tombstoned_names = set()
@@ -277,4 +285,5 @@ class CloudflarePublisher(Publisher):
                     removed_any = True
 
         if removed_any:
+            _ensure_state_dir_assets(self._state_dir)
             self._wrangler.pages_deploy(self._cf.project, self._state_dir)

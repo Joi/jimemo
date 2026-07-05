@@ -330,6 +330,59 @@ def test_publish_does_not_clobber_already_installed_middleware(tmp_path):
     assert (functions_dir / "_middleware.js").read_text() == sentinel
 
 
+# ---------------------------------------------------------------------------
+# Self-heal: gc() redeploys the WHOLE state directory too (see module
+# docstring / _ensure_state_dir_assets), so it must install the same
+# baseline assets before its redeploy if they're missing -- otherwise a
+# damaged or partial state dir that gc() happens to touch first would go
+# back out with no tombstone Function, silently disabling ?purge. Mirrors
+# the publish() self-heal tests above.
+# ---------------------------------------------------------------------------
+
+def test_gc_installs_missing_middleware_before_redeploy(tmp_path):
+    wrangler = MockWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler, clock=lambda: "2026-07-05T00:00:00.000Z")
+    state_dir = tmp_path / "state"
+    tombstoned = "ab" * 12
+    (state_dir / tombstoned).mkdir(parents=True)
+    (state_dir / tombstoned / "index.html").write_text("<html></html>")
+    wrangler.kv_put("ns1", tombstoned, "2026-07-05T00:00:00.000Z")
+    assert not (state_dir / "functions" / "_middleware.js").is_file()
+
+    publisher.gc()
+
+    installed = state_dir / "functions" / "_middleware.js"
+    assert installed.is_file()
+    assert installed.read_text(encoding="utf-8") == (
+        CLOUDFLARE_ASSETS_DIR / "_middleware.js"
+    ).read_text(encoding="utf-8")
+    assert (state_dir / "_headers").is_file()
+    assert (state_dir / "index.html").is_file()
+    deploy_calls = [c for c in wrangler.calls if c[0] == "pages_deploy"]
+    deployed_dir = Path(deploy_calls[-1][2])
+    assert (deployed_dir / "functions" / "_middleware.js").is_file()
+
+
+def test_gc_does_not_clobber_already_installed_middleware(tmp_path):
+    """Idempotent: if the middleware is already present, a gc() redeploy
+    must not re-copy over it."""
+    wrangler = MockWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler, clock=lambda: "2026-07-05T00:00:00.000Z")
+    state_dir = tmp_path / "state"
+    tombstoned = "cd" * 12
+    (state_dir / tombstoned).mkdir(parents=True)
+    (state_dir / tombstoned / "index.html").write_text("<html></html>")
+    wrangler.kv_put("ns1", tombstoned, "2026-07-05T00:00:00.000Z")
+    functions_dir = state_dir / "functions"
+    functions_dir.mkdir(parents=True)
+    sentinel = "// pre-existing installed copy, must survive gc()\n"
+    (functions_dir / "_middleware.js").write_text(sentinel)
+
+    publisher.gc()
+
+    assert (functions_dir / "_middleware.js").read_text() == sentinel
+
+
 def test_default_state_dir_is_under_home_jimemo_cloudflare(monkeypatch, tmp_path):
     import jimemo.publish.cloudflare_backend as mod
 
