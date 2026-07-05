@@ -33,6 +33,60 @@ def test_font_maps_to_finder_with_fallback():
         assert "Arial" in value or "Helvetica" in value
 
 
+# -- font inference when brand_fonts is empty ------------------------------
+#
+# brand_fonts is manifest-only metadata; a manifest that omits
+# `brandFonts`, or the CSS-fallback reader path (which never populates
+# it at all -- see reader._from_css_fallback), left --jm-font-prose/ui
+# unmapped even when the export plainly has a primary font. These cover
+# the (a) name-token / (b) FontFace / (c) nothing-to-infer paths.
+
+
+def _export_with_tokens(tokens, fonts=()):
+    return DesignExport(tokens=list(tokens), fonts=list(fonts), brand_fonts=[], namespace="")
+
+
+def test_font_inferred_from_font_named_token_when_brand_fonts_empty():
+    export = _export_with_tokens(
+        [Token(name="--x-font", value='"Custom", sans-serif', kind="font")]
+    )
+    css = build_theme(export, "inferred")
+    for role in ("--jm-font-prose", "--jm-font-ui"):
+        m = re.search(re.escape(role) + r":\s*([^;]+);", css)
+        assert m, f"{role} not set in theme"
+        assert '"Custom"' in m.group(1)
+
+
+def test_font_inferred_from_fontface_when_no_font_token():
+    from jimemo.design.reader import FontFace
+
+    export = _export_with_tokens(
+        [Token(name="--x-color", value="#111111", kind="color")],
+        fonts=[FontFace(family="Custom Face", weight="400", style="normal")],
+    )
+    css = build_theme(export, "inferred")
+    m = re.search(r"--jm-font-prose:\s*([^;]+);", css)
+    assert m and '"Custom Face"' in m.group(1)
+
+
+def test_font_not_inferred_when_nothing_to_infer_from():
+    export = _export_with_tokens([Token(name="--x-color", value="#111111", kind="color")])
+    css = build_theme(export, "inferred")
+    assert not re.search(r"--jm-font-prose:\s*[^;]+;", css)
+    assert not re.search(r"--jm-font-ui:\s*[^;]+;", css)
+    assert "no confident primary font found" in css
+
+
+def test_chiba_font_mapping_unchanged_when_brand_fonts_present():
+    # Regression guard: brand_fonts stays the primary source when
+    # present -- inference must not kick in and override it.
+    export, css = _theme()
+    assert export.brand_fonts  # sanity: the fixture really has brand_fonts
+    for role in ("--jm-font-prose", "--jm-font-ui"):
+        m = re.search(re.escape(role) + r":\s*([^;]+);", css)
+        assert m and '"Finder"' in m.group(1)
+
+
 def test_accent_maps_to_brand_core_not_black_or_white():
     _, css = _theme()
     m = re.search(r"--jm-accent:\s*([^;]+);", css)

@@ -155,25 +155,95 @@ def _font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
     """(css_value, family, source_token_name) for the primary brand font,
     or None if no confident family was found. `source_token_name` is
     whichever referencing token supplied the fallback stack's generic
-    family, used only for the header's mapping table."""
+    family, used only for the header's mapping table.
+
+    brand_fonts (manifest metadata) is the primary source when present.
+    When it's empty -- a manifest lacking `brandFonts`, or the
+    CSS-fallback path, which never populates it at all -- falls back to
+    `_infer_font_declaration`'s name/FontFace heuristics instead of
+    leaving every export without a manifest unable to map a font at
+    all."""
     family = _pick_primary_font(export)
-    if not family:
+    if family:
+        brand = next(b for b in export.brand_fonts if b.family == family and b.status == "ok")
+        tokens_by_name = {t.name: t for t in export.tokens}
+        generic = None
+        source_token = brand.referencing_token_names[0] if brand.referencing_token_names else None
+        for tn in brand.referencing_token_names:
+            t = tokens_by_name.get(tn)
+            if t is None:
+                continue
+            found = _generic_family_of(t.value)
+            if found:
+                generic, source_token = found, tn
+                break
+        stack = _FALLBACK_STACKS.get(generic or _DEFAULT_GENERIC, _FALLBACK_STACKS[_DEFAULT_GENERIC])
+        value = '"{}", {}'.format(family, stack)
+        return value, family, (source_token or brand.referencing_token_names[0])
+
+    if not export.brand_fonts:
+        return _infer_font_declaration(export)
+    return None
+
+
+def _first_family_in_stack(value: str) -> Optional[str]:
+    """The first font-family in a CSS font-stack VALUE (comma-separated),
+    quotes stripped -- e.g. '"Finder", -apple-system, ...' -> "Finder",
+    or None if the stack's first entry is empty."""
+    first = value.split(",", 1)[0].strip()
+    if not first:
         return None
-    brand = next(b for b in export.brand_fonts if b.family == family and b.status == "ok")
-    tokens_by_name = {t.name: t for t in export.tokens}
-    generic = None
-    source_token = brand.referencing_token_names[0] if brand.referencing_token_names else None
-    for tn in brand.referencing_token_names:
-        t = tokens_by_name.get(tn)
-        if t is None:
-            continue
-        found = _generic_family_of(t.value)
-        if found:
-            generic, source_token = found, tn
-            break
-    stack = _FALLBACK_STACKS.get(generic or _DEFAULT_GENERIC, _FALLBACK_STACKS[_DEFAULT_GENERIC])
-    value = '"{}", {}'.format(family, stack)
-    return value, family, (source_token or brand.referencing_token_names[0])
+    m = re.match(r"""^['"](.+)['"]$""", first)
+    return m.group(1) if m else first
+
+
+def _pick_font_name_token(export: DesignExport) -> Optional[Token]:
+    """A token to infer the primary family from when there's no
+    brand_fonts metadata to consult: the export's own undecorated
+    `--*-font` token if one exists (the same "primary marker" shape
+    `_PRIMARY_FONT_TOKEN_RE` already uses to tie-break brand_fonts
+    candidates), else the first token (in export order) whose name
+    merely contains "font" (e.g. `--ct-font-jp` in an export with no
+    undecorated primary token). None if the export defines no
+    font-named token at all. First-in-export-order at each tier keeps
+    this deterministic."""
+    named = [t for t in export.tokens if "font" in t.name.lower()]
+    if not named:
+        return None
+    primary = [t for t in named if _PRIMARY_FONT_TOKEN_RE.match(t.name)]
+    return (primary or named)[0]
+
+
+def _infer_font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
+    """(css_value, family, source_description) inferred WITHOUT
+    brand_fonts metadata, for a manifest that omits `brandFonts` or the
+    CSS-fallback path (which never populates it). Tried in order:
+
+      (a) a `--*font*`-named token's own stack value -- its first family
+          becomes the primary, and its trailing generic (serif/
+          sans-serif/...) still picks the fallback stack exactly as the
+          brand_fonts path does; or
+      (b) the first parsed FontFace's family, if (a) found no usable
+          token -- there's no font-stack value to read a generic from
+          here, so the default fallback stack applies.
+
+    None if neither yields a family, so the caller leaves jimemo's font
+    defaults alone rather than emit a broken/empty family."""
+    token = _pick_font_name_token(export)
+    if token is not None:
+        family = _first_family_in_stack(token.value)
+        if family:
+            generic = _generic_family_of(token.value)
+            stack = _FALLBACK_STACKS.get(generic or _DEFAULT_GENERIC, _FALLBACK_STACKS[_DEFAULT_GENERIC])
+            value = '"{}", {}'.format(family, stack)
+            return value, family, token.name
+
+    if export.fonts and export.fonts[0].family:
+        family = export.fonts[0].family
+        value = '"{}", {}'.format(family, _FALLBACK_STACKS[_DEFAULT_GENERIC])
+        return value, family, "fonts[0] ({!r})".format(family)
+
+    return None
 
 
 # ---------------------------------------------------------------------------

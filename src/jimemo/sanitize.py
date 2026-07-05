@@ -121,7 +121,15 @@ def _is_font_data_uri(form: str) -> bool:
     mime = _mime_head(form)
     if mime.startswith("font/"):
         return mime[len("font/"):] in _FONT_SUBTYPES
-    return mime.startswith(_LEGACY_FONT_MIME_PREFIXES)
+    for prefix in _LEGACY_FONT_MIME_PREFIXES:
+        if mime.startswith(prefix):
+            # Exact subtype match, not just the prefix: a bare
+            # `mime.startswith(_LEGACY_FONT_MIME_PREFIXES)` (the prior
+            # form) accepted ANY subtype after "application/font-"/
+            # "application/x-font-", including one that isn't a real
+            # font format at all (e.g. "application/font-evil").
+            return mime[len(prefix):] in _FONT_SUBTYPES
+    return False
 
 
 def browser_url_form(value: str) -> str:
