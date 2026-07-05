@@ -1,4 +1,6 @@
 import argparse
+import hashlib
+import json
 import sys
 import webbrowser
 from pathlib import Path
@@ -8,9 +10,10 @@ from ._vendor import VENDOR_DIR, add_vendor_to_path
 from .checksums import verify_checksums
 from .content import load_content
 from .discovery import default_search_dirs, find_templates
-from .errors import ContentError, ManifestError
+from .errors import ContentError, ManifestError, ScaffoldError
 from .manifest import load_manifest
 from .render import render_page, write_output
+from .scaffold import create_template
 
 PYTHON_FLOOR = (3, 9)
 
@@ -99,6 +102,99 @@ def cmd_render(args) -> int:
     return 0
 
 
+def _sample_files(template_dir: Path) -> list:
+    sample_dir = template_dir / "sample"
+    if not sample_dir.is_dir():
+        return []
+    return sorted(
+        str(p.relative_to(template_dir)) for p in sample_dir.rglob("*") if p.is_file()
+    )
+
+
+def _labels_status(manifest, template_dir: Path) -> str:
+    labeled_hash = manifest.get("suitability", {}).get("labeled_hash")
+    template_path = template_dir / "template.html.j2"
+    if not labeled_hash or not template_path.is_file():
+        return "(no labeled_hash recorded)"
+    actual_hash = hashlib.sha256(template_path.read_bytes()).hexdigest()
+    if actual_hash == labeled_hash:
+        return "fresh"
+    return "stale (template.html.j2 changed since suitability labels were written)"
+
+
+def _print_info_human(manifest, template_dir: Path, sample_files: list) -> None:
+    print(f"{manifest['name']} — {manifest['title']}")
+    if manifest.get("description"):
+        print(manifest["description"])
+    print()
+
+    print("Slots:")
+    for slot_name, slot in manifest["slots"].items():
+        required = "required" if slot.get("required") else ""
+        print(f"  {slot_name:<16} {slot['type']:<9} {required}".rstrip())
+    print()
+
+    print(f"Components: {', '.join(manifest['components']) or '(none)'}")
+    print(f"Charts: {', '.join(manifest['charts']) or '(none)'}")
+    print()
+
+    suitability = manifest.get("suitability", {})
+    print("Suitability:")
+    print(f"  keywords: {', '.join(suitability.get('keywords', [])) or '(none)'}")
+    print(f"  content_kinds: {', '.join(suitability.get('content_kinds', [])) or '(none)'}")
+    print(f"  good_for: {suitability.get('good_for') or '(none)'}")
+    print(f"  labels: {_labels_status(manifest, template_dir)}")
+    print()
+
+    print(f"Template dir: {template_dir}")
+    if sample_files:
+        print("Sample files:")
+        for f in sample_files:
+            print(f"  {f}")
+    else:
+        print("Sample files: (none)")
+
+
+def cmd_info(args) -> int:
+    templates = dict(find_templates(default_search_dirs()))
+    template_dir = templates.get(args.template)
+    if template_dir is None:
+        available = ", ".join(sorted(templates)) if templates else "none"
+        print(
+            f"unknown template: {args.template!r} (available: {available})",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        manifest = load_manifest(template_dir)
+    except ManifestError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    sample_files = _sample_files(template_dir)
+
+    if args.json:
+        data = dict(manifest)
+        data["template_dir"] = str(template_dir)
+        data["sample_files"] = sample_files
+        print(json.dumps(data, indent=2))
+        return 0
+
+    _print_info_human(manifest, template_dir, sample_files)
+    return 0
+
+
+def cmd_new_template(args) -> int:
+    try:
+        template_dir = create_template(args.name)
+    except ScaffoldError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(f"created {template_dir}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="jimemo",
@@ -117,6 +213,13 @@ def main(argv=None) -> int:
     render_p.add_argument("--theme", help='pin "light" or "dark" (default: follow the OS)')
     render_p.add_argument("--open", action="store_true", help="open the result in a browser")
 
+    info_p = sub.add_parser("info", help="show a template's manifest and suitability")
+    info_p.add_argument("template", help="template name")
+    info_p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+    new_template_p = sub.add_parser("new-template", help="scaffold a new personal template")
+    new_template_p.add_argument("name", help="template name (lowercase letters, digits, hyphens)")
+
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
@@ -125,6 +228,10 @@ def main(argv=None) -> int:
         return cmd_list(args)
     if args.command == "render":
         return cmd_render(args)
+    if args.command == "info":
+        return cmd_info(args)
+    if args.command == "new-template":
+        return cmd_new_template(args)
 
     parser.print_usage(sys.stderr)
     return 2

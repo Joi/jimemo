@@ -13,3 +13,8 @@ class ContentError(Exception):
     """A content file failed to parse/validate, or rendering could not
     produce safe self-contained output (missing local image, lint
     errors)."""
+
+
+class ScaffoldError(Exception):
+    """`new-template` was asked for an invalid name, or the destination
+    template directory already exists."""
