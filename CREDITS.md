@@ -1,5 +1,11 @@
 # Credits
 
+## Ported code
+
+| Author | URL | What was ported |
+| --- | --- | --- |
+| Joi Ito / notes-ito-com | `~/repos/notes-ito-com` (private repo) | `publish/cloudflare/_middleware.js` -- the purge/tombstone Cloudflare Pages middleware (24-hex-hash access control, symmetric read/purge, click-confirm, tombstone-in-KV, Origin/Sec-Fetch-Site cross-site guard) is a generalized port of `functions/_middleware.js` from Joi's own notes.ito.com site, along with the noindex `_headers` asset. Control flow, regex, and security checks are verbatim; only the KV binding name (`env.TOMBSTONES`, was `env.NOTES_TOMBSTONES`) and the hardcoded domain in page copy (now read from the request's `url.host`) were changed to generalize it beyond one site. |
+
 ## Design inspiration
 
 Ideas below informed jimemo's design but no code was copied from any
