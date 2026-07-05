@@ -87,6 +87,20 @@ def test_listed_symlink_is_reported_not_followed(tmp_path):
     assert link_problems == ["symlink not allowed: pkg/link.py"]
 
 
+def test_listed_file_under_symlinked_directory_is_not_followed(tmp_path):
+    vendor = make_vendor(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "evil.py").write_text("import os\n")
+    digest = hashlib.sha256((outside / "evil.py").read_bytes()).hexdigest()
+    (vendor / "evilpkg").symlink_to(outside)
+    with (vendor / "SHA256SUMS").open("a") as fh:
+        fh.write(f"{digest}  ./evilpkg/evil.py\n")
+    problems = verify_checksums(vendor)
+    assert any("symlink not allowed" in p and "evilpkg" in p for p in problems)
+    assert not any("checksum mismatch" in p and "evilpkg/evil.py" in p for p in problems)
+
+
 def test_missing_sums_file_is_reported(tmp_path):
     vendor = tmp_path / "vendor"
     vendor.mkdir()

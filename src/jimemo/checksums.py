@@ -19,29 +19,29 @@ def verify_checksums(vendor_dir: Path) -> list:
         listed[Path(rel.strip().lstrip("*"))] = expected
 
     reported_symlinks = set()
-    for rel, expected in sorted(listed.items()):
-        f = vendor_dir / rel
+    real_files = {}
+    for f in sorted(vendor_dir.rglob("*")):
+        rel = f.relative_to(vendor_dir)
         if f.is_symlink():
             problems.append(f"symlink not allowed: {rel}")
             reported_symlinks.add(rel)
             continue
-        if not f.is_file():
-            problems.append(f"missing vendored file: {rel}")
+        if f.is_dir() or f == sums_file:
+            continue
+        real_files[rel] = f
+
+    for rel, expected in sorted(listed.items()):
+        f = real_files.get(rel)
+        if f is None:
+            if rel not in reported_symlinks:
+                problems.append(f"missing vendored file: {rel}")
             continue
         actual = hashlib.sha256(f.read_bytes()).hexdigest()
         if actual != expected:
             problems.append(f"checksum mismatch: {rel}")
 
-    listed_rel = set(listed)
-    for f in sorted(vendor_dir.rglob("*")):
-        rel = f.relative_to(vendor_dir)
-        if f.is_symlink():
-            if rel not in reported_symlinks:
-                problems.append(f"symlink not allowed: {rel}")
-            continue
-        if f.is_dir() or f == sums_file:
-            continue
-        if rel not in listed_rel:
+    for rel in sorted(real_files):
+        if rel not in listed:
             problems.append(f"unlisted file: {rel}")
 
     return problems
