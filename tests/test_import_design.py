@@ -85,6 +85,61 @@ def test_slugify_name_empty_result_raises():
         slugify_name("???")
 
 
+# -- reserved theme names: collide with the toolkit's data-theme modes --
+#
+# `:root[data-theme="light"]` / `[data-theme="dark"]` (specificity 0-2-0)
+# beat a generated theme's own `:root` block (0-1-0), so a theme named
+# "light" or "dark" would load but have its role overrides silently
+# overridden by the built-in mode tokens. Rejected outright instead.
+
+
+def test_import_rejects_name_light(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(DesignImportError, match="reserved"):
+        import_design(FIXTURE_DIR, name="light")
+    assert not (tmp_path / ".jimemo" / "themes" / "light.css").exists()
+
+
+def test_import_rejects_name_dark_case_insensitive(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(DesignImportError, match="reserved"):
+        import_design(FIXTURE_DIR, name="Dark")
+    assert not (tmp_path / ".jimemo" / "themes" / "dark.css").exists()
+
+
+def test_import_rejects_name_that_slugifies_to_dark(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(DesignImportError, match="reserved"):
+        import_design(FIXTURE_DIR, name="_DARK_")
+
+
+def test_import_rejects_default_name_derived_from_namespace(tmp_path, monkeypatch):
+    # No --name: the reserved check must also catch the name derived
+    # from the export's own namespace, not just an explicit --name.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _injection_manifest_export(tmp_path, namespace="Dark")
+    with pytest.raises(DesignImportError, match="reserved"):
+        import_design(export_dir)
+    assert not (tmp_path / ".jimemo" / "themes").exists()
+
+
+def test_import_accepts_normal_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = import_design(FIXTURE_DIR, name="mybrand")
+    assert result.name == "mybrand"
+    assert (tmp_path / ".jimemo" / "themes" / "mybrand.css").is_file()
+
+
+def test_cli_import_design_reserved_name_returns_rc1_writes_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    rc = main(["import-design", str(FIXTURE_DIR), "--name", "light"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "reserved" in err
+    assert "Traceback" not in err
+    assert not (tmp_path / ".jimemo" / "themes" / "light.css").exists()
+
+
 # -- basic import: writes the personal theme ----------------------------
 
 

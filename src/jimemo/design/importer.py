@@ -38,6 +38,14 @@ from .reader import DesignExport, FontFace, read_export
 __all__ = ["ImportResult", "import_design", "slugify_name"]
 
 
+# The toolkit's own `:root[data-theme="light"]` / `[data-theme="dark"]`
+# mode selectors (specificity 0-2-0) beat a generated theme's `:root`
+# block (0-1-0), so a theme installed under either of these names would
+# load but have its core role overrides silently overridden by the
+# built-in mode tokens. Reserved regardless of case or how the name was
+# derived (explicit --name or the export's own namespace/dirname).
+RESERVED_THEME_NAMES = {"light", "dark"}
+
 _SLUG_COLLAPSE_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -227,6 +235,11 @@ def import_design(
 
     export = read_export(export_dir)
     theme_name = slugify_name(name) if name else _default_name(export, export_dir)
+    if theme_name in RESERVED_THEME_NAMES:
+        raise DesignImportError(
+            f"theme name {theme_name!r} is reserved (it is one of the "
+            f"toolkit's data-theme mode values) -- choose another with --name"
+        )
 
     css = build_theme(export, theme_name)
     header = _theme_header(css)
