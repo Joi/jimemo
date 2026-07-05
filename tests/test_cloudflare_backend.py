@@ -41,6 +41,52 @@ def _hash_from_url(url: str) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1]
 
 
+class TreeCapturingWrangler(MockWrangler):
+    """MockWrangler that also records each deployed directory's file tree
+    (sorted relative POSIX paths) in ``.deployed_trees`` AT DEPLOY TIME.
+    publish()/gc() deploy a throwaway allowlisted build dir that is
+    deleted as soon as the deploy call returns, so a test can only see
+    what was actually deployed by capturing it during the call."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.deployed_trees = []
+
+    def pages_deploy(self, project, directory, branch="main"):
+        directory = Path(directory)
+        self.deployed_trees.append(sorted(
+            p.relative_to(directory).as_posix()
+            for p in directory.rglob("*")
+            if p.is_file()
+        ))
+        return super().pages_deploy(project, directory, branch)
+
+
+def _seed_hash_dir(state_dir: Path, page_hash: str) -> None:
+    (state_dir / page_hash).mkdir(parents=True)
+    (state_dir / page_hash / "index.html").write_text("<html></html>")
+
+
+def _seed_strays(state_dir: Path) -> set:
+    """Plant every category of stray a git/Dropbox/Syncthing-synced state
+    dir accumulates. Returns the set of top-level stray names so tests
+    can assert they survive in the state dir but never deploy."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / ".git").mkdir()
+    (state_dir / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (state_dir / ".git" / "config").write_text("[core]\n")
+    (state_dir / ".DS_Store").write_bytes(b"\x00Bud1")
+    (state_dir / "index (conflicted copy).html").write_text("<html>conflict</html>")
+    (state_dir / "notes.html~").write_text("<html>backup</html>")
+    (state_dir / "#notes#").write_text("<html>autosave</html>")
+    (state_dir / "secret").mkdir()
+    (state_dir / "secret" / "passwords.txt").write_text("hunter2\n")
+    return {
+        ".git", ".DS_Store", "index (conflicted copy).html",
+        "notes.html~", "#notes#", "secret",
+    }
+
+
 def test_constructor_requires_cloudflare_config():
     config = PublishConfig(backend="cloudflare", cloudflare=None)
     with pytest.raises(PublishError):
@@ -81,7 +127,7 @@ def test_second_publish_redeploys_directory_containing_both_hashes(tmp_path):
     second page is published."""
     html = tmp_path / "page.html"
     html.write_text("<html></html>")
-    wrangler = MockWrangler()
+    wrangler = TreeCapturingWrangler()
     publisher = _publisher(tmp_path, wrangler=wrangler)
 
     url1 = publisher.publish(html)
@@ -91,9 +137,8 @@ def test_second_publish_redeploys_directory_containing_both_hashes(tmp_path):
     assert hash1 != hash2
     deploy_calls = [c for c in wrangler.calls if c[0] == "pages_deploy"]
     assert len(deploy_calls) == 2
-    deployed_dir = Path(deploy_calls[-1][2])
-    assert (deployed_dir / hash1 / "index.html").is_file()
-    assert (deployed_dir / hash2 / "index.html").is_file()
+    assert f"{hash1}/index.html" in wrangler.deployed_trees[-1]
+    assert f"{hash2}/index.html" in wrangler.deployed_trees[-1]
 
 
 def test_publish_raises_clear_error_when_wrangler_unavailable(tmp_path):
@@ -337,14 +382,12 @@ def test_publish_installs_missing_middleware_into_state_dir(tmp_path):
 def test_publish_deploys_a_dir_that_always_contains_the_middleware(tmp_path):
     html = tmp_path / "page.html"
     html.write_text("<html></html>")
-    wrangler = MockWrangler()
+    wrangler = TreeCapturingWrangler()
     publisher = _publisher(tmp_path, wrangler=wrangler)
 
     publisher.publish(html)
 
-    deploy_calls = [c for c in wrangler.calls if c[0] == "pages_deploy"]
-    deployed_dir = Path(deploy_calls[-1][2])
-    assert (deployed_dir / "functions" / "_middleware.js").is_file()
+    assert "functions/_middleware.js" in wrangler.deployed_trees[-1]
 
 
 def test_publish_does_not_clobber_already_installed_middleware(tmp_path):
@@ -376,7 +419,7 @@ def test_publish_does_not_clobber_already_installed_middleware(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_gc_installs_missing_middleware_before_redeploy(tmp_path):
-    wrangler = MockWrangler()
+    wrangler = TreeCapturingWrangler()
     publisher = _publisher(tmp_path, wrangler=wrangler, clock=lambda: "2026-07-05T00:00:00.000Z")
     state_dir = tmp_path / "state"
     tombstoned = "ab" * 12
@@ -394,9 +437,7 @@ def test_gc_installs_missing_middleware_before_redeploy(tmp_path):
     ).read_text(encoding="utf-8")
     assert (state_dir / "_headers").is_file()
     assert (state_dir / "index.html").is_file()
-    deploy_calls = [c for c in wrangler.calls if c[0] == "pages_deploy"]
-    deployed_dir = Path(deploy_calls[-1][2])
-    assert (deployed_dir / "functions" / "_middleware.js").is_file()
+    assert "functions/_middleware.js" in wrangler.deployed_trees[-1]
 
 
 def test_gc_does_not_clobber_already_installed_middleware(tmp_path):
@@ -488,3 +529,135 @@ def test_module_never_reads_or_logs_cf_token():
     src = Path(mod.__file__).read_text()
     assert "CLOUDFLARE_API_TOKEN" not in src
     assert "os.environ" not in src
+
+
+# ---------------------------------------------------------------------------
+# SECURITY: the deploy must be an ALLOWLISTED, freshly built directory --
+# never the raw state dir. The state dir is user-owned and syncable
+# (docs/publish-setup.md tells multi-machine users to sync it via
+# git/Dropbox/Syncthing), so it accumulates strays: .git/, .DS_Store,
+# editor backups, sync-conflict copies, arbitrary non-hash dirs. The
+# middleware passes every non-hash path straight through to Pages' static
+# serving, so deploying the raw state dir would publish all of that at
+# guessable paths OUTSIDE the unguessable 24-hex namespace -- a git-synced
+# state dir would expose its entire .git history publicly.
+# ---------------------------------------------------------------------------
+
+def test_publish_deploys_only_allowlisted_content_never_the_raw_state_dir(tmp_path):
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    wrangler = TreeCapturingWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    state_dir = tmp_path / "state"
+    hash1, hash2 = "ab" * 12, "cd" * 12
+    _seed_hash_dir(state_dir, hash1)
+    _seed_hash_dir(state_dir, hash2)
+    _seed_strays(state_dir)
+
+    url = publisher.publish(html)
+    new_hash = _hash_from_url(url)
+
+    deploy_calls = [c for c in wrangler.calls if c[0] == "pages_deploy"]
+    assert Path(deploy_calls[-1][2]) != state_dir  # never the raw state dir
+    # Exact tree equality: the deployed dir held the allowlisted content
+    # and NOTHING else -- no .git, .DS_Store, conflict copy, editor
+    # backup, or non-hash "secret/" dir.
+    assert wrangler.deployed_trees[-1] == sorted([
+        "functions/_middleware.js",
+        "_headers",
+        "index.html",
+        f"{hash1}/index.html",
+        f"{hash2}/index.html",
+        f"{new_hash}/index.html",
+    ])
+
+
+def test_gc_deploys_only_allowlisted_content_never_the_raw_state_dir(tmp_path):
+    wrangler = TreeCapturingWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler, clock=lambda: "2026-07-05T00:00:00.000Z")
+    state_dir = tmp_path / "state"
+    hash1, hash2 = "ab" * 12, "cd" * 12
+    _seed_hash_dir(state_dir, hash1)
+    _seed_hash_dir(state_dir, hash2)
+    stray_names = _seed_strays(state_dir)
+    wrangler.kv_put("ns1", hash1, "2026-07-05T00:00:00.000Z")
+
+    publisher.gc()
+
+    deploy_calls = [c for c in wrangler.calls if c[0] == "pages_deploy"]
+    assert len(deploy_calls) == 1
+    assert Path(deploy_calls[-1][2]) != state_dir
+    assert wrangler.deployed_trees[-1] == sorted([
+        "functions/_middleware.js",
+        "_headers",
+        "index.html",
+        f"{hash2}/index.html",
+    ])
+    # gc removes tombstoned hashes only; the user's synced strays survive.
+    for name in stray_names:
+        assert (state_dir / name).exists()
+
+
+def test_publish_leaves_strays_in_state_dir_and_removes_the_deploy_dir(tmp_path):
+    """Round-trip: strays are excluded from the DEPLOY, not deleted from
+    the user's synced state dir -- and the throwaway deploy dir is gone
+    once publish() returns."""
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    wrangler = TreeCapturingWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    state_dir = tmp_path / "state"
+    stray_names = _seed_strays(state_dir)
+
+    publisher.publish(html)
+
+    for name in stray_names:
+        assert (state_dir / name).exists()
+    assert (state_dir / "secret" / "passwords.txt").is_file()
+    deploy_calls = [c for c in wrangler.calls if c[0] == "pages_deploy"]
+    assert not Path(deploy_calls[-1][2]).exists()  # temp build dir cleaned up
+
+
+def test_symlinked_hash_dir_is_not_followed_into_the_deploy(tmp_path):
+    """A hash-named child must be a REAL directory to deploy. A symlink
+    (synced in, or planted to point outside the state dir) is skipped --
+    following it would publish arbitrary outside files under a valid
+    hash URL."""
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    wrangler = TreeCapturingWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "index.html").write_text("<html>outside</html>")
+    (outside / "secrets.txt").write_text("hunter2\n")
+    linked_hash = "ef" * 12
+    (state_dir / linked_hash).symlink_to(outside)
+
+    url = publisher.publish(html)
+    new_hash = _hash_from_url(url)
+
+    tree = wrangler.deployed_trees[-1]
+    assert f"{new_hash}/index.html" in tree
+    assert not any(p.startswith(linked_hash) for p in tree)
+
+
+def test_symlink_inside_a_hash_dir_is_not_followed_into_the_deploy(tmp_path):
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    wrangler = TreeCapturingWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    state_dir = tmp_path / "state"
+    hash1 = "ab" * 12
+    _seed_hash_dir(state_dir, hash1)
+    loot = tmp_path / "loot.txt"
+    loot.write_text("hunter2\n")
+    (state_dir / hash1 / "leak.txt").symlink_to(loot)
+
+    publisher.publish(html)
+
+    tree = wrangler.deployed_trees[-1]
+    assert f"{hash1}/index.html" in tree
+    assert f"{hash1}/leak.txt" not in tree

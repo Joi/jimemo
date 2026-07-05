@@ -18,12 +18,24 @@ make the FIRST hash's URL 404, since the whole production tree would be
 replaced by a directory containing just the new hash. So this backend
 keeps a local, persistent staging directory (under `~/.jimemo/cloudflare/
 <project>/` by default) that accumulates every hash it has ever staged,
-and redeploys that whole directory on every publish -- the same shape as
-notes-ito-com's git-committed `public/` tree, just kept under `~/.jimemo/`
-instead of a git repo, since jimemo has no repo of its own to commit into.
+and redeploys that accumulated content on every publish -- the same shape
+as notes-ito-com's git-committed `public/` tree, just kept under
+`~/.jimemo/` instead of a git repo, since jimemo has no repo of its own
+to commit into.
+
+What actually gets handed to wrangler, though, is never the raw state
+directory: each deploy assembles a throwaway, strictly allowlisted copy
+of it first (see _build_deploy_dir). The state dir is user-owned and
+syncable (docs/publish-setup.md tells multi-machine users to sync it via
+git/Dropbox/Syncthing), so it accumulates strays -- `.git/`, `.DS_Store`,
+editor backups, sync-conflict copies -- and deploying it raw would serve
+all of them publicly at guessable paths outside the unguessable hash
+namespace. The allowlisted copy makes that leak structurally impossible
+while the persistent state dir stays the syncable source of truth.
 """
 import re
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -127,7 +139,8 @@ def _ensure_state_dir_assets(state_dir: Union[str, Path]) -> None:
     one of the three survives a self-heal of the other two).
 
     Called by publish() and gc() before every deploy: both always
-    redeploy the WHOLE state directory (see module docstring), so a
+    redeploy the state directory's whole allowlisted content (see module
+    docstring and _build_deploy_dir), so a
     deploy that goes out missing functions/_middleware.js has no
     tombstone Function at all -- every hash ever published to that
     project starts serving ``?purge`` as a silent no-op (or a 405) with
@@ -151,6 +164,57 @@ def _ensure_state_dir_assets(state_dir: Union[str, Path]) -> None:
         shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "_headers", headers)
     if not index_html.is_file():
         shutil.copyfile(CLOUDFLARE_ASSETS_DIR / "index.html", index_html)
+
+
+def _ignore_symlinks(src: Union[str, Path], names: List[str]) -> List[str]:
+    """``shutil.copytree`` ignore= callback: skip symlinks. A synced-in
+    symlink inside a hash directory would otherwise be FOLLOWED by the
+    copy (copytree's default materializes link targets), pulling files
+    from outside the state dir into a public deploy."""
+    return [n for n in names if (Path(src) / n).is_symlink()]
+
+
+def _build_deploy_dir(state_dir: Path, deploy_dir: Path) -> Path:
+    """Copy ONLY the expected, allowlisted deployable content of
+    ``state_dir`` into ``deploy_dir`` (a fresh, empty directory) and
+    return ``deploy_dir``:
+
+    - ``functions/_middleware.js`` (the tombstone/purge Function)
+    - ``_headers``
+    - ``index.html``
+    - every child that is a real directory (not a symlink) whose name is
+      exactly a 24-hex-char hash -- each staged page, with any assets
+      inside it, symlinks skipped (see _ignore_symlinks)
+
+    Nothing else: a strict allowlist, not a denylist. Dotfiles/dotdirs
+    (``.git/``, ``.DS_Store``), editor backups (``page.html~``,
+    ``#page#``), sync-conflict copies (``index (conflicted copy).html``),
+    non-hash-named directories, and stray root files all stay behind in
+    the state dir -- excluded from the deploy, never deleted. Deploying
+    the raw state dir instead would publish every one of them: the
+    middleware passes non-hash paths straight through to Pages' static
+    serving, at guessable paths outside the unguessable hash namespace
+    (a git-synced state dir would expose its entire ``.git`` history).
+
+    Callers run _ensure_state_dir_assets first, so the three baseline
+    files are guaranteed present in ``state_dir``.
+    """
+    functions_dir = deploy_dir / "functions"
+    functions_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(
+        state_dir / "functions" / "_middleware.js",
+        functions_dir / "_middleware.js",
+    )
+    shutil.copyfile(state_dir / "_headers", deploy_dir / "_headers")
+    shutil.copyfile(state_dir / "index.html", deploy_dir / "index.html")
+    for child in state_dir.iterdir():
+        if (
+            _HASH_RE.match(child.name)
+            and child.is_dir()
+            and not child.is_symlink()
+        ):
+            shutil.copytree(child, deploy_dir / child.name, ignore=_ignore_symlinks)
+    return deploy_dir
 
 
 class CloudflarePublisher(Publisher):
@@ -186,10 +250,21 @@ class CloudflarePublisher(Publisher):
         if not self._wrangler.check_available():
             raise PublishError(NO_WRANGLER_MESSAGE)
 
+    def _deploy_state_dir(self) -> None:
+        """Deploy the state directory's allowlisted content via a fresh
+        throwaway build directory, removed again as soon as the deploy
+        call returns -- never the raw state dir itself (see
+        _build_deploy_dir for the allowlist and the leak it prevents).
+        """
+        with tempfile.TemporaryDirectory(prefix="jimemo-deploy-") as tmp:
+            deploy_dir = _build_deploy_dir(self._state_dir, Path(tmp))
+            self._wrangler.pages_deploy(self._cf.project, deploy_dir)
+
     def publish(self, html_path: Path, title: Optional[str] = None) -> str:
         """Stage html_path as a new hash directory and redeploy the whole
-        accumulated state directory (see module docstring for why the
-        whole directory, not just the new hash).
+        accumulated set of hashes (see module docstring for why every
+        hash, not just the new one -- and why via an allowlisted deploy
+        dir, not the raw state directory).
 
         `title` is accepted for Publisher-interface compatibility but
         unused: the input HTML is already fully rendered and
@@ -206,21 +281,22 @@ class CloudflarePublisher(Publisher):
         site with no tombstone Function and ``?purge`` would silently
         stop working.
 
-        If the deploy itself fails, the just-staged ``<hash>/`` directory
-        is removed from the state directory before the error propagates
-        (as a PublishError). The state directory is redeployed in full on
-        every publish() call (see module docstring), so leaving a staged
-        hash behind after a failed deploy would make the NEXT publish()
-        redeploy a hash that was never actually served -- an orphan URL
-        that looks live in `list()`/`gc()` bookkeeping but 404s. Only a
-        successful deploy leaves the staged hash in persistent state.
+        If the deploy (or the deploy-dir build) fails, the just-staged
+        ``<hash>/`` directory is removed from the state directory before
+        the error propagates (as a PublishError). The accumulated hashes
+        are redeployed in full on every publish() call (see module
+        docstring), so leaving a staged hash behind after a failed deploy
+        would make the NEXT publish() redeploy a hash that was never
+        actually served -- an orphan URL that looks live in
+        `list()`/`gc()` bookkeeping but 404s. Only a successful deploy
+        leaves the staged hash in persistent state.
         """
         self._ensure_wrangler_available()
         self._state_dir.mkdir(parents=True, exist_ok=True)
         _ensure_state_dir_assets(self._state_dir)
         page_hash, staged_dir = stage_page(Path(html_path), self._state_dir)
         try:
-            self._wrangler.pages_deploy(self._cf.project, self._state_dir)
+            self._deploy_state_dir()
         except Exception as exc:
             # Best-effort: only remove the hash dir THIS call just staged,
             # never touch other hashes or functions/_middleware.js.
@@ -281,7 +357,7 @@ class CloudflarePublisher(Publisher):
 
     def gc(self) -> None:
         """Remove locally staged hash directories that are tombstoned in
-        KV, then redeploy the (now smaller) state directory -- only if
+        KV, then redeploy the (now smaller) accumulated content -- only if
         something was actually removed, to avoid a needless no-op deploy.
 
         This differs from the `command` backend's gc(), which just
@@ -297,7 +373,7 @@ class CloudflarePublisher(Publisher):
 
         Before that redeploy, self-heals the state directory's baseline
         assets the same way publish() does (see _ensure_state_dir_assets):
-        gc() redeploys the WHOLE state directory too, so a damaged,
+        gc() redeploys the whole accumulated content too, so a damaged,
         partially copied, or never-set-up state dir missing
         functions/_middleware.js would otherwise go back out with no
         tombstone Function, silently disabling ?purge for every hash gc
@@ -330,4 +406,4 @@ class CloudflarePublisher(Publisher):
 
         if removed_any:
             _ensure_state_dir_assets(self._state_dir)
-            self._wrangler.pages_deploy(self._cf.project, self._state_dir)
+            self._deploy_state_dir()
