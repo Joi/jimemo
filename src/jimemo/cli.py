@@ -28,14 +28,17 @@ def cmd_doctor(args) -> int:
     else:
         print(f"ok   vendor checksums ({VENDOR_DIR})")
 
-    add_vendor_to_path()
-    try:
-        import jinja2  # noqa: F401
-        import markdown  # noqa: F401
-        print("ok   vendored imports (jinja2, markdown)")
-    except ImportError as e:
-        print(f"FAIL vendored imports: {e}")
-        ok = False
+    if problems:
+        print("skip vendored imports (checksum verification failed)")
+    else:
+        add_vendor_to_path()
+        try:
+            import jinja2  # noqa: F401
+            import markdown  # noqa: F401
+            print("ok   vendored imports (jinja2, markdown)")
+        except ImportError as e:
+            print(f"FAIL vendored imports: {e}")
+            ok = False
 
     return 0 if ok else 1
 
