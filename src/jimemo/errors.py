@@ -18,3 +18,13 @@ class ContentError(Exception):
 class ScaffoldError(Exception):
     """`new-template` was asked for an invalid name, or the destination
     template directory already exists."""
+
+
+class ConfigError(Exception):
+    """~/.jimemo/config.toml is missing, is not valid TOML, or is missing
+    a field required by the selected publish backend."""
+
+
+class PublishError(Exception):
+    """A publish backend name is unknown, not configured, or not
+    available; or a publish/purge/list/gc operation failed."""

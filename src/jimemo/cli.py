@@ -71,8 +71,9 @@ def cmd_doctor(args) -> int:
         try:
             import jinja2  # noqa: F401
             import markdown  # noqa: F401
+            import tomli  # noqa: F401
             import yaml  # noqa: F401
-            print("ok   vendored imports (jinja2, markdown, yaml)")
+            print("ok   vendored imports (jinja2, markdown, yaml, tomli)")
         except ImportError as e:
             print(f"FAIL vendored imports: {e}")
             ok = False
@@ -343,6 +344,74 @@ def cmd_info(args) -> int:
     return 0
 
 
+def cmd_publish(args) -> int:
+    from .errors import ConfigError, PublishError
+
+    # "setup" dispatches before load_config(): it's what PRODUCES
+    # ~/.jimemo/config.toml, so requiring a valid config first would make
+    # it impossible to ever run on a fresh machine.
+    if args.target == "setup":
+        from .config import config_path
+        from .publish.setup import RealIO, run_setup
+        from .publish.wrangler import Wrangler
+
+        try:
+            run_setup(args.dry_run, Wrangler(), config_path(), RealIO())
+        except PublishError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        return 0
+
+    from .config import load_config
+    from .publish import get_publisher
+
+    try:
+        publisher = get_publisher(load_config())
+    except (ConfigError, PublishError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    # "publish" doubles as a small command group: `jimemo publish <file>`
+    # publishes, while `purge`/`list`/`gc`/`setup` as the first positional
+    # dispatch to the matching Publisher method (mirroring notes-publish's
+    # own top-level UX); `setup` itself is handled above, before
+    # load_config(). This is a deliberate simplification over nested
+    # argparse subparsers, which can't cleanly mix a bare positional (the
+    # file to publish) with subcommands in the same slot. The tradeoff: a
+    # file literally named "purge", "list", "gc", or "setup" (no extension)
+    # cannot be published this way -- an acceptable, documented edge case.
+    target = args.target
+    try:
+        if target == "purge":
+            if not args.arg:
+                print("jimemo publish purge: missing hash or URL", file=sys.stderr)
+                return 2
+            publisher.purge(args.arg)
+            print(f"purged: {args.arg}")
+        elif target == "list":
+            for entry in publisher.list():
+                print(entry)
+        elif target == "gc":
+            publisher.gc()
+        elif target is None:
+            print(
+                "jimemo publish: provide a file to publish, or purge/list/gc",
+                file=sys.stderr,
+            )
+            return 2
+        else:
+            html_path = Path(target)
+            if not html_path.is_file():
+                print(f"file not found: {html_path}", file=sys.stderr)
+                return 1
+            print(publisher.publish(html_path, args.title))
+    except PublishError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    return 0
+
+
 def cmd_new_template(args) -> int:
     try:
         template_dir = create_template(args.name)
@@ -382,6 +451,22 @@ def main(argv=None) -> int:
     suggest_p.add_argument("content", help="content file (.md, .json, or .yaml)")
     suggest_p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
+    publish_p = sub.add_parser(
+        "publish", help="publish a rendered HTML file to an unlisted link"
+    )
+    publish_p.add_argument(
+        "target", nargs="?",
+        help='HTML file to publish, or one of "purge", "list", "gc", "setup"',
+    )
+    publish_p.add_argument(
+        "arg", nargs="?", help='hash or URL (only used with "purge")',
+    )
+    publish_p.add_argument("--title", help="title for the published page")
+    publish_p.add_argument(
+        "--dry-run", action="store_true",
+        help='with "setup": print the plan without executing or writing anything',
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
@@ -396,6 +481,8 @@ def main(argv=None) -> int:
         return cmd_new_template(args)
     if args.command == "suggest":
         return cmd_suggest(args)
+    if args.command == "publish":
+        return cmd_publish(args)
 
     parser.print_usage(sys.stderr)
     return 2

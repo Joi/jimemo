@@ -41,7 +41,9 @@ contracts are in `docs/superpowers/plans/2026-07-05-jimemo-phase3-core.md`.
     discovery, vendor checksum verification, and `sys.path` setup
     (carried over from Phases 1-2).
 - `vendor/` — pinned pure-Python dependencies (Jinja2, MarkupSafe,
-  Markdown, PyYAML) with `SHA256SUMS`; verified by `jimemo doctor`.
+  Markdown, PyYAML, tomli) with `SHA256SUMS`; verified by `jimemo doctor`.
+  tomli parses `~/.jimemo/config.toml` on the 3.9-3.10 floor, where
+  stdlib `tomllib` isn't available yet (3.11+).
 - `charts/vendor/chartjs/` — vendored browser-side Chart.js
   (`chart.umd.min.js` + `LICENSE.md`), pinned and checksummed like
   `vendor/` but kept in its own tree with its own `SHA256SUMS` since
@@ -66,8 +68,65 @@ contracts are in `docs/superpowers/plans/2026-07-05-jimemo-phase3-core.md`.
   sample, compared byte-for-byte by `tests/test_golden.py`;
   `JIMEMO_UPDATE_GOLDENS=1 python3 -m pytest tests/test_golden.py`
   regenerates them.
-- `themes/`, `publish/` — theme token file overrides and generalized
-  private-link publishing (later phases).
+- `themes/` — theme token file overrides (later phase).
+- `src/jimemo/config.py` — `load_config`: parses `~/.jimemo/config.toml`
+  (vendored `tomli`) into a `Config`/`PublishConfig`; missing/invalid
+  config raises `ConfigError` with a "run `jimemo publish setup`"
+  message. Stores only non-secret identifiers (a command name, or a
+  Cloudflare project/account/KV-namespace id + base URL) — never a
+  token.
+- `src/jimemo/publish/` — the publish subsystem: turns an already-
+  rendered, self-contained HTML file into an unlisted private link,
+  mirroring notes.ito.com's model (24-hex-hash path is the access
+  control, symmetric read/purge, tombstone on purge).
+  - `__init__.py` — the `Publisher` ABC (`publish`/`purge`/`list`/`gc`)
+    and `get_publisher(config)`, which resolves `config.publish.backend`
+    to one of two backends, importing each lazily so selecting one
+    never pulls in the other's dependencies.
+  - `staging.py` — `stage_page`: generates the 24-hex hash
+    (`secrets.token_hex(12)`) and copies a rendered file to
+    `<hash>/index.html`; used by the `cloudflare` backend only (the
+    `command` backend delegates hashing/staging to the configured CLI).
+  - `command_backend.py` — the `command` backend: shells out to a
+    configured CLI (e.g. `notes-publish`) for publish/purge/list/gc and
+    parses the published URL from its stdout. Keeps an existing site
+    (like notes.ito.com) authoritative; jimemo is just a thin wrapper.
+  - `wrangler.py` — the `Wrangler` seam: five narrow methods
+    (`check_available`, `pages_deploy`, `kv_put`, `kv_get`, `kv_list`)
+    wrapping `npx wrangler` subprocess calls, plus a `MockWrangler` for
+    tests. Auth is never touched by jimemo — wrangler resolves its own
+    `CLOUDFLARE_API_TOKEN` from the environment or its own credential
+    store.
+  - `cloudflare_backend.py` — the `cloudflare` backend: publishes by
+    staging a hash directory into a persistent local state dir
+    (`~/.jimemo/cloudflare/<project>/`) and redeploying that whole
+    directory via the Wrangler seam (a Pages deploy replaces the entire
+    production tree, so every previously published hash must stay
+    present in the redeploy); purge/list/gc drive the tombstone KV
+    namespace the same way. For someone without an existing publish
+    site.
+  - `setup.py` — the `jimemo publish setup` wizard (interactive and
+    `--dry-run`): installs the bundled middleware/`_headers`/root index
+    from `publish/cloudflare/` into the state dir, deploys it, walks the
+    human through the two steps with no wrangler-CLI equivalent
+    (creating the KV namespace, binding it to the Pages project as
+    `TOMBSTONES`), and writes `~/.jimemo/config.toml` — never the API
+    token. Full walkthrough: `docs/publish-setup.md`.
+- `publish/cloudflare/` (repo root, distinct from `src/jimemo/publish/`)
+  — `_middleware.js`, `_headers`, `index.html`: the Cloudflare Pages
+  Functions bundle the `cloudflare` backend deploys. `_middleware.js` is
+  a generalized port of notes-ito-com's tombstone/purge middleware (hash
+  regex match, tombstone KV lookup → 404, `?purge` GET confirm + POST
+  tombstone, Origin/Sec-Fetch-Site cross-site guard); credited in
+  `CREDITS.md`.
+
+**Publish subsystem boundary:** render (`render.py` and everything it
+calls) never shells out or touches the network — the `vendor/`
+constraint holds all the way through image inlining and lint. `publish/`
+is the one place jimemo executes an external process (`wrangler` for
+the `cloudflare` backend, the configured command for the `command`
+backend), and only when a user explicitly runs `jimemo publish` or
+`jimemo publish setup`; `jimemo render` never imports `publish/`.
 
 **Chart security model:** a template that declares `charts` in its
 manifest lets `lint.py` reopen exactly one door it otherwise keeps

@@ -1,5 +1,11 @@
 # Credits
 
+## Ported code
+
+| Author | URL | What was ported |
+| --- | --- | --- |
+| Joi Ito / notes-ito-com | `~/repos/notes-ito-com` (private repo) | `publish/cloudflare/_middleware.js` -- the purge/tombstone Cloudflare Pages middleware (24-hex-hash access control, symmetric read/purge, click-confirm, tombstone-in-KV, Origin/Sec-Fetch-Site cross-site guard) is a generalized port of `functions/_middleware.js` from Joi's own notes.ito.com site, along with the noindex `_headers` asset. Control flow, regex, and security checks are verbatim; the KV binding name (`env.TOMBSTONES`, was `env.NOTES_TOMBSTONES`) and the hardcoded domain in page copy (now read from the request's `url.host`) were changed to generalize it beyond one site. One security behavior was also deliberately changed, not just ported: the original fails OPEN when the `TOMBSTONES` KV binding is missing/misconfigured (serves the page as if nothing were purged); jimemo's port fails CLOSED instead (returns an error for hash-path requests rather than serving) because jimemo auto-provisions this binding per friend's account via `jimemo publish setup`, a more error-prone path than a single hand-configured site -- a broken binding must never let a purged page silently come back online. |
+
 ## Design inspiration
 
 Ideas below informed jimemo's design but no code was copied from any
@@ -25,3 +31,4 @@ version pins live in `docs/research/2026-07-05-phase1-research.md`'s
 | Markdown | 3.10.2 | BSD-3-Clause | https://pypi.org/project/Markdown/ |
 | PyYAML | 6.0.3 | MIT | https://pypi.org/project/PyYAML/ |
 | Chart.js | 4.5.1 | MIT | https://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz |
+| tomli | 2.4.1 | MIT | https://pypi.org/project/tomli/ |

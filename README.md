@@ -132,6 +132,68 @@ ok   vendored imports (jinja2, markdown)
 ok   suitability labels fresh (or none recorded)
 ```
 
+## Publish
+
+`jimemo publish` turns a rendered `out.html` into an unlisted private
+link, mirroring notes.ito.com's model: a 24-hex-char hash path is the
+access control (`secrets.token_hex(12)`, ~96 bits, unguessable), reading
+and purging use the same URL, and purging tombstones a hash rather than
+deleting it outright. Configure exactly one backend in
+`~/.jimemo/config.toml`.
+
+### `command` backend — you already run a publish site
+
+If you already run something like `notes-publish` (notes.ito.com's own
+CLI), point jimemo at it instead of reimplementing hosting:
+
+```toml
+[publish]
+backend = "command"
+command = "notes-publish"
+```
+
+```
+$ jimemo render briefing content.md -o out.html
+$ jimemo publish out.html
+https://notes.example.com/3f9a1c.../
+
+$ jimemo publish purge https://notes.example.com/3f9a1c.../
+```
+
+jimemo shells out to `command` for publish/purge/list/gc and parses the
+published URL from its stdout; the configured command stays the sole
+authority on hosting, hashing, and storage.
+
+### `cloudflare` backend — no existing site
+
+For someone with nowhere to publish to yet: `jimemo publish setup` walks
+through provisioning a free Cloudflare Pages project and KV namespace.
+It needs Node (everything runs through `npx wrangler`) and a Cloudflare
+API token scoped to `Pages: Edit` + `Workers KV Storage: Edit`; a couple
+of one-time steps (creating the KV namespace, binding it to the Pages
+project as `TOMBSTONES`) have no wrangler CLI equivalent, so the wizard
+prints the exact manual command or dashboard step instead of faking
+automation of it. See [`docs/publish-setup.md`](docs/publish-setup.md)
+for the full walkthrough, including the single-machine state-directory
+limitation. Preview the whole plan without touching any account:
+
+```
+$ jimemo publish setup --dry-run
+```
+
+Once configured, publish/purge/list/gc use the same commands shown
+above for the `command` backend.
+
+### Security model
+
+The hash is the entire access-control story: unguessable, and symmetric
+between read and purge — anyone with the link can view or purge it,
+nobody without the link can find it. Purging tombstones the hash
+(subsequent requests 404) rather than deleting the underlying file;
+`gc` is the separate step that removes tombstoned files. Full details,
+including the `cloudflare` backend's single-machine limitation, are in
+[`docs/publish-setup.md`](docs/publish-setup.md).
+
 ## Development
 
 ```

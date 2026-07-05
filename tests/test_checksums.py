@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -140,3 +141,21 @@ def test_real_repo_vendor_is_clean():
 def test_real_repo_charts_vendor_is_clean():
     repo_charts_vendor = Path(__file__).resolve().parents[1] / "charts" / "vendor"
     assert verify_checksums(repo_charts_vendor) == []
+
+
+def test_real_tomli_tamper_is_caught(tmp_path):
+    # Doctor-tamper coverage for the newly vendored tomli/ files: copy the
+    # real vendor/ tree (SHA256SUMS included), tamper a real tomli file,
+    # and confirm verify_checksums -- the same function doctor calls --
+    # reports it. Demonstrates the generic vendor-tamper check (already
+    # exercised by test_real_repo_vendor_is_clean above) covers tomli
+    # specifically, since SHA256SUMS is a complete allowlist over all of
+    # vendor/, not just the pre-existing packages.
+    real_vendor = Path(__file__).resolve().parents[1] / "vendor"
+    copy = tmp_path / "vendor"
+    shutil.copytree(real_vendor, copy)
+    target = copy / "tomli" / "_parser.py"
+    assert target.is_file()
+    target.write_text(target.read_text() + "\n# tampered\n")
+    problems = verify_checksums(copy)
+    assert any("checksum mismatch" in p and "tomli/_parser.py" in p for p in problems)
