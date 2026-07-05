@@ -57,6 +57,23 @@ def test_unlisted_pycache_bytecode_is_reported(tmp_path):
     assert any("unlisted" in p for p in verify_checksums(vendor))
 
 
+def test_symlink_to_listed_file_is_reported(tmp_path):
+    vendor = make_vendor(tmp_path)
+    (vendor / "alias.py").symlink_to(vendor / "pkg" / "mod.py")
+    problems = verify_checksums(vendor)
+    assert any("symlink not allowed" in p and "alias.py" in p for p in problems)
+
+
+def test_symlinked_directory_is_reported(tmp_path):
+    vendor = make_vendor(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "evil.py").write_text("import os\n")
+    (vendor / "evilpkg").symlink_to(outside)
+    problems = verify_checksums(vendor)
+    assert any("symlink not allowed" in p and "evilpkg" in p for p in problems)
+
+
 def test_missing_sums_file_is_reported(tmp_path):
     vendor = tmp_path / "vendor"
     vendor.mkdir()

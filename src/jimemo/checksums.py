@@ -27,11 +27,15 @@ def verify_checksums(vendor_dir: Path) -> list:
         if actual != expected:
             problems.append(f"checksum mismatch: {rel}")
 
-    listed_resolved = {(vendor_dir / rel).resolve() for rel in listed}
+    listed_rel = set(listed)
     for f in sorted(vendor_dir.rglob("*")):
-        if not f.is_file() or f == sums_file:
+        rel = f.relative_to(vendor_dir)
+        if f.is_symlink():
+            problems.append(f"symlink not allowed: {rel}")
             continue
-        if f.resolve() not in listed_resolved:
-            problems.append(f"unlisted file: {f.relative_to(vendor_dir)}")
+        if f.is_dir() or f == sums_file:
+            continue
+        if rel not in listed_rel:
+            problems.append(f"unlisted file: {rel}")
 
     return problems
