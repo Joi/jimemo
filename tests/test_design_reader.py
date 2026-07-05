@@ -111,9 +111,13 @@ def _manifest_with_token_value(tmp_path: Path, value: str) -> Path:
         "url(https://evil/x.png)",
         "url(//evil/x.png)",
         "red;}body{x",
+        "red; } body { display:none }",
         "expression(alert(1))",
         "EXPRESSION(alert(1))",
         "<script>alert(1)</script>",
+        "data:text/html;base64,PHNjcmlwdD4=",
+        "url(data:text/html;base64,PHNjcmlwdD4=)",
+        "data:image/png;base64,AAAA; color:red",
     ],
 )
 def test_unsafe_token_value_rejected(tmp_path, bad_value):
@@ -130,6 +134,10 @@ def test_unsafe_token_value_rejected(tmp_path, bad_value):
         '"Finder", sans-serif',
         "var(--ct-black)",
         "2px solid var(--ct-black)",
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+        "data:font/ttf;base64,AAAA",
+        "data:font/woff2;base64,AAAA",
+        "url(data:font/ttf;base64,AAAA)",
     ],
 )
 def test_safe_token_value_accepted(tmp_path, safe_value):

@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from ..errors import DesignImportError
-from ..sanitize import is_protocol_relative, url_scheme
+from ..sanitize import is_allowed_data_uri, is_protocol_relative, url_scheme
 
 __all__ = ["Token", "FontFace", "BrandFont", "DesignExport", "read_export"]
 
@@ -288,30 +288,77 @@ def _from_css_fallback(export_dir: Path) -> DesignExport:
 
 _URL_RE = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.IGNORECASE)
 
+# A `data:<type>/<subtype>;base64,<payload>` URI whose payload is
+# restricted to the base64 alphabet -- anchored start-to-end so a
+# candidate can't smuggle extra text (e.g. `...,AAAA; color:red`) past
+# the mime check below by having only a *prefix* look like a data URI.
+_DATA_URI_RE = re.compile(
+    r"^data:[a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+$",
+    re.IGNORECASE,
+)
+
 
 def _validate_token_value(name: str, value: str) -> None:
     """Reject a token value that isn't safe to drop verbatim into a
     generated theme's `--name: <value>;` declaration. None of these
     characters/constructs are needed by a legitimate color/spacing/font
     token value, so any occurrence is treated as hostile input rather
-    than something to selectively strip."""
+    than something to selectively strip.
+
+    The one deliberate exception is a well-formed, allowlisted-mime
+    `data:` URI (image or font, see `is_allowed_data_uri`): its own
+    `;base64,` separator is not declaration-injection syntax, so it's
+    carved out of the blanket ';' check below rather than rejected --
+    this is what lets `--icon: data:image/png;base64,...` (and, for a
+    later font-embedding task, `url(data:font/ttf;base64,...)`) through.
+    Everything else keeps failing on '<', a brace, 'expression(', a
+    remote/protocol-relative/non-data url(), or any other ';'.
+
+    (Note: 'expression(' is matched as a bare substring, so a hostile
+    manifest could still spell it past this check with an interleaved
+    CSS comment on the regex-based CSS-fallback path, e.g.
+    `expr/**/ession(...)`. CSS `expression()` is an IE-only legacy
+    feature with no effect in any browser this pipeline targets, so
+    that gap is noted rather than closed.)"""
     if "<" in value:
         raise DesignImportError(f"token {name!r} has unsafe value (contains '<'): {value!r}")
     if "{" in value or "}" in value:
         raise DesignImportError(
             f"token {name!r} has unsafe value (contains a brace): {value!r}"
         )
-    if ";" in value:
-        raise DesignImportError(
-            f"token {name!r} has unsafe value (contains ';', possible "
-            f"declaration injection): {value!r}"
-        )
     if "expression(" in value.lower():
         raise DesignImportError(
             f"token {name!r} has unsafe value (CSS expression()): {value!r}"
         )
+
+    # Carve out a bare data: URI value (the whole token value, not
+    # wrapped in url()) before the blanket ';' check, provided its mime
+    # is allowlisted. `_DATA_URI_RE` is fully anchored, so this only
+    # matches when `stripped` -- and therefore `value` -- IS the data
+    # URI, with nothing else appended for the ';' check to have missed.
+    semicolon_target = value
+    stripped = value.strip()
+    if _DATA_URI_RE.match(stripped):
+        if not is_allowed_data_uri(stripped):
+            raise DesignImportError(
+                f"token {name!r} has unsafe value (data: URI mime type not "
+                f"image/font-allowlisted): {value!r}"
+            )
+        semicolon_target = semicolon_target.replace(stripped, "", 1)
+
     for match in _URL_RE.finditer(value):
         target = match.group(2)
+        if _DATA_URI_RE.match(target):
+            if not is_allowed_data_uri(target):
+                raise DesignImportError(
+                    f"token {name!r} has unsafe value (url() data: URI mime "
+                    f"type not image/font-allowlisted): {value!r}"
+                )
+            # Only the matched url(...) span's ';base64,' is vetted;
+            # drop that span so a ';' elsewhere in the value still trips
+            # the check below.
+            semicolon_target = semicolon_target.replace(match.group(0), "", 1)
+            continue
         if is_protocol_relative(target):
             raise DesignImportError(
                 f"token {name!r} has unsafe value (protocol-relative url()): {value!r}"
@@ -322,3 +369,9 @@ def _validate_token_value(name: str, value: str) -> None:
                 f"token {name!r} has unsafe value (url() scheme {scheme!r} is "
                 f"not local/data): {value!r}"
             )
+
+    if ";" in semicolon_target:
+        raise DesignImportError(
+            f"token {name!r} has unsafe value (contains ';', possible "
+            f"declaration injection): {value!r}"
+        )

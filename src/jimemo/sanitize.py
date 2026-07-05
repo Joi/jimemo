@@ -101,6 +101,28 @@ _URL_EDGE_STRIP = "".join(chr(c) for c in range(0x21))
 # x-icon, future subtypes — is excluded wholesale rather than judged.
 _RASTER_IMAGE_SUBTYPES = frozenset({"png", "jpeg", "jpg", "gif", "webp"})
 
+# data: font subtypes/prefixes that are binary font formats. The
+# `application/font-*` / `application/x-font-*` forms are legacy
+# vendor-prefixed mimes some encoders still emit for woff/woff2/ttf.
+_FONT_SUBTYPES = frozenset({"ttf", "otf", "woff", "woff2"})
+_LEGACY_FONT_MIME_PREFIXES = ("application/font-", "application/x-font-")
+
+
+def _mime_head(form: str) -> str:
+    """`type/subtype` from a normalized ``data:`` URI `form` (see
+    `is_allowed_image_data_uri` for the normalization contract this is
+    always called under), or ``""`` if `form` isn't a ``data:`` URI."""
+    if not form.startswith("data:"):
+        return ""
+    return re.split(r"[;,]", form[len("data:"):], maxsplit=1)[0]
+
+
+def _is_font_data_uri(form: str) -> bool:
+    mime = _mime_head(form)
+    if mime.startswith("font/"):
+        return mime[len("font/"):] in _FONT_SUBTYPES
+    return mime.startswith(_LEGACY_FONT_MIME_PREFIXES)
+
 
 def browser_url_form(value: str) -> str:
     """`value` as a browser's URL parser would first see it: leading and
@@ -121,10 +143,8 @@ def browser_url_form(value: str) -> str:
 
 
 def _is_raster_image_data_uri(form: str) -> bool:
-    if not form.startswith("data:image/"):
-        return False
-    subtype = re.split(r"[;,]", form[len("data:image/"):], maxsplit=1)[0]
-    return subtype in _RASTER_IMAGE_SUBTYPES
+    mime = _mime_head(form)
+    return mime.startswith("image/") and mime[len("image/"):] in _RASTER_IMAGE_SUBTYPES
 
 
 def is_allowed_image_data_uri(value: str) -> bool:
@@ -137,10 +157,33 @@ def is_allowed_image_data_uri(value: str) -> bool:
     excluded because nothing in this pipeline legitimately produces it
     (inline_images emits exactly these five). Shared by the sanitizer's
     ``img src`` allowance, inline_images' early check, and lint's
-    last-gate allowlist, so all three judge identically."""
+    last-gate allowlist, so all three judge identically.
+
+    Stays image-only on purpose: callers here must never accept a font
+    payload in an `<img>`/CSS-image context. Use `is_allowed_data_uri`
+    where a font payload is also legitimate (e.g. design-token import)."""
     return _is_raster_image_data_uri(normalize_url(value)) and _is_raster_image_data_uri(
         browser_url_form(value)
     )
+
+
+def is_allowed_data_uri(value: str) -> bool:
+    """True if `value` is a ``data:`` URI whose mime type is an
+    allowlisted raster image (see `is_allowed_image_data_uri`) OR an
+    allowlisted binary font (``font/{ttf,otf,woff,woff2}``, or a legacy
+    ``application/font-*``/``application/x-font-*`` vendor form), judged
+    in both normalizations exactly like `is_allowed_image_data_uri`
+    (same rationale: paranoid `normalize_url` catches obfuscation,
+    faithful `browser_url_form` guarantees the browser agrees it's a
+    data: URI at all). Does not itself constrain the payload charset —
+    callers that need to bound what a data: URI can contain (e.g. to
+    keep it from smuggling a `;` past a blunt delimiter check) must
+    additionally require the payload matches a `;base64,<payload>` shape
+    before calling this."""
+    def _allowed(form: str) -> bool:
+        return _is_raster_image_data_uri(form) or _is_font_data_uri(form)
+
+    return _allowed(normalize_url(value)) and _allowed(browser_url_form(value))
 
 
 def parse_srcset(value: str) -> List[Tuple[str, str]]:
