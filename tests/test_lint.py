@@ -31,18 +31,25 @@ def test_external_script_src_always_errors_even_with_charts():
     assert any("script" in e and "https://evil.example/x.js" in e for e in errors)
 
 
-def test_external_image_warns_not_errors():
+def test_external_image_errors():
+    # Promoted from warning: a remote <img src> fetches at view time,
+    # violating the self-contained-output spec (legit local images were
+    # already converted to data: URIs by inline_images).
     html = '<html><body><img src="https://example.com/a.png"></body></html>'
     errors, warnings = lint_html(html, {"charts": []})
-    assert errors == []
-    assert any("https://example.com/a.png" in w for w in warnings)
+    assert any("https://example.com/a.png" in e for e in errors)
 
 
-def test_external_link_href_warns():
+def test_external_link_href_errors():
     html = '<html><head><link rel="stylesheet" href="https://fonts.example/f.css"></head></html>'
     errors, warnings = lint_html(html, {"charts": []})
-    assert errors == []
-    assert any("https://fonts.example/f.css" in w for w in warnings)
+    assert any("https://fonts.example/f.css" in e for e in errors)
+
+
+def test_local_script_src_errors_even_with_charts():
+    html = '<html><body><script src="chart.js"></script></body></html>'
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("script" in e and "chart.js" in e for e in errors)
 
 
 def test_plain_anchor_links_do_not_warn():
@@ -87,3 +94,48 @@ def test_mixed_case_event_handler_errors():
     html = '<html><body><img src="x" OnErRoR="alert(1)"></body></html>'
     errors, warnings = lint_html(html, {"charts": []})
     assert any("event handler" in e for e in errors)
+
+
+def test_entity_obfuscated_javascript_uri_errors():
+    # &#106; = "j": the scheme check must judge the decoded value, same
+    # normalization as the sanitizer's.
+    html = '<html><body><a href="&#106;avascript:alert(1)">x</a></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("javascript" in e for e in errors)
+
+
+def test_javascript_uri_on_formaction_errors():
+    html = '<html><body><button formaction="javascript:alert(1)">x</button></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("javascript" in e for e in errors)
+
+
+def test_escaped_prose_does_not_trigger_lint():
+    # The whole point of structure-aware lint: these strings only appear
+    # as escaped TEXT, so none of them may fire. The old regex approach
+    # false-failed on every one of them.
+    html = (
+        "<html><body>"
+        "<p>phase one = done</p>"
+        "<p>never write onclick = x in your markup</p>"
+        "<p>javascript: is bad, vbscript: worse</p>"
+        "<p>fetch it from https://example.com/a.png later</p>"
+        "<pre><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></pre>"
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": []})
+    assert errors == []
+    assert warnings == []
+
+
+def test_relative_and_data_and_fragment_urls_are_fine():
+    html = (
+        "<html><body>"
+        '<img src="data:image/png;base64,AAAA">'
+        '<a href="#section">jump</a>'
+        '<a href="other/page.html">rel</a>'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": []})
+    assert errors == []
+    assert warnings == []

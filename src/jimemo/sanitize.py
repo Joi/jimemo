@@ -67,16 +67,34 @@ _TEXT_ALIGN_RE = re.compile(r"^\s*text-align:\s*(left|right|center);?\s*$")
 _FENCED_CODE_LANG_RE = re.compile(r"^language-[\w-]+$")
 
 
+def normalize_url(value: str) -> str:
+    """`value` in its most-decoded form: entity-decoded (again,
+    defensively; an HTML parser upstream already decoded once),
+    control/space characters removed, lowercased — so obfuscations like
+    ``java&#09;script:`` or ``JaVaScRiPt:`` are judged decoded.
+    Over-decoding can only reject a value that would have been safe,
+    never accept an unsafe one."""
+    return "".join(ch for ch in html.unescape(value) if ord(ch) > 0x20).lower()
+
+
+def url_scheme(value: str) -> str:
+    """Scheme of the normalized URL (``"javascript"``, ``"https"``, ...),
+    or ``""`` for relative/fragment-only/empty values. Shared by the
+    sanitizer's allowlist and lint's last-gate scheme checks so both
+    judge the same normalization (see `normalize_url`)."""
+    compact = normalize_url(value)
+    if not compact or compact.startswith("#"):
+        return ""
+    head = re.split(r"[/?#]", compact, maxsplit=1)[0]
+    if ":" not in head:
+        return ""  # relative URL, no scheme
+    return head.split(":", 1)[0]
+
+
 def _url_allowed(value: str, *, allow_mailto: bool, allow_data_image: bool) -> bool:
-    """True if the URL's scheme is acceptable. The test runs on a
-    normalized copy — entity-decoded (again, defensively; the parser
-    already decoded once), control/space characters removed, lowercased
-    — so obfuscations like ``java&#09;script:`` or ``JaVaScRiPt:`` are
-    judged in their most-decoded form. Over-decoding can only reject a
-    value that would have been safe, never accept an unsafe one."""
-    compact = "".join(
-        ch for ch in html.unescape(value) if ord(ch) > 0x20
-    ).lower()
+    """True if the URL's scheme is acceptable (see module docstring for
+    the per-context rules)."""
+    compact = normalize_url(value)
     if not compact or compact.startswith("#"):
         return True
     head = re.split(r"[/?#]", compact, maxsplit=1)[0]

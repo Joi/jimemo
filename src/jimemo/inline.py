@@ -15,6 +15,7 @@ _MIME_BY_EXT = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".gif": "image/gif",
+    ".webp": "image/webp",
     ".svg": "image/svg+xml",
 }
 
@@ -63,11 +64,19 @@ def _is_remote(src: str) -> bool:
 
 def inline_images(html: str, base_dir: Path) -> Tuple[str, List[str]]:
     """Rewrite local <img src> paths to data URIs. Remote (http/https)
-    sources are left alone (lint warns about them separately). Missing
-    local files are collected and raised together as a ContentError."""
-    base_dir = Path(base_dir)
+    sources are left alone (lint rejects them separately). Missing local
+    files are collected and raised together as a ContentError.
+
+    Content may be untrusted, and this function reads local files, so it
+    fails closed on any src that could leak a file from outside the
+    content's own directory: absolute paths, paths whose resolved real
+    location (after ``..`` segments and symlinks) escapes `base_dir`'s
+    subtree, and non-image extensions all raise ContentError naming the
+    offending src — they are never silently skipped."""
+    base_dir = Path(base_dir).resolve()
     warnings: List[str] = []
     missing: List[str] = []
+    rejected: List[str] = []
 
     def replace(match: "re.Match") -> str:
         prefix, quote, src = match.group(1), match.group(2), match.group(3)
@@ -78,17 +87,33 @@ def inline_images(html: str, base_dir: Path) -> Tuple[str, List[str]]:
             return match.group(0)
 
         src_path = Path(src)
-        img_path = src_path if src_path.is_absolute() else (base_dir / src_path)
+        if src_path.is_absolute():
+            rejected.append(f"{src} (absolute path)")
+            return match.group(0)
+        img_path = (base_dir / src_path).resolve()
+        if not img_path.is_relative_to(base_dir):
+            rejected.append(f"{src} (escapes the content file's directory)")
+            return match.group(0)
+        if img_path.suffix.lower() not in _MIME_BY_EXT:
+            rejected.append(
+                f"{src} (extension {img_path.suffix!r} is not an allowed "
+                f"image type: {', '.join(sorted(_MIME_BY_EXT))})"
+            )
+            return match.group(0)
         if not img_path.is_file():
             missing.append(src)
             return match.group(0)
 
-        mime = _MIME_BY_EXT.get(img_path.suffix.lower(), "application/octet-stream")
+        mime = _MIME_BY_EXT[img_path.suffix.lower()]
         data = base64.b64encode(img_path.read_bytes()).decode("ascii")
         return f"{prefix}{quote}data:{mime};base64,{data}{quote}"
 
     new_html = _IMG_SRC_RE.sub(replace, html)
 
+    if rejected:
+        raise ContentError(
+            "unsafe local image path(s) referenced by <img src>: " + "; ".join(rejected)
+        )
     if missing:
         raise ContentError(
             "missing local image(s) referenced by <img src>: " + ", ".join(missing)
