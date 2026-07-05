@@ -27,6 +27,7 @@ VALID = {
         "date": {"type": "text"},
         "body": {"type": "markdown", "required": True},
         "sections": {"type": "data", "items": {"heading": "text", "body": "markdown"}},
+        "chart_data": {"type": "data"},
     },
     "components": ["stat-tile", "card-grid"],
     "charts": [],
@@ -217,7 +218,7 @@ def test_non_string_component_element_named(tmp_path):
 
 # --- chart declarations (Phase 4) ---
 
-CHART = {"id": "sales-chart", "type": "bar", "data_slot": "sections"}
+CHART = {"id": "sales-chart", "type": "bar", "data_slot": "chart_data"}
 
 
 def test_valid_chart_declaration_loads(tmp_path):
@@ -229,7 +230,7 @@ def test_valid_chart_declaration_loads(tmp_path):
         {
             "id": "sales-chart",
             "type": "bar",
-            "data_slot": "sections",
+            "data_slot": "chart_data",
             "title": "Sales by quarter",
         }
     ]
@@ -272,6 +273,21 @@ def test_chart_bad_id_rejected(tmp_path, bad_id):
         load_manifest(template_dir)
 
 
+@pytest.mark.parametrize(
+    "bad_id", ["sales-chart\n", "\nsales-chart", "sales\n-chart"],
+    ids=["trailing-newline", "leading-newline", "embedded-newline"],
+)
+def test_chart_id_with_newline_rejected(tmp_path, bad_id):
+    # re.match's '$' matches just before a trailing '\n', so an
+    # un-anchored pattern would let a newline slip through into a
+    # value later used as a DOM id / getElementById argument.
+    data = dict(VALID)
+    data["charts"] = [dict(CHART, id=bad_id)]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="'id'"):
+        load_manifest(template_dir)
+
+
 def test_chart_invalid_type_named(tmp_path):
     data = dict(VALID)
     data["charts"] = [dict(CHART, type="bubble")]
@@ -294,6 +310,18 @@ def test_chart_data_slot_must_be_data_typed(tmp_path):
     data["charts"] = [dict(CHART, data_slot="title")]
     template_dir = write_manifest(tmp_path, data)
     with pytest.raises(ManifestError, match="type 'data'"):
+        load_manifest(template_dir)
+
+
+def test_chart_data_slot_must_not_have_items(tmp_path):
+    # 'sections' is a data slot in VALID, but it has an 'items' schema
+    # (itemized list); chart data is the freeform {labels, series}
+    # shape, so an itemized data slot must be rejected early rather
+    # than failing later at content load with a confusing error.
+    data = dict(VALID)
+    data["charts"] = [dict(CHART, data_slot="sections")]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="sections.*schema-free"):
         load_manifest(template_dir)
 
 

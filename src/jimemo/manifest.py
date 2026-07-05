@@ -18,7 +18,8 @@ ITEM_TYPES = ("text", "markdown")
 CHART_TYPES = ("bar", "line", "pie", "doughnut", "radar", "scatter")
 CHART_FIELDS = ("id", "type", "data_slot", "title")
 # ASCII-only so a chart id is always a safe DOM id / macro argument.
-CHART_ID_RE = re.compile(r"^[a-zA-Z][\w-]*$", re.ASCII)
+# \A/\Z (not ^/$) so a trailing newline can't sneak past the anchor.
+CHART_ID_RE = re.compile(r"\A[a-zA-Z][\w-]*\Z", re.ASCII)
 CONTENT_KINDS = (
     "narrative",
     "photo-heavy",
@@ -163,6 +164,13 @@ def load_manifest(template_dir: Path) -> Dict[str, Any]:
                 f"manifest charts[{idx}] ({chart_id!r}) 'data_slot' "
                 f"{data_slot!r} must reference a slot of type 'data', "
                 f"got type {slots[data_slot].get('type')!r}"
+            )
+        if slots[data_slot].get("items") is not None:
+            raise ManifestError(
+                f"manifest charts[{idx}] ({chart_id!r}) chart data_slot "
+                f"{data_slot!r} must be a schema-free data slot (no items); "
+                f"chart data is the freeform {{labels, series}} shape, not "
+                f"an itemized list"
             )
 
         if "title" in chart and not isinstance(chart["title"], str):
