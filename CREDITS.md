@@ -20,3 +20,6 @@ version pins live in `docs/research/2026-07-05-phase1-research.md`'s
 
 | Name | Version | License | Source |
 | --- | --- | --- | --- |
+| Jinja2 | 3.1.6 | BSD-3-Clause | https://pypi.org/project/Jinja2/ |
+| MarkupSafe | 3.0.2 | BSD-3-Clause | https://pypi.org/project/MarkupSafe/ |
+| Markdown | 3.10.2 | BSD-3-Clause | https://pypi.org/project/Markdown/ |
