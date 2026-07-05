@@ -43,6 +43,20 @@ def test_unlisted_python_file_is_reported(tmp_path):
     assert any("unlisted" in p for p in verify_checksums(vendor))
 
 
+def test_unlisted_native_extension_is_reported(tmp_path):
+    vendor = make_vendor(tmp_path)
+    (vendor / "pkg" / "_speedups.so").write_bytes(b"\x00junk\x01")
+    assert any("unlisted" in p for p in verify_checksums(vendor))
+
+
+def test_unlisted_pycache_bytecode_is_reported(tmp_path):
+    vendor = make_vendor(tmp_path)
+    pycache = vendor / "pkg" / "__pycache__"
+    pycache.mkdir()
+    (pycache / "mod.cpython-39.pyc").write_bytes(b"\x00junk\x01")
+    assert any("unlisted" in p for p in verify_checksums(vendor))
+
+
 def test_missing_sums_file_is_reported(tmp_path):
     vendor = tmp_path / "vendor"
     vendor.mkdir()

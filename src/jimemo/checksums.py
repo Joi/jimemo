@@ -1,5 +1,5 @@
 """Verify vendor/ against SHA256SUMS. Detects tampered, missing, and
-unlisted-.py files. Returns problems as strings; empty list means clean."""
+unlisted files. Returns problems as strings; empty list means clean."""
 import hashlib
 from pathlib import Path
 
@@ -28,8 +28,10 @@ def verify_checksums(vendor_dir: Path) -> list:
             problems.append(f"checksum mismatch: {rel}")
 
     listed_resolved = {(vendor_dir / rel).resolve() for rel in listed}
-    for f in sorted(vendor_dir.rglob("*.py")):
+    for f in sorted(vendor_dir.rglob("*")):
+        if not f.is_file() or f == sums_file:
+            continue
         if f.resolve() not in listed_resolved:
-            problems.append(f"unlisted python file: {f.relative_to(vendor_dir)}")
+            problems.append(f"unlisted file: {f.relative_to(vendor_dir)}")
 
     return problems
