@@ -399,18 +399,18 @@ def test_chart_context_name_collision_rejected_at_load(tmp_path, collision_name)
 
 
 @pytest.mark.parametrize("collision_name", ["charts", "chart_lib"])
-def test_chartless_manifest_may_use_chart_context_slot_names(tmp_path, collision_name):
-    # The collision is reserved only WHEN the manifest declares a chart
-    # (Phase 3 behavior, preserved): a chartless manifest never injects
-    # `charts`/`chart_lib` into the render context, so a slot with
-    # either name is unclaimed and must load cleanly.
+def test_chartless_manifest_may_not_use_chart_context_slot_names(tmp_path, collision_name):
+    # charts/chart_lib are unconditionally reserved (like manifest/
+    # styles/theme), not just when the manifest declares a chart: the
+    # base template's chart-script gate must never be controllable by
+    # content, and a chartless manifest is no exception.
     data = dict(VALID)
     data["slots"] = dict(VALID["slots"])
     data["slots"][collision_name] = {"type": "text"}
     data["charts"] = []
     template_dir = write_manifest(tmp_path, data)
-    manifest = load_manifest(template_dir)
-    assert manifest["slots"][collision_name]["type"] == "text"
+    with pytest.raises(ManifestError, match=f"{collision_name!r}.*collides"):
+        load_manifest(template_dir)
 
 
 def test_valid_manifest_with_full_suitability_still_loads(tmp_path):

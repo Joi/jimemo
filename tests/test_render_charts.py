@@ -228,9 +228,12 @@ def test_chartless_page_emits_no_script_at_all(tmp_path):
     assert "canvas" not in html
 
 
-def test_chartless_template_may_still_use_a_slot_named_charts(tmp_path):
-    # Phase 3 unchanged: the charts/chart_lib context names are only
-    # injected (and only reserved) when the manifest declares charts.
+def test_chartless_template_may_not_use_a_slot_named_charts(tmp_path):
+    # charts/chart_lib are unconditionally reserved slot names now (like
+    # manifest/styles/theme), not just when the manifest declares
+    # charts: content must never control whether/what the base template
+    # emits inside <script>, so even a chartless manifest may not
+    # declare a slot named "charts".
     manifest = """\
 {
   "name": "charts-slot-tpl",
@@ -244,18 +247,14 @@ def test_chartless_template_may_still_use_a_slot_named_charts(tmp_path):
   "charts": []
 }
 """
-    template = NO_CHART_TEMPLATE.replace(
-        "{{ ui.page_header(title) }}",
-        "{{ ui.page_header(title) }}\n<p>{{ charts }}</p>",
-    )
     template_dir = make_chart_template_dir(
-        tmp_path, manifest_source=manifest, template_source=template,
+        tmp_path, manifest_source=manifest, template_source=NO_CHART_TEMPLATE,
         name="charts-slot-tpl",
     )
-    html = render_page(
-        template_dir, {"title": "T", "charts": "a text slot named charts"}
-    )
-    assert "a text slot named charts" in html
+    with pytest.raises(ManifestError, match="'charts'.*collides"):
+        render_page(
+            template_dir, {"title": "T", "charts": "a text slot named charts"}
+        )
 
 
 def test_slot_named_charts_with_charts_declared_is_manifest_error(tmp_path):
