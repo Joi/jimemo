@@ -18,8 +18,13 @@ def verify_checksums(vendor_dir: Path) -> list:
         expected, rel = line.split(None, 1)
         listed[Path(rel.strip().lstrip("*"))] = expected
 
+    reported_symlinks = set()
     for rel, expected in sorted(listed.items()):
         f = vendor_dir / rel
+        if f.is_symlink():
+            problems.append(f"symlink not allowed: {rel}")
+            reported_symlinks.add(rel)
+            continue
         if not f.is_file():
             problems.append(f"missing vendored file: {rel}")
             continue
@@ -31,7 +36,8 @@ def verify_checksums(vendor_dir: Path) -> list:
     for f in sorted(vendor_dir.rglob("*")):
         rel = f.relative_to(vendor_dir)
         if f.is_symlink():
-            problems.append(f"symlink not allowed: {rel}")
+            if rel not in reported_symlinks:
+                problems.append(f"symlink not allowed: {rel}")
             continue
         if f.is_dir() or f == sums_file:
             continue
