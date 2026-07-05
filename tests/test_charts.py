@@ -77,12 +77,13 @@ def test_serialize_neutralizes_injection_in_series_name(evil):
     assert json.loads(out)["data"]["datasets"][0]["label"] == evil
 
 
-def test_serialize_neutralizes_injection_in_title():
+def test_title_never_enters_chart_config():
+    # build_chart_config no longer reads chart_decl["title"] at all, so
+    # there is no title-shaped injection vector in the config JSON to
+    # neutralize; a hostile title simply never reaches it.
     decl = dict(DECL, title="</script><script>alert(1)</script>")
-    out = serialize_chart_config(build_chart_config(decl, chart_data()))
-    assert_script_safe(out)
-    parsed = json.loads(out)
-    assert parsed["options"]["plugins"]["title"]["text"] == decl["title"]
+    config = build_chart_config(decl, chart_data())
+    assert config["options"] == {}
 
 
 def test_serialize_escapes_non_ascii_and_js_line_separators():
@@ -160,12 +161,14 @@ def test_build_accepts_single_element_list_wrapper():
     assert bare == wrapped
 
 
-def test_build_title_lands_in_options():
+def test_build_title_not_duplicated_in_options():
+    # The title renders once, as the toolkit block heading (render.py
+    # reads chart_decl["title"] directly for that); Chart.js's own
+    # title plugin must stay unset so the title never repeats inside
+    # the canvas in Chart.js's own style.
     decl = dict(DECL, title="Sales by quarter")
     config = build_chart_config(decl, chart_data())
-    assert config["options"] == {
-        "plugins": {"title": {"display": True, "text": "Sales by quarter"}}
-    }
+    assert config["options"] == {}
 
 
 def test_build_numeric_labels_coerced_to_strings():

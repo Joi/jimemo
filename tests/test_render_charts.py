@@ -120,7 +120,10 @@ def test_chart_config_round_trips_data_and_title(tmp_path):
     assert config["data"]["labels"] == ["Q1", "Q2", "Q3"]
     assert [d["label"] for d in config["data"]["datasets"]] == ["Revenue", "Costs"]
     assert config["data"]["datasets"][0]["data"] == [1200, 1350, 1480]
-    assert config["options"]["plugins"]["title"]["text"] == "Sales by quarter"
+    # The manifest title ("Sales by quarter") renders once, via the
+    # toolkit block heading (render.py's `charts` context, c.title) —
+    # Chart.js's own title plugin must stay unset in the config.
+    assert config["options"] == {}
 
 
 def test_two_charts_share_one_inlined_lib(tmp_path):

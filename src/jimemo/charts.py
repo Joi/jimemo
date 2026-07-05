@@ -240,11 +240,11 @@ def build_chart_config(
         "data": {"labels": labels, "datasets": datasets},
         "options": {},
     }
-    title = chart_decl.get("title")
-    if title:
-        config["options"] = {
-            "plugins": {"title": {"display": True, "text": title}}
-        }
+    # A chart's title is rendered once, by the toolkit block heading
+    # (see render.py's `charts` context and the template's <h2>), which
+    # reads chart_decl["title"] directly. Chart.js's own title plugin is
+    # deliberately left unset here so the title never renders a second
+    # time, in Chart.js's own font, inside the canvas.
     return config
 
 
