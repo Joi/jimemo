@@ -81,12 +81,29 @@ Either way any other inline script is an error, so a shared
 third-party template cannot ride a chart declaration to embed its own
 JavaScript, and neither mode is a JavaScript judge: each recognizes
 renderer output and rejects everything else, fail closed.
+
+In exact mode, three further completeness checks close a gap the body
+multiset alone leaves open: a page can contain exactly the renderer's
+script bodies and still fail to draw a chart. (1) Every matched script
+must be a bare executable ``<script>`` -- no ``type`` attribute, or
+``type`` in ``{"text/javascript", "module"}``; a non-executable type
+(``application/json``, ``text/template``, ...) is inert data a browser
+never runs, so a byte-perfect body wrapped in one would silently draw
+nothing. (2) The library body must appear, in document order, before
+every init body -- ``new Chart(...)`` needs the ``Chart`` global
+already defined. (3) Every manifest-declared chart id must have a
+matching ``<canvas id="...">`` somewhere on the page; the id showing up
+on some other element (a ``<div>``, say) does not count -- the init
+script's ``getElementById`` call would resolve to nothing Chart.js can
+draw on. These are not new security boundaries -- the body allowlist
+above is the boundary -- they complete the guarantee that an exact-mode
+pass means the page actually renders the charts it declares.
 """
 import json
 import re
 from html import unescape
 from html.parser import HTMLParser
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from ._paths import CHARTJS_BUNDLE
 from .charts import chart_lib_inline_text, parse_chart_init_js
@@ -335,6 +352,37 @@ def _has_src_attr(attrs: List[Tuple[str, Optional[str]]]) -> bool:
     return any(name.lower() == "src" for name, _value in attrs)
 
 
+# Sentinel: the <script> start tag carries no `type` attribute at all
+# (distinct from a `type` attribute present with an empty or None
+# value, both of which are judged as the empty string below).
+_NO_TYPE = object()
+
+
+def _type_attr(attrs: List[Tuple[str, Optional[str]]]) -> Any:
+    """The raw `type` attribute value from a start tag's `attrs`, or
+    `_NO_TYPE` if the attribute is absent."""
+    for name, value in attrs:
+        if name.lower() == "type":
+            return value
+    return _NO_TYPE
+
+
+# The only `type` values (case/whitespace-insensitive) under which a
+# browser executes a <script>'s body as classic or module JavaScript.
+# Absent entirely is the common case (jimemo never emits a type
+# attribute); anything else -- application/json, text/template, ... --
+# is inert data the browser parses but never runs.
+_EXECUTABLE_SCRIPT_TYPES = frozenset({"", "text/javascript", "module"})
+
+
+def _is_executable_script_type(type_attr: Any) -> bool:
+    """True if a <script> carrying this `type` attribute (as returned by
+    `_type_attr`) is one whose body a browser actually executes."""
+    if type_attr is _NO_TYPE:
+        return True
+    return (type_attr or "").strip().lower() in _EXECUTABLE_SCRIPT_TYPES
+
+
 class _Linter(HTMLParser):
     def __init__(
         self,
@@ -370,6 +418,25 @@ class _Linter(HTMLParser):
         # via handle_data, charrefs unconverted — the same bytes the
         # browser's tokenizer would see.)
         self._script_parts: Optional[List[str]] = None
+        # The current <script>'s `type` attribute (captured at the start
+        # tag, read back at flush time -- scripts never nest, so one
+        # slot suffices) and a monotonic per-tag sequence number, both
+        # feeding the exact-mode completeness checks below.
+        self._script_type: Any = _NO_TYPE
+        self._script_seq = 0
+        self._current_script_seq: Optional[int] = None
+        # Exact-mode completeness checks 2 and 3 (see module docstring):
+        # the document-order position of the matched library body (None
+        # until/unless one is matched) and every matched init body's
+        # (chart_id, position) pair, plus every <canvas id="..."> found
+        # anywhere on the page. Populated only via _record_script_order,
+        # which only exact-mode acceptance calls -- structural mode and
+        # chartless pages never touch these, so their close()-time
+        # checks (both guarded on self._lib_seq / exact mode) are inert
+        # there.
+        self._lib_seq: Optional[int] = None
+        self._init_seqs: List[Tuple[str, int]] = []
+        self._canvas_ids: Set[str] = set()
         self._chart_lib_cache: Any = _UNSET
 
     def handle_starttag(self, tag, attrs):
@@ -382,6 +449,7 @@ class _Linter(HTMLParser):
             # body is buffered for the allowlist check.
             if not _has_src_attr(attrs):
                 self._script_parts = []
+                self._script_type = _type_attr(attrs)
 
     def handle_startendtag(self, tag, attrs):
         self._check_tag(tag, attrs)  # a <style/> has no text to buffer
@@ -390,7 +458,7 @@ class _Linter(HTMLParser):
                 # A body-less <script/> is nothing the renderer emits;
                 # judge its empty body so it fails closed like any other
                 # unexpected inline script.
-                self._check_script_body("")
+                self._check_script_body("", _type_attr(attrs))
 
     def handle_endtag(self, tag):
         if tag == "style":
@@ -421,6 +489,33 @@ class _Linter(HTMLParser):
                         f"the page ({count} occurrence(s) not found): "
                         f"{_shorten(expected)!r}"
                     )
+            # Completeness check 2: the library must already be defined
+            # when an init runs. Guarded on _lib_seq (only set once a
+            # matched script's body equals the vendored library text) so
+            # a caller-supplied allowed_scripts that never includes the
+            # library (as several unit tests below do, deliberately
+            # exercising only the init multiset) has nothing to check
+            # against and stays silent here.
+            if self._lib_seq is not None:
+                for chart_id, seq in self._init_seqs:
+                    if seq < self._lib_seq:
+                        self.errors.append(
+                            "Chart.js library must load before chart "
+                            f"init scripts (init for chart {chart_id!r} "
+                            "appears first in document order)"
+                        )
+            # Completeness check 3: a declared chart with no matching
+            # <canvas> would have its init script's getElementById call
+            # resolve to nothing Chart.js can draw on. An id present on
+            # some other element (e.g. a <div>) does not satisfy this --
+            # only _canvas_ids (populated from <canvas> tags alone)
+            # counts.
+            for chart_id in sorted(self.chart_ids):
+                if chart_id not in self._canvas_ids:
+                    self.errors.append(
+                        f"no <canvas id={chart_id!r}> found for declared "
+                        "chart -- its init script has nothing to draw on"
+                    )
 
     def _flush_style(self) -> None:
         if self._style_parts is None:
@@ -435,7 +530,8 @@ class _Linter(HTMLParser):
             return
         body = "".join(self._script_parts)
         self._script_parts = None
-        self._check_script_body(body)
+        script_type, self._script_type = self._script_type, _NO_TYPE
+        self._check_script_body(body, script_type)
 
     def _chart_lib(self) -> Optional[str]:
         """The vendored Chart.js bundle text in its INLINED form (same
@@ -453,7 +549,9 @@ class _Linter(HTMLParser):
                 self._chart_lib_cache = None
         return self._chart_lib_cache
 
-    def _check_script_body(self, body: str) -> None:
+    def _check_script_body(
+        self, body: str, script_type: Any = _NO_TYPE
+    ) -> None:
         """Chart pages only. In exact mode (the render path,
         _allowed_remaining set) a body is legal iff it is one of the
         bodies the renderer actually emitted for THIS page, each
@@ -468,12 +566,29 @@ class _Linter(HTMLParser):
         so a template author cannot ride a chart declaration to embed
         their own JavaScript. Surrounding whitespace is stripped
         identically on both sides; it cannot arm an otherwise-legal
-        body."""
+        body.
+
+        `script_type` (the tag's `type` attribute, from `_type_attr`) is
+        checked only in exact mode, only once a body matches: a matched
+        body wrapped in a non-executable type is completeness check 1
+        (see module docstring) — the byte-exact body a browser never
+        runs. That still counts as "found" (it is consumed from
+        _allowed_remaining) so the completeness error stands on its own
+        rather than piling a spurious "missing" on top of it."""
         stripped = body.strip()
         if self._allowed_remaining is not None:
             remaining = self._allowed_remaining.get(stripped)
             if remaining:
                 self._allowed_remaining[stripped] = remaining - 1
+                if not _is_executable_script_type(script_type):
+                    self.errors.append(
+                        "chart script must be a bare executable "
+                        f"<script>, got type={script_type!r} — a "
+                        "<script> with this type attribute is inert "
+                        "and never runs, so the chart would not draw"
+                    )
+                else:
+                    self._record_script_order(stripped)
                 return
             if remaining == 0:
                 self.errors.append(
@@ -526,6 +641,26 @@ class _Linter(HTMLParser):
                 "configs are pure data, never code"
             )
 
+    def _record_script_order(self, stripped: str) -> None:
+        """Classifies an exact-mode-accepted script body as the library
+        or a chart init, independent of any position the body happened
+        to occupy in the caller's own allowed_scripts list (lint_html's
+        docstring treats that list as an unordered multiset) — purely by
+        matching the same two byte shapes the structural fallback
+        recognizes, self._chart_lib() and parse_chart_init_js. Records
+        its document-order sequence number for completeness check 2,
+        judged in close()."""
+        seq = self._current_script_seq
+        lib = self._chart_lib()
+        if lib is not None and stripped == lib:
+            if self._lib_seq is None or (seq is not None and seq < self._lib_seq):
+                self._lib_seq = seq
+            return
+        parsed = parse_chart_init_js(stripped)
+        if parsed is not None and seq is not None:
+            chart_id, _config = parsed
+            self._init_seqs.append((chart_id, seq))
+
     def _check_tag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         raw_tag = self.get_starttag_text() or ""
         for match in _NUMERIC_CHARREF_RE.finditer(raw_tag):
@@ -545,6 +680,11 @@ class _Linter(HTMLParser):
             )
 
         if tag == "script":
+            # Document-order position of this tag, read back at flush
+            # time by _record_script_order (completeness check 2).
+            # Scripts never nest, so one counter/slot pair suffices.
+            self._script_seq += 1
+            self._current_script_seq = self._script_seq
             if _has_src_attr(attrs):
                 # Never allowed, remote, local, or valueless/empty: a
                 # src-bearing script is an external fetch/file
@@ -578,6 +718,14 @@ class _Linter(HTMLParser):
             # (script src, on*, script-scheme URLs, banned tags, the
             # fetch-on-load and CSS allowlists) still applies on chart
             # pages, unchanged.
+
+        if tag == "canvas":
+            # Fed to completeness check 3 (close()): a declared chart id
+            # must land on an actual <canvas>, not merely appear as some
+            # other element's id.
+            canvas_id = next((v for n, v in attrs if n.lower() == "id"), None)
+            if canvas_id:
+                self._canvas_ids.add(canvas_id)
 
         if tag == "meta":
             http_equiv = next(
@@ -740,10 +888,17 @@ def lint_html(
     library plus each chart's init body. When given (and the manifest
     declares charts) the page's inline scripts must equal that multiset
     exactly: forged/altered, extra, duplicate, and missing bodies are
-    each errors. When None (direct callers with no render context) each
-    inline script body is judged structurally instead — see the module
-    docstring. The render pipeline always passes it, so production
-    output is held to the exact set.
+    each errors, and three completeness checks close the remaining gap
+    between "the exact bodies are present" and "the page actually draws
+    the charts" — see the module docstring's closing paragraph: a
+    matched body must sit in a bare executable ``<script>`` (no
+    non-executable ``type``), the library body must precede every init
+    body in document order, and every manifest-declared chart id needs
+    a matching ``<canvas id="...">`` on the page. When None (direct
+    callers with no render context) each inline script body is judged
+    structurally instead — see the module docstring. The render
+    pipeline always passes it, so production output is held to the
+    exact set.
     """
     linter = _Linter(
         charts_declared=bool(manifest.get("charts")),
