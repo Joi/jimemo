@@ -8,14 +8,21 @@
         {% block head_extra %}{% endblock %}   (optional)
 
     Context variables:
-        styles — full <style> tag injected by the renderer (Markup)
-        theme  — optional "light"/"dark" to pin the theme; otherwise
-                 the page follows the OS via prefers-color-scheme
-        lang   — html lang attribute, defaults to "en"
-        wide   — true widens the content column for grids/dashboards
+        styles    — full <style> tag injected by the renderer (Markup)
+        theme     — optional "light"/"dark" to pin the theme; otherwise
+                    the page follows the OS via prefers-color-scheme
+        lang      — html lang attribute, defaults to "en"
+        wide      — true widens the content column for grids/dashboards
+        chart_lib — vendored Chart.js source (Markup), injected by the
+                    renderer ONLY when the manifest declares charts;
+                    emitted once below as the page's single library
+                    <script>, in <head> so it runs before every chart
+                    macro's init script
 
-    No JavaScript, ever: the output must render identically from a
-    file:// double-click, an unlisted link, and a printer.
+    No JavaScript, except charts: a chartless page emits no script at
+    all, and either way the output must render identically from a
+    file:// double-click, an unlisted link, and a printer — vendored
+    inline script only, never a fetch.
 -#}
 <!doctype html>
 <html lang="{{ lang|default('en') }}"{% if theme|default(none) %} data-theme="{{ theme }}"{% endif %}>
@@ -25,7 +32,8 @@
 <meta name="color-scheme" content="light dark">
 <meta name="robots" content="noindex">
 <title>{% block title %}jimemo{% endblock %}</title>
-{{ styles }}
+{{ styles }}{% if chart_lib|default(none) %}
+<script>{{ chart_lib }}</script>{% endif %}
 {% block head_extra %}{% endblock %}
 </head>
 <body>

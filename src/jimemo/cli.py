@@ -1,11 +1,13 @@
 import argparse
 import hashlib
 import json
+import re
 import sys
 import webbrowser
 from pathlib import Path
 
 from . import __version__
+from ._paths import CHARTS_VENDOR_DIR
 from ._vendor import VENDOR_DIR, add_vendor_to_path
 from .checksums import verify_checksums
 from .discovery import default_search_dirs, find_templates
@@ -20,6 +22,18 @@ from .scaffold import create_template
 # needs one of them imports it locally instead.
 
 PYTHON_FLOOR = (3, 9)
+
+_CHARTJS_VERSION_RE = re.compile(r"Chart\.js v([0-9]+\.[0-9]+\.[0-9]+)")
+
+
+def _chartjs_version(charts_vendor_dir: Path) -> str:
+    bundle = charts_vendor_dir / "chartjs" / "chart.umd.min.js"
+    try:
+        head = bundle.read_bytes()[:200].decode("utf-8", errors="replace")
+    except OSError:
+        return "unknown"
+    m = _CHARTJS_VERSION_RE.search(head)
+    return m.group(1) if m else "unknown"
 
 
 def cmd_doctor(args) -> int:
@@ -40,6 +54,15 @@ def cmd_doctor(args) -> int:
         ok = False
     else:
         print(f"ok   vendor checksums ({VENDOR_DIR})")
+
+    charts_problems = verify_checksums(CHARTS_VENDOR_DIR)
+    if charts_problems:
+        for p in charts_problems:
+            print(f"FAIL charts: {p}")
+        ok = False
+    else:
+        version = _chartjs_version(CHARTS_VENDOR_DIR)
+        print(f"ok   charts vendored (chart.js {version})")
 
     if problems:
         print("skip vendored imports (checksum verification failed)")
@@ -121,6 +144,7 @@ def cmd_render(args) -> int:
     templates_by_name = dict(templates)
 
     if args.template == "auto":
+        from .charts import build_chart_config
         from .content import load_content
         from .suggest import score_templates
 
@@ -143,14 +167,24 @@ def cmd_render(args) -> int:
         # Best score wins, but only among templates that can actually
         # take this content: the top scorer may require slots the
         # content doesn't have (or vice versa), so walk the ranking and
-        # pick the first template whose manifest loads the content.
+        # pick the first template whose manifest loads the content AND,
+        # for every chart it declares, whose data-slot value actually
+        # builds a chart config. Chart data slots are schema-free
+        # (content.py passes them through unvalidated), so load_content
+        # alone cannot tell a well-formed {labels, series} mapping from
+        # a malformed one — without this second check a template could
+        # be selected here and only fail later, mid-render, in
+        # render_page instead of falling through to the next candidate.
         chosen = None
         chosen_idx = 0
         tried = []
         for idx, entry in enumerate(ranked):
             candidate_dir = templates_by_name[entry["name"]]
             try:
-                load_content(content_path, load_manifest(candidate_dir))
+                candidate_manifest = load_manifest(candidate_dir)
+                content = load_content(content_path, candidate_manifest)
+                for chart_decl in candidate_manifest["charts"]:
+                    build_chart_config(chart_decl, content[chart_decl["data_slot"]])
             except (ManifestError, ContentError) as e:
                 tried.append(entry["name"])
                 print(
@@ -258,7 +292,8 @@ def _print_info_human(manifest, template_dir: Path, sample_files: list) -> None:
     print()
 
     print(f"Components: {', '.join(manifest['components']) or '(none)'}")
-    print(f"Charts: {', '.join(manifest['charts']) or '(none)'}")
+    charts = ", ".join(f"{c['type']}#{c['id']}" for c in manifest["charts"])
+    print(f"Charts: {charts or '(none)'}")
     print()
 
     suitability = manifest.get("suitability", {})

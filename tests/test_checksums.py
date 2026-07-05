@@ -135,3 +135,8 @@ def test_missing_sums_file_is_reported(tmp_path):
 def test_real_repo_vendor_is_clean():
     repo_vendor = Path(__file__).resolve().parents[1] / "vendor"
     assert verify_checksums(repo_vendor) == []
+
+
+def test_real_repo_charts_vendor_is_clean():
+    repo_charts_vendor = Path(__file__).resolve().parents[1] / "charts" / "vendor"
+    assert verify_checksums(repo_charts_vendor) == []

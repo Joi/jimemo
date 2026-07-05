@@ -5,6 +5,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from jimemo._paths import CHARTJS_BUNDLE
+from jimemo.charts import chart_lib_inline_text
 from jimemo.lint import MAX_OUTPUT_BYTES, lint_html
 
 
@@ -21,10 +23,24 @@ def test_script_tag_errors_when_no_charts_declared():
     assert any("script" in e for e in errors)
 
 
-def test_script_tag_allowed_when_charts_declared():
-    html = "<html><body><script>drawChart();</script></body></html>"
+def test_renderer_shaped_init_script_allowed_when_charts_declared():
+    # An inline script whose body is a chart init in the exact shape the
+    # renderer emits, for a declared chart id, passes.
+    html = (
+        "<html><body>"
+        '<script>new Chart(document.getElementById("bar-chart"), {});</script>'
+        "</body></html>"
+    )
     errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
     assert errors == []
+
+
+def test_arbitrary_inline_script_rejected_even_when_charts_declared():
+    # The Phase 4 tightening: declaring charts no longer blesses ANY
+    # inline script — only the renderer-emitted library and chart inits.
+    html = "<html><body><script>drawChart();</script></body></html>"
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("unexpected inline" in e for e in errors)
 
 
 def test_external_script_src_always_errors_even_with_charts():
@@ -52,6 +68,51 @@ def test_local_script_src_errors_even_with_charts():
     html = '<html><body><script src="chart.js"></script></body></html>'
     errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
     assert any("script" in e and "chart.js" in e for e in errors)
+
+
+def test_valueless_script_src_errors_even_with_charts():
+    # Python's html.parser reports a bare attribute like `src` (no
+    # `=value`) as ("src", None) -- identical to "no src attribute at
+    # all". A browser that sees src present ignores the element's
+    # inline body and fetches src instead, so this must still be
+    # rejected as a src-bearing script, not treated as (and possibly
+    # allowlisted as) an inline chart init.
+    html = (
+        "<html><body>"
+        '<script src>new Chart(document.getElementById("bar-chart"), {});</script>'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("script" in e and "never allowed" in e for e in errors)
+
+
+def test_empty_script_src_errors_even_with_charts():
+    html = (
+        "<html><body>"
+        '<script src="">new Chart(document.getElementById("bar-chart"), {});</script>'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("script" in e and "never allowed" in e for e in errors)
+
+
+def test_uppercase_script_src_attr_errors_even_with_charts():
+    html = (
+        "<html><body>"
+        '<script SRC>new Chart(document.getElementById("bar-chart"), {});</script>'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("script" in e and "never allowed" in e for e in errors)
+
+
+def test_script_src_with_value_still_errors_on_chart_page():
+    # Regression guard alongside the presence-only cases above: a
+    # normal valued src on a chart page must still be rejected, not
+    # accidentally waved through by the presence-check refactor.
+    html = '<html><body><script src="x"></script></body></html>'
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("script" in e and "never allowed" in e for e in errors)
 
 
 def test_plain_anchor_links_do_not_warn():
@@ -700,3 +761,395 @@ def test_style_unparseable_url_construct_errors():
 def test_unclosed_style_element_still_scanned():
     errors, _ = _lint("<style>.x{background:url(https://evil.example/x)}")
     assert any("evil.example" in e for e in errors)
+
+
+# --- charts declared: the one controlled opening (Phase 4) -----------------
+#
+# When the manifest declares charts, an inline src-less <script> (and the
+# inert <canvas> it draws on) is allowed; EVERY other Phase 3 rule still
+# applies. Script content is deliberately not validated — the trust
+# boundary is upstream in charts.serialize_chart_config (see lint.py's
+# script-check comment).
+
+CHARTS_DECLARED = {
+    "charts": [{"id": "sales", "type": "bar", "data_slot": "sales_data"}]
+}
+
+
+def _lint_with_charts(markup):
+    return lint_html("<html><body>" + markup + "</body></html>", CHARTS_DECLARED)
+
+
+def test_canvas_and_inline_script_allowed_when_charts_declared():
+    errors, warnings = _lint_with_charts(
+        '<canvas id="sales"></canvas>'
+        '<script>new Chart(document.getElementById("sales"), {});</script>'
+    )
+    assert errors == []
+    assert warnings == []
+
+
+def test_event_handler_still_errors_when_charts_declared():
+    errors, _ = _lint_with_charts('<canvas id="x" onclick="alert(1)"></canvas>')
+    assert any("event handler" in e for e in errors)
+
+
+def test_javascript_uri_still_errors_when_charts_declared():
+    errors, _ = _lint_with_charts('<a href="javascript:alert(1)">x</a>')
+    assert any("javascript" in e for e in errors)
+
+
+def test_remote_resources_still_error_when_charts_declared():
+    errors, _ = _lint_with_charts('<img src="https://evil.example/x.png">')
+    assert any("https://evil.example/x.png" in e for e in errors)
+    errors, _ = _lint_with_charts(
+        '<link rel="stylesheet" href="https://fonts.example/f.css">'
+    )
+    assert any("https://fonts.example/f.css" in e for e in errors)
+
+
+def test_banned_tags_still_error_when_charts_declared():
+    errors, _ = _lint_with_charts('<iframe srcdoc="<script>x</script>"></iframe>')
+    assert any("<iframe>" in e and "never allowed" in e for e in errors)
+
+
+def test_meta_refresh_and_base_href_still_error_when_charts_declared():
+    errors, _ = _lint_with_charts(
+        '<meta http-equiv="refresh" content="0;url=https://evil.example/">'
+    )
+    assert any("refresh" in e for e in errors)
+    errors, _ = _lint_with_charts('<base href="https://evil.example/">')
+    assert any("base href" in e for e in errors)
+
+
+def test_css_fetches_still_error_when_charts_declared():
+    errors, _ = _lint_with_charts(
+        "<style>@import url(https://evil.example/x.css);</style>"
+    )
+    assert any("@import" in e for e in errors)
+    errors, _ = _lint_with_charts(
+        "<style>.x{background:url(https://evil.example/x.png)}</style>"
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+# --- inline-script allowlist on a chart page (Phase 4 tightening) -----------
+#
+# Declaring charts no longer blesses ANY inline <script>. The only inline
+# script bodies accepted are the ones the RENDERER emits: the vendored
+# Chart.js library and, per declared chart, an init in exactly
+# charts.chart_init_js's byte shape whose id is declared and whose config
+# is the safe-serialized JSON. Everything else is an error — so a
+# third-party template cannot ride a chart declaration to embed its own
+# JavaScript.
+
+VALID_INIT = 'new Chart(document.getElementById("sales"), {"type":"bar"});'
+
+
+def test_extra_hand_added_inline_script_rejected_on_chart_page():
+    # The core adversarial case: a legit chart init AND a bolted-on
+    # arbitrary script. The init passes; the extra script is named and
+    # errors, so the page fails closed.
+    errors, _ = _lint_with_charts(
+        '<canvas id="sales"></canvas>'
+        f"<script>{VALID_INIT}</script>"
+        "<script>alert(1)</script>"
+    )
+    assert any("unexpected inline" in e and "alert(1)" in e for e in errors)
+
+
+def test_init_for_undeclared_chart_id_rejected():
+    errors, _ = _lint_with_charts(
+        '<script>new Chart(document.getElementById("ghost"), {});</script>'
+    )
+    assert any("ghost" in e and "does not declare" in e for e in errors)
+
+
+def test_init_with_raw_lt_in_config_rejected():
+    # A hand-forged config carrying an unescaped "<" is not
+    # serialize_chart_config output (which u003c-escapes every "<"), even
+    # though the init wrapper is well-formed and the id is declared.
+    errors, _ = _lint_with_charts(
+        '<script>new Chart(document.getElementById("sales"), '
+        '{"x":"<script>"});</script>'
+    )
+    assert any("raw" in e and "sales" in e for e in errors)
+
+
+def test_init_with_non_json_config_rejected():
+    # The init wrapper matches and the id is declared, but the config
+    # argument is code, not data — renderer output always parses as JSON.
+    errors, _ = _lint_with_charts(
+        '<script>new Chart(document.getElementById("sales"), '
+        "fetch('/x'));</script>"
+    )
+    assert any("not valid JSON" in e and "sales" in e for e in errors)
+
+
+def test_self_closing_inline_script_rejected_on_chart_page():
+    # A body-less <script/> is nothing the renderer emits.
+    errors, _ = _lint_with_charts("<script></script>")
+    assert any("unexpected inline" in e for e in errors)
+
+
+def test_whitespace_around_valid_init_is_fine():
+    errors, _ = _lint_with_charts(f"<script>\n  {VALID_INIT}\n</script>")
+    assert errors == []
+
+
+def test_vendored_chartjs_library_body_is_accepted():
+    # The other allowed body: the vendored bundle's INLINED text (same
+    # chart_lib_inline_text() render.py calls), as the page's single
+    # library <script>. Use the real file via the shared function so the
+    # byte-equality path is exercised end to end.
+    lib = chart_lib_inline_text(CHARTJS_BUNDLE)
+    errors, _ = _lint_with_charts(f"<script>{lib}</script>")
+    assert errors == []
+
+
+def test_raw_vendored_chartjs_bundle_with_sourcemap_comment_is_rejected():
+    # lint's allowlist matches the INLINED form only (sourceMappingURL
+    # stripped) -- the raw on-disk bundle, sourceMappingURL comment and
+    # all, is not a body render.py ever emits and must not be accepted
+    # as if it were.
+    lib = CHARTJS_BUNDLE.read_text(encoding="utf-8")
+    errors, _ = _lint_with_charts(f"<script>{lib}</script>")
+    assert any("unexpected inline" in e for e in errors)
+
+
+def test_two_declared_inits_both_accepted():
+    manifest = {
+        "charts": [
+            {"id": "sales", "type": "bar", "data_slot": "s"},
+            {"id": "trend", "type": "line", "data_slot": "t"},
+        ]
+    }
+    html = (
+        "<html><body>"
+        '<script>new Chart(document.getElementById("sales"), {});</script>'
+        '<script>new Chart(document.getElementById("trend"), {});</script>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, manifest)
+    assert errors == []
+
+
+# --- exact-match mode (allowed_scripts) --------------------------------------
+# The render path passes lint_html the exact inline-script bodies it
+# emitted; the page's scripts must equal that multiset. The structural
+# fallback above still governs direct calls without a render context.
+
+INIT_SALES = 'new Chart(document.getElementById("sales"), {"type":"bar"});'
+INIT_TREND = 'new Chart(document.getElementById("trend"), {"type":"line"});'
+# Structurally valid for the declared id "sales" — right shape, valid
+# JSON, no raw "<" — but not the body the renderer emitted.
+INIT_FORGED = 'new Chart(document.getElementById("sales"), {"type":"pie"});'
+
+EXACT_MANIFEST = {"charts": ["sales"]}
+
+
+def _scripts_page(*bodies, canvas_ids=()):
+    # canvas_ids: <canvas id="..."> markup for completeness check 3
+    # (every declared chart id needs a matching canvas) — supplied by
+    # tests that mean to pass a FULL exact-mode page and left empty by
+    # tests that are deliberately exercising only the script multiset in
+    # isolation (see test_allowed_scripts_missing_canvas_for_declared_chart_errors
+    # below, which relies on the empty default).
+    canvases = "".join(f'<canvas id="{cid}"></canvas>' for cid in canvas_ids)
+    scripts = "".join(f"<script>{body}</script>" for body in bodies)
+    return f"<html><body>{canvases}{scripts}</body></html>"
+
+
+def test_allowed_scripts_exact_set_passes():
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES, canvas_ids=("sales",)),
+        EXACT_MANIFEST,
+        allowed_scripts=[INIT_SALES],
+    )
+    assert errors == []
+
+
+def test_allowed_scripts_rejects_forged_body_the_fallback_accepts():
+    # The exact-match win: a hand-forged init for the DECLARED id with
+    # different config bytes passes the structural fallback...
+    errors, _ = lint_html(_scripts_page(INIT_FORGED), EXACT_MANIFEST)
+    assert errors == []
+    # ...but exact mode knows the renderer never emitted that body.
+    errors, _ = lint_html(
+        _scripts_page(INIT_FORGED, canvas_ids=("sales",)),
+        EXACT_MANIFEST,
+        allowed_scripts=[INIT_SALES],
+    )
+    assert any("unexpected inline" in e for e in errors)
+    # And the body it replaced is reported missing.
+    assert any("missing" in e for e in errors)
+
+
+def test_allowed_scripts_rejects_extra_inline_script():
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES, "alert(1)", canvas_ids=("sales",)),
+        EXACT_MANIFEST,
+        allowed_scripts=[INIT_SALES],
+    )
+    assert any("unexpected inline" in e and "alert(1)" in e for e in errors)
+
+
+def test_allowed_scripts_rejects_duplicate():
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES, INIT_SALES, canvas_ids=("sales",)),
+        EXACT_MANIFEST,
+        allowed_scripts=[INIT_SALES],
+    )
+    assert any("duplicate" in e for e in errors)
+
+
+def test_allowed_scripts_reports_missing_expected_script():
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES, canvas_ids=("sales", "trend")),
+        {"charts": ["sales", "trend"]},
+        allowed_scripts=[INIT_SALES, INIT_TREND],
+    )
+    assert any("missing" in e and "trend" in e for e in errors)
+
+
+def test_allowed_scripts_normalizes_surrounding_whitespace_only():
+    # Whitespace around a body is template indentation, stripped
+    # identically on both sides; whitespace INSIDE a body still breaks
+    # equality (it is a different script).
+    errors, _ = lint_html(
+        _scripts_page("\n  " + INIT_SALES + "\n", canvas_ids=("sales",)),
+        EXACT_MANIFEST,
+        allowed_scripts=[INIT_SALES],
+    )
+    assert errors == []
+    inner_ws = INIT_SALES.replace('"), ', '"),  ')
+    errors, _ = lint_html(
+        _scripts_page(inner_ws, canvas_ids=("sales",)),
+        EXACT_MANIFEST,
+        allowed_scripts=[INIT_SALES],
+    )
+    assert any("unexpected inline" in e for e in errors)
+
+
+def test_allowed_scripts_does_not_bless_scripts_on_chartless_page():
+    # Exact mode never engages without declared charts: the chartless
+    # no-script rule stays absolute regardless of what a caller passes.
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES), {"charts": []}, allowed_scripts=[INIT_SALES]
+    )
+    assert any("declares no charts" in e for e in errors)
+
+
+def test_allowed_scripts_none_keeps_structural_fallback():
+    # No render context: the structural judgment of the sections above
+    # is unchanged (renderer-shaped init for a declared id passes).
+    errors, _ = lint_html(_scripts_page(INIT_SALES), EXACT_MANIFEST)
+    assert errors == []
+
+
+# --- exact-match completeness checks: type, order, canvas -------------------
+# The multiset match alone only proves the exact bodies are present; these
+# three checks close the remaining gap to "the page actually draws the
+# charts" (see the module docstring's closing paragraph). All three engage
+# only in exact mode (allowed_scripts given, charts declared).
+
+@pytest.mark.parametrize(
+    "bad_type", ["application/json", "text/template", "text/plain"]
+)
+def test_allowed_scripts_rejects_non_executable_script_type(bad_type):
+    html = (
+        '<html><body><canvas id="sales"></canvas>'
+        f'<script type="{bad_type}">{INIT_SALES}</script>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert any(
+        "bare executable" in e and bad_type in e for e in errors
+    ), errors
+
+
+@pytest.mark.parametrize("ok_type", ["text/javascript", "module", ""])
+def test_allowed_scripts_permits_executable_script_types(ok_type):
+    html = (
+        '<html><body><canvas id="sales"></canvas>'
+        f'<script type="{ok_type}">{INIT_SALES}</script>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert errors == []
+
+
+def test_init_before_library_in_document_order_errors():
+    lib = chart_lib_inline_text(CHARTJS_BUNDLE)
+    html = (
+        '<html><body><canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        f"<script>{lib}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(
+        html, EXACT_MANIFEST, allowed_scripts=[lib, INIT_SALES]
+    )
+    assert any("library must load before" in e for e in errors)
+
+
+def test_library_before_init_in_document_order_is_fine():
+    lib = chart_lib_inline_text(CHARTJS_BUNDLE)
+    html = (
+        "<html><head>"
+        f"<script>{lib}</script>"
+        f'</head><body><canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(
+        html, EXACT_MANIFEST, allowed_scripts=[lib, INIT_SALES]
+    )
+    assert errors == []
+
+
+def test_allowed_scripts_missing_canvas_for_declared_chart_errors():
+    # No canvas markup at all (the default of _scripts_page) for a
+    # manifest that declares chart id "sales".
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES), EXACT_MANIFEST, allowed_scripts=[INIT_SALES]
+    )
+    assert any("no <canvas" in e and "sales" in e for e in errors)
+
+
+def test_chart_id_on_div_not_canvas_still_errors():
+    # The id is present on the page, just not on a <canvas> — the init
+    # script's getElementById call would resolve to a <div>, not
+    # something Chart.js can draw on.
+    html = (
+        '<html><body><div id="sales"></div>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert any("no <canvas" in e and "sales" in e for e in errors)
+
+
+def test_realistic_chart_page_lib_first_bare_scripts_canvas_per_chart_passes():
+    # Shaped like the real render pipeline's output: library in <head>
+    # (so it loads before any init), one <canvas id> + bare init
+    # <script> per declared chart in <body>.
+    lib = chart_lib_inline_text(CHARTJS_BUNDLE)
+    manifest = {
+        "charts": [
+            {"id": "sales", "type": "bar", "data_slot": "s"},
+            {"id": "trend", "type": "line", "data_slot": "t"},
+        ]
+    }
+    html = (
+        "<html><head>"
+        f"<script>{lib}</script>"
+        "</head><body>"
+        f'<canvas id="sales"></canvas><script>{INIT_SALES}</script>'
+        f'<canvas id="trend"></canvas><script>{INIT_TREND}</script>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(
+        html, manifest, allowed_scripts=[lib, INIT_SALES, INIT_TREND]
+    )
+    assert errors == []
