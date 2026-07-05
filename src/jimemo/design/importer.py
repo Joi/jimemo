@@ -32,7 +32,7 @@ from typing import List, Optional
 from ..errors import DesignImportError
 from ..inline import personal_themes_dir
 from ..lint import css_reference_errors
-from .mapping import build_theme
+from .mapping import build_theme, theme_structure_errors
 from .reader import DesignExport, FontFace, read_export
 
 __all__ = ["ImportResult", "import_design", "slugify_name"]
@@ -196,6 +196,15 @@ def _embed_fonts(css: str, export: DesignExport, export_dir: Path) -> "tuple[str
         raise DesignImportError(
             "theme with embedded fonts failed the self-contained CSS check: "
             + "; ".join(lint_errors)
+        )
+    # Same output-side shape gate build_theme ran, re-run because the
+    # appended @font-face blocks are new content it never saw -- the lint
+    # above is blind to brace/comment/declaration injection.
+    structure_errors = theme_structure_errors(embedded_css)
+    if structure_errors:
+        raise DesignImportError(
+            "theme with embedded fonts failed structural safety check: "
+            + "; ".join(structure_errors)
         )
     return embedded_css, families, total_bytes
 

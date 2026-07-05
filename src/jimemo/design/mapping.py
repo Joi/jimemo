@@ -50,7 +50,49 @@ from .reader import (
     validate_token_value,
 )
 
-__all__ = ["build_theme"]
+__all__ = ["build_theme", "theme_structure_errors"]
+
+
+# ---------------------------------------------------------------------------
+# structural output validation
+# ---------------------------------------------------------------------------
+
+_THEME_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_THEME_BLOCK_RE = re.compile(r"(?::root|@font-face)\s*\{[^{}]*\}")
+
+
+def theme_structure_errors(css: str) -> List[str]:
+    """Structural safety errors in a generated theme, or [] if its shape
+    is inert: braces balanced, no comment delimiter left outside a
+    well-formed `/* ... */`, and nothing at top level except `:root` and
+    `@font-face` blocks. `css_reference_errors` (lint) only catches
+    url()/@import -- it is blind to brace/comment/declaration injection --
+    so this is the OUTPUT-side gate that closes that whole class no
+    matter which untrusted field was the vector, including one the
+    reader's input validation forgot to enumerate. A failure means
+    either a build_theme bug or an injection that slipped the reader;
+    either way the theme must not be written (fail closed). Also run by
+    importer._embed_fonts, whose appended @font-face blocks build_theme
+    never sees."""
+    errors: List[str] = []
+    stripped = _THEME_COMMENT_RE.sub("", css)
+    if "/*" in stripped or "*/" in stripped:
+        errors.append(
+            "comment delimiter outside a well-formed /* ... */ comment"
+        )
+    if stripped.count("{") != stripped.count("}"):
+        errors.append(
+            "unbalanced braces ({} '{{' vs {} '}}')".format(
+                stripped.count("{"), stripped.count("}")
+            )
+        )
+    remainder = _THEME_BLOCK_RE.sub("", stripped).strip()
+    if remainder:
+        errors.append(
+            "unexpected top-level CSS outside :root/@font-face blocks: "
+            + repr(remainder[:80])
+        )
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -386,8 +428,10 @@ def build_theme(export: DesignExport, name: str) -> str:
     fails the same safety checks reader.read_export already applied
     (defense in depth for a hand-built DesignExport that bypassed the
     reader -- names land verbatim in the :root block and var() refs, the
-    namespace in the header comment) or if the assembled CSS still trips
-    the Phase-3 self-contained lint's url()/@import scan.
+    namespace in the header comment), if the assembled CSS still trips
+    the Phase-3 self-contained lint's url()/@import scan, or if the
+    output fails `theme_structure_errors`' shape check (the output-side
+    gate for the injection class the lint cannot see).
     """
     for t in export.tokens:
         validate_token_name(t.name)
@@ -461,6 +505,13 @@ def build_theme(export: DesignExport, name: str) -> str:
         raise DesignImportError(
             "generated theme {!r} failed the self-contained CSS check: {}".format(
                 name, "; ".join(lint_errors)
+            )
+        )
+    structure_errors = theme_structure_errors(css)
+    if structure_errors:
+        raise DesignImportError(
+            "generated theme {!r} failed structural safety check: {}".format(
+                name, "; ".join(structure_errors)
             )
         )
     return css

@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jimemo.design.mapping import build_theme
+from jimemo.design.mapping import build_theme, theme_structure_errors
 from jimemo.design.reader import DesignExport, Token, read_export
 from jimemo.errors import DesignImportError
 
@@ -141,6 +141,70 @@ def test_build_theme_rejects_comment_breakout_namespace():
         namespace="Evil*/}body{display:none}/*",
     )
     with pytest.raises(DesignImportError, match="namespace"):
+        build_theme(export, "evil")
+
+
+# -- structural output validation --------------------------------------------
+#
+# theme_structure_errors is the OUTPUT-side gate: even if every input
+# validator were bypassed (or a future untrusted field forgotten), a theme
+# whose shape isn't pure :root/@font-face blocks must not be written.
+
+
+def test_theme_structure_passes_on_real_chiba_theme():
+    _, css = _theme()
+    assert theme_structure_errors(css) == []
+
+
+def test_theme_structure_passes_on_font_face_blocks():
+    css = (
+        ":root {\n  --x: 1;\n}\n\n"
+        '@font-face {\n  font-family: "X";\n'
+        '  src: url(data:font/ttf;base64,AAAA) format("truetype");\n}\n'
+    )
+    assert theme_structure_errors(css) == []
+
+
+def test_theme_structure_flags_top_level_rule():
+    css = "/* header */\n:root {\n  --x: 1;\n}\nbody { display:none }\n"
+    errors = theme_structure_errors(css)
+    assert any("top-level" in e for e in errors)
+
+
+def test_theme_structure_flags_unbalanced_brace():
+    errors = theme_structure_errors(":root {\n  --x: 1;\n")
+    assert any("unbalanced" in e for e in errors)
+
+
+def test_theme_structure_flags_stray_comment_delimiter():
+    errors = theme_structure_errors(":root { --x: 1; } */ :root { --y: 2; }")
+    assert any("comment delimiter" in e for e in errors)
+
+
+def test_build_theme_structural_gate_catches_injection_past_input_validation(monkeypatch):
+    # Hypothetical: input validation has a hole (here: forced off), so a
+    # hostile value smuggles `} body { display:none } :root {` into the
+    # :root block. Brace counts BALANCE in this payload, and the lint
+    # sees no url()/@import -- only the structural check catches the
+    # stray top-level `body { ... }` rule. Fail closed.
+    from jimemo.design import mapping
+
+    monkeypatch.setattr(mapping, "validate_token_name", lambda name: None)
+    monkeypatch.setattr(mapping, "validate_token_value", lambda name, value: None)
+
+    export = DesignExport(
+        tokens=[
+            Token(
+                name="--x",
+                value="red } body { display:none } :root { --y: 1",
+                kind="color",
+            )
+        ],
+        fonts=[],
+        brand_fonts=[],
+        namespace="Evil",
+    )
+    with pytest.raises(DesignImportError, match="structural safety check"):
         build_theme(export, "evil")
 
 

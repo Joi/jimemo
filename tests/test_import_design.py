@@ -364,6 +364,11 @@ def test_embed_fonts_css_fallback_resolves_url_relative_to_css_file(tmp_path, mo
     assert result.embedded_font_families == ["Testy"]
     assert result.embedded_bytes == len(b"FAKEFONTDATA-NOT-A-REAL-FONT")
 
+    # the embedded output passes the same structural shape gate
+    # build_theme's own output is held to (:root/@font-face blocks only)
+    from jimemo.design.mapping import theme_structure_errors
+    assert theme_structure_errors(result.css) == []
+
 
 def test_embed_fonts_css_fallback_real_escape_still_rejected(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
