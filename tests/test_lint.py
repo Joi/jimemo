@@ -213,24 +213,6 @@ def test_fragment_and_data_image_fine_bare_img_path_errors():
 
 # --- fetch-on-load tags beyond img/link (Fix 2) ---
 
-def test_remote_iframe_src_errors():
-    html = '<html><body><iframe src="https://evil.example/x"></iframe></body></html>'
-    errors, warnings = lint_html(html, {"charts": []})
-    assert any("https://evil.example/x" in e for e in errors)
-
-
-def test_remote_embed_src_errors():
-    html = '<html><body><embed src="https://evil.example/x.swf"></body></html>'
-    errors, warnings = lint_html(html, {"charts": []})
-    assert any("https://evil.example/x.swf" in e for e in errors)
-
-
-def test_remote_object_data_errors():
-    html = '<html><body><object data="https://evil.example/x.pdf"></object></body></html>'
-    errors, warnings = lint_html(html, {"charts": []})
-    assert any("https://evil.example/x.pdf" in e for e in errors)
-
-
 def test_remote_video_src_errors():
     html = '<html><body><video src="https://evil.example/x.mp4"></video></body></html>'
     errors, warnings = lint_html(html, {"charts": []})
@@ -283,14 +265,6 @@ def test_remote_srcset_candidate_on_source_errors():
     assert any("//cdn.example/x2.png" in e for e in errors)
 
 
-def test_local_iframe_src_errors():
-    # Allowlist semantics (previously passed): an iframe has no
-    # self-contained form at all — a local src is a sidecar dependency.
-    html = '<html><body><iframe src="local.html"></iframe></body></html>'
-    errors, warnings = lint_html(html, {"charts": []})
-    assert any("local.html" in e and "not inlined" in e for e in errors)
-
-
 def test_local_video_src_and_source_srcset_error():
     # Allowlist semantics (previously passed): surviving local paths on
     # video src and srcset candidates are sidecar dependencies.
@@ -304,19 +278,18 @@ def test_local_video_src_and_source_srcset_error():
         assert any(path in e and "not inlined" in e for e in errors)
 
 
-def test_local_object_embed_audio_track_error():
-    # Allowlist semantics (previously passed): none of these have a
-    # self-contained local form.
+def test_local_audio_and_track_error():
+    # Allowlist semantics (previously passed): neither has a
+    # self-contained local form. (object/embed, formerly tested here,
+    # are now rejected as tags outright — see the banned-tags section.)
     html = (
         "<html><body>"
-        '<object data="local.pdf"></object>'
-        '<embed src="local.swf">'
         '<audio src="local.mp3"></audio>'
         '<track src="local.vtt">'
         "</body></html>"
     )
     errors, warnings = lint_html(html, {"charts": []})
-    for path in ("local.pdf", "local.swf", "local.mp3", "local.vtt"):
+    for path in ("local.mp3", "local.vtt"):
         assert any(path in e and "not inlined" in e for e in errors)
 
 
@@ -348,10 +321,9 @@ def test_bare_local_img_srcset_errors_inlined_srcset_ok():
 
 # Markup shapes for attributes with NO self-contained form: data: URIs
 # of any kind are disallowed here, as is everything else but #fragment.
+# (iframe/object/embed, formerly in this matrix, are banned as tags now
+# and covered by the banned-tags section — even #fragment errors there.)
 NON_IMAGE_SHAPES = [
-    ("iframe-src", '<iframe src="{u}"></iframe>'),
-    ("object-data", '<object data="{u}"></object>'),
-    ("embed-src", '<embed src="{u}">'),
     ("link-href", '<link rel="stylesheet" href="{u}">'),
     ("video-src", '<video src="{u}"></video>'),
     ("audio-src", '<audio src="{u}"></audio>'),
@@ -520,3 +492,168 @@ def test_no_base_tag_is_fine():
     )
     assert errors == []
     assert warnings == []
+
+
+# --- banned tags: any occurrence errors (Fix 6) ---------------------------
+#
+# These tags have no legitimate use in a self-contained static page and
+# each is an embed/exec/fetch vector per-attribute checks can't fully
+# cover — <iframe srcdoc> executes script with no src attribute at all —
+# so the tag itself is rejected, attributes unexamined.
+
+@pytest.mark.parametrize(
+    "markup, tag",
+    [
+        ('<iframe srcdoc="<script>alert(1)</script>"></iframe>', "iframe"),
+        ('<iframe src="#frag"></iframe>', "iframe"),  # even a fragment src
+        ("<iframe></iframe>", "iframe"),
+        ('<frame src="a.html">', "frame"),
+        ("<frameset></frameset>", "frameset"),
+        ('<object data="https://evil.example/x.pdf"></object>', "object"),
+        ('<object data="local.pdf"></object>', "object"),
+        ('<embed src="https://evil.example/x.swf">', "embed"),
+        ("<embed>", "embed"),
+        ('<applet code="Evil.class"></applet>', "applet"),
+        ('<portal src="https://evil.example/"></portal>', "portal"),
+        ('<form action="https://evil.example/collect"><input name="q"></form>', "form"),
+        ("<form></form>", "form"),  # even action-less: submits to the page URL
+    ],
+)
+def test_banned_tags_error_on_any_occurrence(markup, tag):
+    errors, _ = _lint(markup)
+    assert any(f"<{tag}>" in e and "never allowed" in e for e in errors), (
+        f"{markup!r} must produce a banned-tag error for <{tag}>"
+    )
+
+
+def test_meta_content_type_and_color_scheme_are_fine():
+    # Only http-equiv="refresh" is rejected on <meta>; the ordinary
+    # charset/name/content-type forms are inert.
+    errors, _ = _lint(
+        '<meta http-equiv="content-type" content="text/html; charset=utf-8">'
+        '<meta name="color-scheme" content="light dark">'
+    )
+    assert errors == []
+
+
+def test_meta_refresh_case_insensitive():
+    errors, _ = _lint('<meta HTTP-EQUIV="ReFrEsH" content="0;url=https://evil.example/">')
+    assert any("refresh" in e for e in errors)
+
+
+# --- CSS references: url() and @import (Fix 6) -----------------------------
+#
+# CSS fetches on its own; <style> text and style="..." attributes are
+# scanned against the same allowlist as fetch-on-load attributes.
+
+def test_style_import_url_form_errors():
+    errors, _ = _lint("<style>@import url(https://evil.example/x.css);</style>")
+    assert any("@import" in e for e in errors)
+
+
+def test_style_import_string_forms_error():
+    for rule in (
+        '@import "https://evil.example/x.css";',
+        "@import 'https://evil.example/x.css';",
+        '@import "local.css";',  # even a local sheet is a sidecar fetch
+    ):
+        errors, _ = _lint(f"<style>{rule}</style>")
+        assert any("@import" in e for e in errors), rule
+
+
+def test_style_remote_url_errors():
+    errors, _ = _lint("<style>.x{background:url(https://evil.example/x.png)}</style>")
+    assert any("evil.example" in e and "<style>" in e for e in errors)
+
+
+def test_style_url_quoting_and_whitespace_variants_error():
+    for ref in (
+        'url("https://evil.example/x.png")',
+        "url('https://evil.example/x.png')",
+        'url(  "https://evil.example/x.png"  )',
+        "url(//cdn.example/x.png)",
+    ):
+        errors, _ = _lint("<style>.x{background:%s}</style>" % ref)
+        assert any("remote" in e for e in errors), ref
+
+
+def test_style_attribute_remote_url_errors():
+    errors, _ = _lint('<div style="background:url(//evil.example/x.png)">x</div>')
+    assert any("style attribute" in e and "<div>" in e for e in errors)
+
+
+def test_style_attribute_entity_encoded_url_errors():
+    # html.parser decodes charrefs in attribute values, same as the
+    # browser; the scan judges the decoded value.
+    errors, _ = _lint('<div style="background:url(&#104;ttps://evil.example/x)">x</div>')
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_local_path_url_errors():
+    errors, _ = _lint("<style>.x{background:url(img/x.png)}</style>")
+    assert any("img/x.png" in e and "sidecar" in e for e in errors)
+
+
+def test_style_disallowed_data_uri_errors():
+    errors, _ = _lint(
+        '<style>.x{background:url("data:image/svg+xml;base64,PHN2Zz4=")}</style>'
+    )
+    assert any("data: URI" in e for e in errors)
+
+
+def test_style_data_image_and_fragment_urls_are_fine():
+    errors, _ = _lint(
+        "<style>"
+        ".x{background:url(data:image/png;base64,AAAA)}"
+        ".y{fill:url(#grad)}"
+        "</style>"
+    )
+    assert errors == []
+
+
+def test_style_without_references_is_fine():
+    # Shaped like the real toolkit CSS: comments, custom properties,
+    # a content escape — and no url()/@import.
+    errors, _ = _lint(
+        "<style>\n"
+        "/* tokens */\n"
+        ":root { --ink: #1a1a1a; --paper: #ffffff; }\n"
+        "body { font: 16px/1.6 system-ui, sans-serif; color: var(--ink); }\n"
+        'nav li + li::before { content: "\\00B7"; }\n'
+        "@media print { body { color: #000; } }\n"
+        "</style>"
+    )
+    assert errors == []
+
+
+def test_style_attribute_text_align_is_fine():
+    # The one inline style the sanitizer lets through (table column
+    # alignment) must keep passing.
+    errors, _ = _lint('<td style="text-align:center;">x</td>')
+    assert errors == []
+
+
+def test_style_comment_obfuscated_url_errors():
+    # Comments are stripped before scanning, so a /**/ split cannot
+    # hide the construct.
+    errors, _ = _lint("<style>.x{background:url/**/(https://evil.example/x)}</style>")
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_escape_obfuscated_url_and_import_error():
+    # A CSS-escape-decoded copy is scanned too: \75 is "u", \69 is "i".
+    errors, _ = _lint("<style>.x{background:\\75rl(https://evil.example/x)}</style>")
+    assert any("evil.example" in e for e in errors)
+    errors, _ = _lint('<style>@\\69mport "https://evil.example/x.css";</style>')
+    assert any("@import" in e for e in errors)
+
+
+def test_style_unparseable_url_construct_errors():
+    # An unterminated quote defeats extraction; that is itself an error.
+    errors, _ = _lint('<style>.x{background:url("https://evil.example/x}</style>')
+    assert any("unparseable" in e for e in errors)
+
+
+def test_unclosed_style_element_still_scanned():
+    errors, _ = _lint("<style>.x{background:url(https://evil.example/x)}")
+    assert any("evil.example" in e for e in errors)

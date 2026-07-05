@@ -31,11 +31,25 @@ HTML means a sidecar-file dependency inline_images could not localize,
 so the output is not self-contained. Enumerating bad forms is a losing
 game; anything not explicitly allowed fails closed.
 
+Two further gates sit in front of the attribute allowlist. A set of
+tags is banned outright (_BANNED_TAGS): iframe/frame/frameset/object/
+embed/applet/portal each embed a nested browsing context or plugin
+content — ``<iframe srcdoc>`` executes script with no src attribute at
+all, which no per-attribute check can see — and ``<form>`` turns a
+static document into a data-exfiltration vector on submit; any
+occurrence of these tags is an error, attributes unexamined. And CSS
+is scanned: every ``<style>`` element's text and every ``style="..."``
+attribute value is searched for ``url(...)`` references and
+``@import`` rules. A ``url()`` target must satisfy the same allowlist
+as a fetch-on-load attribute; ``@import`` always loads a stylesheet,
+which has no allowed form, so any ``@import`` is an error.
+
 Separate from the fetch allowlist, execution checks remain: ``on*``
 attributes and ``javascript:``/``vbscript:`` URLs are never allowed
 anywhere, ``<script src>`` is never allowed, ``<script>`` requires the
-manifest to declare charts, and ``<meta http-equiv="refresh">`` (a
-navigation at view time) is never allowed.
+manifest to declare charts, ``<meta http-equiv="refresh">`` (a
+navigation at view time) is never allowed, and ``<base href>`` (which
+re-roots every relative URL) is never allowed.
 """
 import re
 from html import unescape
@@ -57,28 +71,46 @@ MAX_OUTPUT_BYTES = 8_000_000
 # included); scheme-checked for javascript:/vbscript: on every tag.
 _URL_ATTRS = frozenset({"href", "src", "action", "formaction", "xlink:href"})
 
+# Tags with no legitimate use in a self-contained static document. Each
+# is an embed/exec/fetch vector in some attribute or content form that
+# per-attribute checks cannot fully cover (e.g. <iframe srcdoc=...>
+# executes script with no src attribute at all), so ANY occurrence is an
+# error — the tag itself is rejected, attributes unexamined. The legit
+# resource tags (img/source/link/video/audio/track/...) stay on the
+# per-attribute allowlist below instead.
+_BANNED_TAGS: Dict[str, str] = {
+    "iframe": "it embeds a nested browsing context, and srcdoc alone "
+              "can execute script",
+    "frame": "it embeds a nested browsing context",
+    "frameset": "it replaces the document body with nested browsing contexts",
+    "object": "it embeds external documents or plugin content",
+    "embed": "it embeds external documents or plugin content",
+    "applet": "it embeds plugin content",
+    "portal": "it embeds and preloads a remote page",
+    "form": "a static document has nothing to submit — a form is a "
+            "data-exfiltration vector on submit",
+}
+
 # Tag -> attribute(s) the browser fetches automatically at page-load
 # time, as opposed to e.g. <a href>, which fetches only on click.
-# Deliberately inclusive: legacy (frame, body/table/cell background,
-# html manifest), experimental (portal), the <image> alias the HTML
-# parser rewrites to <img>, and SVG's fetching elements (use, image) are
-# all listed even though jimemo never emits them — an unlisted vector is
-# an unchecked vector, and a false listing costs nothing on pages that
-# don't use the tag. srcset-family attributes hold multiple candidates
-# and are validated per candidate URL.
+# Only tags with a conceivable self-contained form appear here; the
+# embed/exec-vector tags (iframe, object, embed, ...) are rejected
+# wholesale by _BANNED_TAGS above and need no per-attribute rules.
+# Deliberately inclusive otherwise: legacy (body/table/cell background,
+# html manifest), the <image> alias the HTML parser rewrites to <img>,
+# and SVG's fetching elements (use, image) are all listed even though
+# jimemo never emits them — an unlisted vector is an unchecked vector,
+# and a false listing costs nothing on pages that don't use the tag.
+# srcset-family attributes hold multiple candidates and are validated
+# per candidate URL.
 _FETCH_ON_LOAD_ATTRS: Dict[str, Tuple[str, ...]] = {
     "audio": ("src",),
     "body": ("background",),
-    "embed": ("src",),
-    "frame": ("src",),
     "html": ("manifest",),
-    "iframe": ("src",),
     "image": ("src", "srcset", "href", "xlink:href"),
     "img": ("src", "srcset"),
     "input": ("src",),
     "link": ("href", "imagesrcset"),
-    "object": ("data",),
-    "portal": ("src",),
     "source": ("src", "srcset"),
     "table": ("background",),
     "td": ("background",),
@@ -95,9 +127,9 @@ _SRCSET_ATTRS = frozenset({"srcset", "imagesrcset"})
 # The only (tag, attr) pairs where an inlined raster image data: URI is
 # a legitimate self-contained value — the attributes that display an
 # image, i.e. exactly what inline_images can produce. Everywhere else
-# (iframe src, object data, link href, embed src, audio/video/track
-# src, ...) NO data: URI is allowed at all: those attributes embed or
-# apply their target as markup, style, or plugin content, not pixels.
+# (link href, audio/video/track src, input src, ...) NO data: URI is
+# allowed at all: those attributes embed or apply their target as
+# markup, style, or media content, not pixels.
 _IMAGE_DATA_URI_ATTRS = frozenset({
     ("img", "src"),
     ("img", "srcset"),
@@ -121,18 +153,159 @@ _MAX_URL_IN_MESSAGE = 120
 _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
 
 
+# --- CSS references -------------------------------------------------------
+# CSS fetches on its own: a url(...) in any property (background,
+# cursor, @font-face src, ...) and an @import both load their target at
+# style-apply time, so <style> element text and style="..." attribute
+# values are scanned with the same allowlist as fetch-on-load
+# attributes: a url() may hold an inlined raster data:image URI or a
+# pure #fragment, nothing else. @import's target is a stylesheet — no
+# allowed form exists (a raster image or a fragment is never a
+# stylesheet) — so any @import is an error outright. Violations are
+# searched for in the comment-stripped text AND in a copy with CSS
+# escapes decoded, so `url/**/(x)`, `\75rl(x)` and `@\69mport` cannot
+# hide; the decoded copy only ever ADDS findings (allowances are judged
+# on the extracted URL text itself), so over-decoding cannot bless an
+# unsafe value — it can only over-reject, which fails closed.
+
+_CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+# A CSS escape: backslash + 1-6 hex digits + one optional whitespace,
+# or backslash + any other single character (identity escape).
+_CSS_ESCAPE_RE = re.compile(r"\\(?:([0-9a-fA-F]{1,6})[ \t\r\n\f]?|(.))", re.DOTALL)
+# Where a url( token might start; each hit is then parsed in full by
+# _CSS_URL_RE, and a hit that does not parse is itself an error — a
+# construct this scanner cannot read cannot be validated.
+_CSS_URL_OPEN_RE = re.compile(r"url\(", re.IGNORECASE)
+_CSS_URL_RE = re.compile(
+    r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']*))\s*\)""", re.IGNORECASE
+)
+# The whole rule text up to the terminator, for the error message; the
+# rule is rejected regardless of what its target turns out to be.
+_CSS_IMPORT_RE = re.compile(r"@import\b[^;{]*", re.IGNORECASE)
+
+
+def _css_unescape(text: str) -> str:
+    """`text` with CSS escapes decoded (``\\75`` -> ``u``, ``\\:`` ->
+    ``:``); out-of-range code points decode to U+FFFD. Used only to
+    FIND hidden url(/@import constructs, never to allow anything."""
+    def _sub(match: "re.Match") -> str:
+        if match.group(1) is not None:
+            codepoint = int(match.group(1), 16)
+            if 0 < codepoint <= 0x10FFFF:
+                return chr(codepoint)
+            return "�"
+        return match.group(2)
+    return _CSS_ESCAPE_RE.sub(_sub, text)
+
+
+def _css_url_problem(url: str) -> Optional[str]:
+    """Why `url` (extracted from a CSS url() reference) violates the
+    resource allowlist, or None if allowed — the same two allowed forms
+    as _check_fetch_on_load_url: an inlined raster data:image URI or a
+    pure #fragment (e.g. an SVG paint server, fill:url(#grad))."""
+    if browser_url_form(url).startswith("#"):
+        return None
+    shown = url if len(url) <= _MAX_URL_IN_MESSAGE else (
+        url[:_MAX_URL_IN_MESSAGE] + "..."
+    )
+    scheme = url_scheme(url)
+    if scheme == "data":
+        if is_allowed_image_data_uri(url):
+            return None
+        return (
+            f"url({shown!r}) is a disallowed data: URI — only raster "
+            "data:image/{png,jpeg,jpg,gif,webp} may be referenced"
+        )
+    if scheme in ("http", "https") or is_protocol_relative(url):
+        return f"url({shown!r}) is a remote resource and would fetch at view time"
+    if scheme:
+        return f"url({shown!r}): scheme {scheme!r} is not allowed in CSS"
+    if not normalize_url(url):
+        return "url() with an empty target resolves to the page itself"
+    return (
+        f"url({shown!r}) is a local path that was not inlined — the "
+        "output would depend on a sidecar file"
+    )
+
+
+def _css_reference_errors(css: str) -> List[str]:
+    """Error strings for every url()/@import reference in `css` that
+    violates the allowlist (see the section comment above)."""
+    errors: List[str] = []
+
+    def add(message: str) -> None:
+        # The two scan forms usually find the same violations; report
+        # each distinct problem once.
+        if message not in errors:
+            errors.append(message)
+
+    stripped = _CSS_COMMENT_RE.sub("", css)
+    forms = [stripped]
+    decoded = _css_unescape(stripped)
+    if decoded != stripped:
+        forms.append(decoded)
+    for text in forms:
+        for open_match in _CSS_URL_OPEN_RE.finditer(text):
+            full = _CSS_URL_RE.match(text, open_match.start())
+            if full is None:
+                add(
+                    "unparseable url( construct — its target cannot be "
+                    "validated, failing closed"
+                )
+                continue
+            url = next(g for g in full.groups() if g is not None).strip()
+            problem = _css_url_problem(url)
+            if problem is not None:
+                add(problem)
+        for import_match in _CSS_IMPORT_RE.finditer(text):
+            rule = import_match.group(0).strip()
+            shown = rule if len(rule) <= _MAX_URL_IN_MESSAGE else (
+                rule[:_MAX_URL_IN_MESSAGE] + "..."
+            )
+            add(
+                f"{shown!r}: @import always loads a stylesheet, and no "
+                "stylesheet source is allowed in a self-contained page"
+            )
+    return errors
+
+
 class _Linter(HTMLParser):
     def __init__(self, charts_declared: bool) -> None:
         super().__init__(convert_charrefs=True)
         self.charts_declared = charts_declared
         self.errors: List[str] = []
         self.warnings: List[str] = []
+        # Buffers a <style> element's text until its end tag (or EOF,
+        # for an unterminated element), then the sheet is scanned whole.
+        self._style_parts: Optional[List[str]] = None
 
     def handle_starttag(self, tag, attrs):
         self._check_tag(tag, attrs)
+        if tag == "style":
+            self._style_parts = []
 
     def handle_startendtag(self, tag, attrs):
-        self._check_tag(tag, attrs)
+        self._check_tag(tag, attrs)  # a <style/> has no text to buffer
+
+    def handle_endtag(self, tag):
+        if tag == "style":
+            self._flush_style()
+
+    def handle_data(self, data):
+        if self._style_parts is not None:
+            self._style_parts.append(data)
+
+    def close(self):
+        super().close()
+        self._flush_style()
+
+    def _flush_style(self) -> None:
+        if self._style_parts is None:
+            return
+        css = "".join(self._style_parts)
+        self._style_parts = None
+        for problem in _css_reference_errors(css):
+            self.errors.append(f"in <style> CSS: {problem}")
 
     def _check_tag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         raw_tag = self.get_starttag_text() or ""
@@ -145,6 +318,12 @@ class _Linter(HTMLParser):
                     "so the attribute value cannot be trusted as written"
                 )
                 break
+
+        reason = _BANNED_TAGS.get(tag)
+        if reason is not None:
+            self.errors.append(
+                f"<{tag}> is never allowed in a self-contained page — {reason}"
+            )
 
         if tag == "script":
             src = next((v for n, v in attrs if n.lower() == "src"), None)
@@ -185,6 +364,12 @@ class _Linter(HTMLParser):
                     f"inline event handler found ({name!r} on <{tag}>) — "
                     "on* attributes are never allowed"
                 )
+                continue
+            if name == "style" and value:
+                for problem in _css_reference_errors(value):
+                    self.errors.append(
+                        f"in style attribute on <{tag}>: {problem}"
+                    )
                 continue
             if value is None or name not in _URL_ATTRS:
                 continue
