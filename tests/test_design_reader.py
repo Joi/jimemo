@@ -88,13 +88,19 @@ def test_css_fallback_no_manifest_and_no_css_raises(tmp_path):
 # -- security: value sanitization -----------------------------------------
 
 
-def _manifest_with_token_value(tmp_path: Path, value: str) -> Path:
+def _manifest_with_token_value(
+    tmp_path: Path,
+    value: str,
+    *,
+    name: str = "--evil-token",
+    namespace: str = "Evil",
+) -> Path:
     export_dir = tmp_path / "malicious-export"
     export_dir.mkdir()
     manifest = {
-        "namespace": "Evil",
+        "namespace": namespace,
         "tokens": [
-            {"name": "--evil-token", "value": value, "kind": "color", "definedIn": "tokens/colors.css"}
+            {"name": name, "value": value, "kind": "color", "definedIn": "tokens/colors.css"}
         ],
         "fonts": [],
         "brandFonts": [],
@@ -144,6 +150,82 @@ def test_safe_token_value_accepted(tmp_path, safe_value):
     export_dir = _manifest_with_token_value(tmp_path, safe_value)
     export = read_export(export_dir)
     assert export.tokens[0].value == safe_value
+
+
+# -- security: token name / namespace sanitization -------------------------
+#
+# Token NAMES are re-declared verbatim in the generated theme's :root block
+# and referenced via var(<name>); the namespace lands in the theme's header
+# COMMENT. Both come straight from the untrusted manifest, so both are
+# injection channels exactly like a token value and must fail at the reader.
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "x: red } body { display:none } :root{ --y",  # :root breakout PoC
+        "--x:red}body{display:none}--y",
+        "--x;y",
+        "--x y",
+        "--x*/y",
+        "evil",  # no leading --
+        "--",    # no ident at all
+        "--x\n",  # trailing newline must not slip past the anchor
+    ],
+)
+def test_unsafe_token_name_rejected(tmp_path, bad_name):
+    export_dir = _manifest_with_token_value(tmp_path, "#111111", name=bad_name)
+    with pytest.raises(DesignImportError, match="token name"):
+        read_export(export_dir)
+
+
+def test_valid_token_name_accepted(tmp_path):
+    export_dir = _manifest_with_token_value(tmp_path, "#111111", name="--ct-black")
+    export = read_export(export_dir)
+    assert export.tokens[0].name == "--ct-black"
+
+
+def test_css_fallback_cannot_extract_an_injection_shaped_name(tmp_path):
+    # The fallback scanner's regex shares validate_token_name's charset,
+    # so a hostile name in raw CSS never even parses as a token.
+    export_dir = tmp_path / "export"
+    (export_dir / "tokens").mkdir(parents=True)
+    (export_dir / "tokens" / "colors.css").write_text(
+        ":root { --ok: #ffffff; --bad name: red; x: red; }\n"
+    )
+    export = read_export(export_dir)
+    assert [t.name for t in export.tokens] == ["--ok"]
+
+
+@pytest.mark.parametrize(
+    "bad_namespace",
+    [
+        "Evil*/}body{display:none}/*",  # comment-breakout PoC
+        "Evil*/x",
+        "Evil/*x",
+        "Evil{x}",
+        "Evil;x",
+        "Evil<x",
+        "Evil x",
+        'Evil"x',
+        "Evil\\x",
+        "Evil\nx",
+    ],
+)
+def test_unsafe_namespace_rejected(tmp_path, bad_namespace):
+    export_dir = _manifest_with_token_value(
+        tmp_path, "#111111", namespace=bad_namespace
+    )
+    with pytest.raises(DesignImportError, match="namespace"):
+        read_export(export_dir)
+
+
+def test_real_namespace_accepted(tmp_path):
+    export_dir = _manifest_with_token_value(
+        tmp_path, "#111111", namespace="ChibaTechDesignSystem_9e0e92"
+    )
+    export = read_export(export_dir)
+    assert export.namespace == "ChibaTechDesignSystem_9e0e92"
 
 
 # -- security: font metadata sanitization ---------------------------------
@@ -224,6 +306,16 @@ def test_font_family_unsafe_chars_rejected(tmp_path, bad_family):
         read_export(export_dir)
 
 
+@pytest.mark.parametrize("bad_family", ["Evil*/x", "Evil/*x"])
+def test_font_family_comment_delimiters_rejected(tmp_path, bad_family):
+    # A brand-font family also reaches the generated theme's header
+    # comment (review notes), where */ would break out of it.
+    font = {"family": bad_family, "weight": "400", "style": "normal", "files": []}
+    export_dir = _manifest_with_font(tmp_path, font)
+    with pytest.raises(DesignImportError, match="family"):
+        read_export(export_dir)
+
+
 @pytest.mark.parametrize("bad_weight", ["abc", "12x", "400 700", "-100", "1001", "0"])
 def test_font_weight_invalid_rejected(tmp_path, bad_weight):
     font = {"family": "Legit", "weight": bad_weight, "style": "normal", "files": []}
@@ -274,6 +366,45 @@ def test_chiba_fixture_fonts_still_import_cleanly():
     assert "Finder" in families
     assert "Ro NOW Std" in families
     assert {b.family for b in export.brand_fonts}  # brand fonts parsed, none rejected
+
+
+# -- css fallback: @font-face src paths -------------------------------------
+#
+# A CSS url() is relative to the CSS FILE's directory, but FontFace.files
+# (like the manifest's fonts[].files) is export-root-relative -- the
+# fallback must reconcile the two or the importer would reject a valid
+# in-export font as an escape.
+
+
+def test_css_fallback_font_files_are_export_root_relative(tmp_path):
+    export_dir = _copy_fixture(tmp_path)
+    (export_dir / "_ds_manifest.json").unlink()
+
+    export = read_export(export_dir)
+
+    finder_regular = next(
+        f for f in export.fonts if f.family == "Finder" and f.weight == "400"
+    )
+    # same form the manifest path stores (compare test_reads_manifest_fonts)
+    assert finder_regular.files == ["assets/fonts/Finder-Regular.ttf"]
+    for f in export.fonts:
+        for p in f.files:
+            assert not p.startswith("../"), f"{f.family} kept a css-relative path: {p}"
+
+
+def test_css_fallback_font_url_real_escape_rejected(tmp_path):
+    export_dir = tmp_path / "export"
+    (export_dir / "tokens").mkdir(parents=True)
+    (export_dir / "tokens" / "colors.css").write_text(":root { --x-ink: #111111; }\n")
+    (export_dir / "tokens" / "fonts.css").write_text(
+        '@font-face { font-family: "Sneaky"; '
+        'src: url("../../outside.ttf") format("truetype"); '
+        "font-weight: 400; font-style: normal; }\n"
+    )
+    (tmp_path / "outside.ttf").write_bytes(b"SHOULD-NEVER-BE-CARRIED")
+
+    with pytest.raises(DesignImportError, match="escapes"):
+        read_export(export_dir)
 
 
 # -- parse-only guarantee --------------------------------------------------

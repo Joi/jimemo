@@ -317,6 +317,107 @@ def test_embed_fonts_rejects_non_font_extension(tmp_path, monkeypatch):
         import_design(export_dir, name="evil3", embed_fonts=True)
 
 
+# -- --embed-fonts: css-fallback path (no manifest) -----------------------
+#
+# A CSS url() is relative to the CSS FILE's directory (tokens/fonts.css
+# saying ../assets/fonts/X.ttf means <export>/assets/fonts/X.ttf), while
+# the manifest's fonts[].files are export-root-relative. The reader
+# reconciles the two forms; before it did, --embed-fonts on a
+# manifest-less export mis-read every valid ../ font url as an escape.
+
+
+def _manifestless_font_export(
+    tmp_path: Path,
+    *,
+    font_url: str = "../assets/fonts/Testy-Regular.ttf",
+    write_font: bool = True,
+) -> Path:
+    export_dir = tmp_path / "cssexport"
+    (export_dir / "tokens").mkdir(parents=True)
+    (export_dir / "tokens" / "colors.css").write_text(
+        ":root {\n  --xb-ink: #111111;\n  --xb-paper: #eeeeee;\n}\n"
+    )
+    (export_dir / "tokens" / "fonts.css").write_text(
+        "@font-face {\n"
+        '  font-family: "Testy";\n'
+        '  src: url("%s") format("truetype");\n'
+        "  font-weight: 400;\n"
+        "  font-style: normal;\n"
+        "}\n" % font_url
+    )
+    if write_font:
+        font_path = export_dir / "assets" / "fonts" / "Testy-Regular.ttf"
+        font_path.parent.mkdir(parents=True)
+        font_path.write_bytes(b"FAKEFONTDATA-NOT-A-REAL-FONT")
+    return export_dir
+
+
+def test_embed_fonts_css_fallback_resolves_url_relative_to_css_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _manifestless_font_export(tmp_path)
+
+    result = import_design(export_dir, name="cssfb", embed_fonts=True)
+
+    assert "@font-face" in result.css
+    assert 'font-family: "Testy"' in result.css
+    assert "data:font/ttf;base64," in result.css
+    assert result.embedded_font_families == ["Testy"]
+    assert result.embedded_bytes == len(b"FAKEFONTDATA-NOT-A-REAL-FONT")
+
+
+def test_embed_fonts_css_fallback_real_escape_still_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "outside.ttf").write_bytes(b"SHOULD-NEVER-BE-READ")
+    export_dir = _manifestless_font_export(
+        tmp_path, font_url="../../outside.ttf", write_font=False
+    )
+
+    with pytest.raises(DesignImportError, match="escapes"):
+        import_design(export_dir, name="evil", embed_fonts=True)
+    assert not (tmp_path / ".jimemo" / "themes" / "evil.css").exists()
+
+
+# -- security: token-name / namespace CSS injection (end-to-end) ----------
+
+
+def _injection_manifest_export(tmp_path: Path, *, token_name: str = "--ev-ink", namespace: str = "Evil") -> Path:
+    export_dir = tmp_path / "inj-export"
+    export_dir.mkdir()
+    manifest = {
+        "namespace": namespace,
+        "tokens": [{"name": token_name, "value": "#111111", "kind": "color"}],
+        "fonts": [],
+        "brandFonts": [],
+        "globalCssPaths": [],
+        "themes": [],
+    }
+    (export_dir / "_ds_manifest.json").write_text(json.dumps(manifest))
+    return export_dir
+
+
+def test_cli_import_design_token_name_injection_rc1_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _injection_manifest_export(
+        tmp_path, token_name="x: red } body { display:none } :root{ --y"
+    )
+
+    rc = main(["import-design", str(export_dir), "--name", "evil"])
+    assert rc == 1
+    assert not (tmp_path / ".jimemo" / "themes" / "evil.css").exists()
+
+
+def test_cli_import_design_namespace_injection_rc1_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _injection_manifest_export(
+        tmp_path, namespace="Evil*/}body{display:none}/*"
+    )
+
+    rc = main(["import-design", str(export_dir), "--name", "evil"])
+    assert rc == 1
+    themes_dir = tmp_path / ".jimemo" / "themes"
+    assert not themes_dir.exists() or not list(themes_dir.iterdir())
+
+
 # -- security: font-metadata CSS injection (end-to-end) ------------------
 
 

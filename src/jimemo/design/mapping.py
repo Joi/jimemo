@@ -42,7 +42,13 @@ from typing import Dict, List, Optional, Tuple
 
 from ..errors import DesignImportError
 from ..lint import css_reference_errors
-from .reader import DesignExport, Token, validate_token_value
+from .reader import (
+    DesignExport,
+    Token,
+    validate_namespace,
+    validate_token_name,
+    validate_token_value,
+)
 
 __all__ = ["build_theme"]
 
@@ -376,14 +382,17 @@ def build_theme(export: DesignExport, name: str) -> str:
     re-declaring every imported token verbatim, plus a deterministic
     subset mapped onto jimemo's `--jm-*` roles (see module docstring).
 
-    Raises DesignImportError if a token value fails the same safety
-    check reader.read_export already applied (defense in depth for a
-    hand-built DesignExport that bypassed the reader) or if the
-    assembled CSS still trips the Phase-3 self-contained lint's url()/
-    @import scan.
+    Raises DesignImportError if a token name/value or the namespace
+    fails the same safety checks reader.read_export already applied
+    (defense in depth for a hand-built DesignExport that bypassed the
+    reader -- names land verbatim in the :root block and var() refs, the
+    namespace in the header comment) or if the assembled CSS still trips
+    the Phase-3 self-contained lint's url()/@import scan.
     """
     for t in export.tokens:
+        validate_token_name(t.name)
         validate_token_value(t.name, t.value)
+    validate_namespace(export.namespace)
 
     mapped_lines: List[Tuple[str, str]] = []
     review_notes: List[str] = []

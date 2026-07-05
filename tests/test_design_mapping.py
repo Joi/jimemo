@@ -2,10 +2,13 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo.design.mapping import build_theme
-from jimemo.design.reader import read_export
+from jimemo.design.reader import DesignExport, Token, read_export
+from jimemo.errors import DesignImportError
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "design-export"
 
@@ -108,6 +111,37 @@ def test_deterministic_across_runs():
     first = build_theme(export, "chiba")
     second = build_theme(export, "chiba")
     assert first == second
+
+
+# -- defense in depth: hand-built exports that bypassed the reader ----------
+
+
+def test_build_theme_rejects_injection_shaped_token_name():
+    export = DesignExport(
+        tokens=[
+            Token(
+                name="x: red } body { display:none } :root{ --y",
+                value="red",
+                kind="color",
+            )
+        ],
+        fonts=[],
+        brand_fonts=[],
+        namespace="Evil",
+    )
+    with pytest.raises(DesignImportError, match="token name"):
+        build_theme(export, "evil")
+
+
+def test_build_theme_rejects_comment_breakout_namespace():
+    export = DesignExport(
+        tokens=[Token(name="--ok", value="#111111", kind="color")],
+        fonts=[],
+        brand_fonts=[],
+        namespace="Evil*/}body{display:none}/*",
+    )
+    with pytest.raises(DesignImportError, match="namespace"):
+        build_theme(export, "evil")
 
 
 # -- header comment -----------------------------------------------------

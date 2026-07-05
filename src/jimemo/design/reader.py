@@ -25,6 +25,12 @@ theme's `--name: <value>;` declaration (jimemo.design.mapping, a later
 task): an export is untrusted input, so a value that could break out of
 that declaration (inject a new rule, load a remote resource, run a CSS
 `expression()`) must be rejected up front rather than filtered later.
+
+Token NAMES and the export namespace are validated at the same boundary
+(`validate_token_name`, `validate_namespace`): the name is re-declared
+verbatim as `<name>: <value>;` and referenced as `var(<name>)` in the
+generated theme, and the namespace is interpolated into that theme's
+header comment -- each is an injection channel exactly like a value.
 """
 from __future__ import annotations
 
@@ -43,7 +49,9 @@ __all__ = [
     "BrandFont",
     "DesignExport",
     "read_export",
+    "validate_token_name",
     "validate_token_value",
+    "validate_namespace",
 ]
 
 
@@ -130,6 +138,7 @@ def _from_manifest(manifest: dict) -> DesignExport:
             raise DesignImportError(
                 f"manifest tokens[{i}] 'name'/'value' must be strings, got {t!r}"
             )
+        validate_token_name(name)
         validate_token_value(name, value)
         kind = t.get("kind")
         defined_in = t.get("definedIn")
@@ -183,6 +192,7 @@ def _from_manifest(manifest: dict) -> DesignExport:
     namespace = manifest.get("namespace")
     if not isinstance(namespace, str):
         namespace = ""
+    validate_namespace(namespace)
 
     return DesignExport(
         tokens=tokens, fonts=fonts, brand_fonts=brand_fonts, namespace=namespace
@@ -193,7 +203,11 @@ def _from_manifest(manifest: dict) -> DesignExport:
 
 _COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _ROOT_BLOCK_RE = re.compile(r":root\s*\{([^}]*)\}", re.DOTALL)
-_CUSTOM_PROP_RE = re.compile(r"(--[a-zA-Z0-9_-]+)\s*:\s*([^;]+);")
+# One custom-property NAME shape, shared by the fallback scanner here and
+# `validate_token_name`'s anchored allowlist below, so the two paths can
+# never disagree about what a token name may contain.
+_TOKEN_NAME_BODY = r"--[a-zA-Z0-9_-]+"
+_CUSTOM_PROP_RE = re.compile(r"(" + _TOKEN_NAME_BODY + r")\s*:\s*([^;]+);")
 _FONT_FACE_RE = re.compile(r"@font-face\s*\{([^}]*)\}", re.DOTALL)
 _FONT_FACE_FAMILY_RE = re.compile(r"font-family\s*:\s*([^;]+);")
 _FONT_FACE_WEIGHT_RE = re.compile(r"font-weight\s*:\s*([^;]+);")
@@ -232,6 +246,42 @@ def _infer_kind(name: str, value: str) -> str:
     return "other"
 
 
+def _fallback_font_files(body: str, css_path: Path, export_dir: Path) -> List[str]:
+    """@font-face src url()s from `body`, re-expressed relative to the
+    export ROOT -- the form the manifest path's fonts[].files already uses
+    and the form importer._resolve_font_file resolves against. A CSS url()
+    is relative to the CSS FILE's directory, so tokens/fonts.css saying
+    url("../assets/fonts/X.ttf") means <export>/assets/fonts/X.ttf;
+    carrying that url verbatim would make the importer resolve it against
+    the export root and mis-read a valid in-export file as an escape. A
+    url that genuinely resolves outside the export directory fails the
+    import here (fail-closed, same boundary as the metadata validation
+    below); a scheme'd or protocol-relative url (data:, https:, //cdn) is
+    not a local path to reconcile and is carried verbatim -- the importer
+    already refuses to embed those (no such file / extension check), and
+    nothing else reads FontFace.files."""
+    files: List[str] = []
+    export_root = export_dir.resolve()
+    for _q, url in _FONT_FACE_SRC_RE.findall(body):
+        if url_scheme(url) or is_protocol_relative(url):
+            files.append(url)
+            continue
+        try:
+            resolved = (css_path.parent / url).resolve()
+        except (OSError, ValueError) as e:
+            raise DesignImportError(
+                f"@font-face src {url!r} in {css_path.name} is not a usable "
+                f"path: {e}"
+            ) from e
+        if not resolved.is_relative_to(export_root):
+            raise DesignImportError(
+                f"@font-face src {url!r} in {css_path.name} escapes the "
+                f"export directory {export_root} -- refusing to carry it"
+            )
+        files.append(resolved.relative_to(export_root).as_posix())
+    return files
+
+
 def _from_css_fallback(export_dir: Path) -> DesignExport:
     paths = _fallback_css_paths(export_dir)
     if not paths:
@@ -262,6 +312,10 @@ def _from_css_fallback(export_dir: Path) -> DesignExport:
                 if name in seen_names:
                     continue  # first definition wins across files
                 seen_names.add(name)
+                # _CUSTOM_PROP_RE shares validate_token_name's charset, so
+                # this can't fail here -- called anyway so the guarantee
+                # is enforced at the boundary, not assumed of a regex.
+                validate_token_name(name)
                 validate_token_value(name, value)
                 tokens.append(
                     Token(
@@ -279,10 +333,7 @@ def _from_css_fallback(export_dir: Path) -> DesignExport:
                 continue
             weight_m = _FONT_FACE_WEIGHT_RE.search(body)
             style_m = _FONT_FACE_STYLE_RE.search(body)
-            # Font src paths are carried as data only, exactly like the
-            # manifest path's fonts[].files -- not opened/validated here
-            # (that's a later task's embedding concern).
-            files = [url for _q, url in _FONT_FACE_SRC_RE.findall(body)]
+            files = _fallback_font_files(body, path, export_dir)
             family = family_m.group(1).strip().strip("\"'")
             weight = weight_m.group(1).strip() if weight_m else ""
             style = style_m.group(1).strip() if style_m else "normal"
@@ -396,6 +447,56 @@ def validate_token_value(name: str, value: str) -> None:
         )
 
 
+# -- name / namespace sanitization ------------------------------------------
+
+# validate_token_name's anchored form of _TOKEN_NAME_BODY (the css-fallback
+# scanner's charset). \Z, not $: $ would also match before a trailing
+# newline, letting "--x\n" through the allowlist.
+_TOKEN_NAME_RE = re.compile(r"^" + _TOKEN_NAME_BODY + r"\Z")
+
+# An export namespace is an identifier like `ChibaTechDesignSystem_9e0e92`;
+# empty is the reader's sentinel for "the export declared none" (always the
+# case on the CSS-fallback path).
+_NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_-]*\Z")
+
+
+def validate_token_name(name: str) -> None:
+    """Reject a token name that isn't a plain `--ident` CSS custom
+    property name (`--` then ASCII letters/digits/_/-). A name is just as
+    much an injection channel as a value: the generated theme re-declares
+    it verbatim as `<name>: <value>;` inside :root and references it as
+    `var(<name>)` in mapped role values (mapping.build_theme), so a
+    hostile manifest name like `x: red } body { display:none } :root{ --y`
+    would break out of the :root block and inject a live rule -- and
+    css_reference_errors does not catch declaration/brace injection. On
+    the CSS-fallback path _CUSTOM_PROP_RE can only ever extract a name
+    matching this same charset; on the manifest path this check is the
+    only gate."""
+    if not _TOKEN_NAME_RE.match(name):
+        raise DesignImportError(
+            f"token name {name!r} is not a valid CSS custom property name "
+            f"(expected '--' followed by letters/digits/_/-) -- refusing "
+            f"to emit it into generated CSS"
+        )
+
+
+def validate_namespace(namespace: str) -> None:
+    """Reject an export namespace that isn't a plain identifier
+    (letters/digits/_/-; empty allowed -- the no-manifest sentinel). The
+    namespace is interpolated into the generated theme's header COMMENT
+    (mapping._build_header), where a `*/` would close the comment and turn
+    the rest of the string into live CSS. Every real namespace is an
+    identifier (`ChibaTechDesignSystem_9e0e92`), so allowlisting the
+    identifier shape is both safe and strictly stronger than blocklisting
+    comment delimiters."""
+    if not _NAMESPACE_RE.match(namespace):
+        raise DesignImportError(
+            f"export namespace {namespace!r} is not a plain identifier "
+            f"(letters/digits/_/- only) -- refusing to interpolate it "
+            f"into generated CSS"
+        )
+
+
 # -- font metadata sanitization -------------------------------------------
 #
 # Token VALUES go through validate_token_value above, but font METADATA
@@ -442,7 +543,10 @@ def _validate_font_family(family: str) -> None:
     fails on a quote/backslash (would break out of the quoted string), a
     ``<``/brace/``;`` (declaration/rule injection), a newline/control
     char, or a ``url(``/``javascript:``/``expression(`` substring (none of
-    which belongs in a family name)."""
+    which belongs in a family name). Comment delimiters (``/*``, ``*/``)
+    are rejected too: a brand-font family also reaches the generated
+    theme's header COMMENT (mapping._build_header's review notes), where
+    a ``*/`` would break out of it."""
     for bad in ('"', "\\", "<", "{", "}", ";"):
         if bad in family:
             raise DesignImportError(
@@ -455,7 +559,7 @@ def _validate_font_family(family: str) -> None:
             f"'family' -- refusing to interpolate it into CSS"
         )
     lowered = family.lower()
-    for construct in ("url(", "javascript:", "expression("):
+    for construct in ("url(", "javascript:", "expression(", "/*", "*/"):
         if construct in lowered:
             raise DesignImportError(
                 f"font family {family!r} contains {construct!r} in 'family' "
