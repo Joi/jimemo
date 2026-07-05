@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo import cli
-from jimemo.errors import ContentError, ManifestError
+from jimemo.errors import ContentError
 from jimemo.suggest import is_stale_labels, score_templates
 
 # Not a real toolkit template: score_templates never renders, only hashes
@@ -134,6 +134,7 @@ def test_score_templates_is_deterministic(tmp_path):
     first = score_templates(content, templates)
     second = score_templates(content, templates)
     assert first == second
+    assert first[1] == []
 
 
 def test_photo_heavy_content_ranks_photo_template_above_narrative(tmp_path):
@@ -146,12 +147,13 @@ def test_photo_heavy_content_ranks_photo_template_above_narrative(tmp_path):
     ]
     content = write_content(tmp_path, "content.md", PHOTO_CONTENT)
 
-    ranked = score_templates(content, templates)
+    ranked, warnings = score_templates(content, templates)
     by_name = {r["name"]: r for r in ranked}
 
     assert by_name["photo-tpl"]["score"] > by_name["narrative-tpl"]["score"]
     assert ranked[0]["name"] == "photo-tpl"
     assert any("photo-heavy" in reason for reason in by_name["photo-tpl"]["reasons"])
+    assert warnings == []
 
 
 def test_chronological_content_scores_chronological_template_higher(tmp_path):
@@ -164,7 +166,7 @@ def test_chronological_content_scores_chronological_template_higher(tmp_path):
     ]
     content = write_content(tmp_path, "content.md", CHRONOLOGICAL_CONTENT)
 
-    ranked = score_templates(content, templates)
+    ranked, _warnings = score_templates(content, templates)
     by_name = {r["name"]: r for r in ranked}
 
     assert by_name["timeline-tpl"]["score"] > by_name["table-tpl"]["score"]
@@ -181,7 +183,7 @@ def test_tabular_content_scores_tabular_template_higher(tmp_path):
     ]
     content = write_content(tmp_path, "content.json", TABULAR_CONTENT_JSON)
 
-    ranked = score_templates(content, templates)
+    ranked, _warnings = score_templates(content, templates)
     by_name = {r["name"]: r for r in ranked}
 
     # A flat table of scalar-valued records should NOT also trip the
@@ -203,7 +205,7 @@ def test_hierarchical_content_scores_hierarchical_template_higher(tmp_path):
     ]
     content = write_content(tmp_path, "content.json", HIERARCHICAL_CONTENT_JSON)
 
-    ranked = score_templates(content, templates)
+    ranked, _warnings = score_templates(content, templates)
     by_name = {r["name"]: r for r in ranked}
 
     assert by_name["hierarchy-tpl"]["score"] > by_name["table-tpl"]["score"]
@@ -220,7 +222,7 @@ def test_narrative_baseline_only_fires_without_structural_signal(tmp_path):
     ]
     content = write_content(tmp_path, "content.md", NARRATIVE_CONTENT)
 
-    ranked = score_templates(content, templates)
+    ranked, _warnings = score_templates(content, templates)
     by_name = {r["name"]: r for r in ranked}
 
     assert by_name["narrative-tpl"]["score"] > 0
@@ -234,7 +236,7 @@ def test_keyword_match_adds_score_and_reason(tmp_path):
     templates = [("garden-tpl", templates_root / "garden-tpl")]
     content = write_content(tmp_path, "content.md", PHOTO_CONTENT)
 
-    ranked = score_templates(content, templates)
+    ranked, _warnings = score_templates(content, templates)
     assert ranked[0]["score"] > 0
     assert any("garden" in reason for reason in ranked[0]["reasons"])
 
@@ -251,7 +253,7 @@ def test_stale_labels_flip_flag_and_apply_penalty(tmp_path):
     ]
     content = write_content(tmp_path, "content.md", PHOTO_CONTENT)
 
-    ranked = score_templates(content, templates)
+    ranked, _warnings = score_templates(content, templates)
     by_name = {r["name"]: r for r in ranked}
 
     assert by_name["fresh-tpl"]["stale_labels"] is False
@@ -290,9 +292,10 @@ def test_tie_break_is_alphabetical(tmp_path):
     ]
     content = write_content(tmp_path, "content.md", "---\ntitle: X\n---\nbody\n")
 
-    ranked = score_templates(content, templates)
+    ranked, warnings = score_templates(content, templates)
     assert [r["name"] for r in ranked] == ["alpha-tpl", "zebra-tpl"]
     assert ranked[0]["score"] == ranked[1]["score"] == 0
+    assert warnings == []
 
 
 def test_score_templates_missing_content_file_raises_content_error(tmp_path):
@@ -310,16 +313,56 @@ def test_score_templates_unsupported_content_type_raises(tmp_path):
         score_templates(content, [("t", templates_root / "t")])
 
 
-def test_score_templates_bad_manifest_raises_manifest_error(tmp_path):
-    templates_root = tmp_path / "templates"
-    template_dir = templates_root / "broken"
+def _make_broken_template(templates_root: Path, name: str) -> Path:
+    """A template directory with a manifest.json that fails validation
+    (missing the required 'name' field) -- e.g. ~/.jimemo/templates/scratch
+    with manifest `{}`."""
+    template_dir = templates_root / name
     template_dir.mkdir(parents=True)
     (template_dir / "template.html.j2").write_text(FAKE_TEMPLATE_SOURCE)
     (template_dir / "manifest.json").write_text("{}")
+    return template_dir
+
+
+def test_score_templates_skips_broken_manifest_and_warns(tmp_path):
+    templates_root = tmp_path / "templates"
+    make_template(templates_root, "good-tpl", keywords=["garden"])
+    broken_dir = _make_broken_template(templates_root, "broken-tpl")
+    templates = [
+        ("good-tpl", templates_root / "good-tpl"),
+        ("broken-tpl", broken_dir),
+    ]
+    content = write_content(tmp_path, "content.md", PHOTO_CONTENT)
+
+    ranked, warnings = score_templates(content, templates)
+
+    assert [r["name"] for r in ranked] == ["good-tpl"]
+    assert len(warnings) == 1
+    assert "broken-tpl" in warnings[0]
+    assert "skipping template" in warnings[0]
+
+    # determinism preserved with a broken candidate in the mix
+    ranked2, warnings2 = score_templates(content, templates)
+    assert ranked == ranked2
+    assert warnings == warnings2
+
+
+def test_score_templates_all_broken_returns_empty_results_and_warnings(tmp_path):
+    templates_root = tmp_path / "templates"
+    _make_broken_template(templates_root, "broken-a")
+    _make_broken_template(templates_root, "broken-b")
+    templates = [
+        ("broken-a", templates_root / "broken-a"),
+        ("broken-b", templates_root / "broken-b"),
+    ]
     content = write_content(tmp_path, "content.md", "---\ntitle: X\n---\nbody\n")
 
-    with pytest.raises(ManifestError):
-        score_templates(content, [("broken", template_dir)])
+    ranked, warnings = score_templates(content, templates)
+
+    assert ranked == []
+    assert len(warnings) == 2
+    assert any("broken-a" in w for w in warnings)
+    assert any("broken-b" in w for w in warnings)
 
 
 # --- CLI integration ---
@@ -362,6 +405,22 @@ def test_cli_suggest_content_not_found(tmp_path, monkeypatch, capsys):
     assert "not found" in capsys.readouterr().err
 
 
+def test_cli_suggest_skips_broken_template_and_warns(tmp_path, monkeypatch, capsys):
+    templates_root = tmp_path / "templates"
+    make_template(templates_root, "good-tpl", keywords=["garden"])
+    _make_broken_template(templates_root, "broken-tpl")
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_root])
+
+    content = write_content(tmp_path, "content.md", PHOTO_CONTENT)
+    rc = cli.main(["suggest", str(content)])
+
+    assert rc == 0
+    out, err = capsys.readouterr()
+    assert "skipping template 'broken-tpl'" in err
+    assert "good-tpl" in out
+    assert "broken-tpl" not in out
+
+
 def test_cli_render_auto_selects_and_renders(tmp_path, monkeypatch, capsys):
     templates_root = tmp_path / "templates"
     make_template(
@@ -384,6 +443,38 @@ def test_cli_render_auto_selects_and_renders(tmp_path, monkeypatch, capsys):
     assert "Garden Catalog" in html
     err = capsys.readouterr().err
     assert "auto-selected photo-tpl" in err
+
+
+def test_cli_render_auto_all_broken_templates_exits_1(tmp_path, monkeypatch, capsys):
+    templates_root = tmp_path / "templates"
+    _make_broken_template(templates_root, "broken-tpl")
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_root])
+
+    content = write_content(tmp_path, "content.md", "---\ntitle: X\n---\nbody\n")
+    rc = cli.main(["render", "auto", str(content), "-o", str(tmp_path / "out.html")])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "skipping template 'broken-tpl'" in err
+    assert "no usable templates" in err
+
+
+def test_cli_render_auto_tie_break_disclosed_in_stderr(tmp_path, monkeypatch, capsys):
+    templates_root = tmp_path / "templates"
+    make_template(templates_root, "alpha-tpl", keywords=["aaa"], source=RENDERABLE_TEMPLATE_SOURCE)
+    make_template(templates_root, "zebra-tpl", keywords=["aaa"], source=RENDERABLE_TEMPLATE_SOURCE)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [templates_root])
+
+    content = write_content(tmp_path, "content.md", "---\ntitle: X\n---\naaa\n")
+    out_path = tmp_path / "out.html"
+    rc = cli.main(["render", "auto", str(content), "-o", str(out_path)])
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "auto-selected alpha-tpl" in err
+    assert "tie broken alphabetically" in err
+    assert "also tied: zebra-tpl" in err
+    assert "keyword 'aaa' matched" in err
 
 
 def test_cli_doctor_reports_stale_labels(tmp_path, monkeypatch, capsys):

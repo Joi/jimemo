@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from ._vendor import add_vendor_to_path
-from .errors import ContentError
+from .errors import ContentError, ManifestError
 from .manifest import load_manifest
 
 add_vendor_to_path()
@@ -268,15 +268,25 @@ def is_stale_labels(manifest: Dict[str, Any], template_dir: Path) -> bool:
     return actual_hash != labeled_hash
 
 
-def score_templates(content_path: Path, templates: List[Tuple[str, Path]]) -> List[Dict[str, Any]]:
+def score_templates(
+    content_path: Path, templates: List[Tuple[str, Path]]
+) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Score every (name, template_dir) in `templates` against the content
-    at `content_path`. Returns a list of
-    `{"name", "score", "reasons": [str], "stale_labels": bool}` sorted by
-    score descending, ties broken alphabetically by name (also the
-    argmax tie rule `render auto` relies on).
+    at `content_path`. Returns `(results, warnings)`:
 
-    Raises ContentError if `content_path` can't be read or parsed, and
-    ManifestError if a candidate template's manifest.json is invalid.
+    - `results`: a list of `{"name", "score", "reasons": [str],
+      "stale_labels": bool}` sorted by score descending, ties broken
+      alphabetically by name (also the argmax tie rule `render auto`
+      relies on).
+    - `warnings`: one `"skipping template '<name>': <error>"` string for
+      each candidate whose manifest.json failed to load. That candidate
+      is excluded from `results` rather than aborting the whole ranking
+      -- a personal template library with one broken manifest shouldn't
+      take `suggest`/`render auto` down for every other template (the
+      same scan-and-warn precedent as `doctor`'s stale-label scan).
+      `render <explicit-name>` is unaffected and stays fail-closed.
+
+    Raises ContentError if `content_path` can't be read or parsed.
     """
     content_path = Path(content_path)
     raw = _load_raw_content(content_path)
@@ -299,9 +309,14 @@ def score_templates(content_path: Path, templates: List[Tuple[str, Path]]) -> Li
     kind_bonuses = _kind_bonuses(raw, image_count, date_count, tabular, depth, word_count)
 
     results: List[Dict[str, Any]] = []
+    warnings: List[str] = []
     for name, template_dir in templates:
         template_dir = Path(template_dir)
-        manifest = load_manifest(template_dir)
+        try:
+            manifest = load_manifest(template_dir)
+        except ManifestError as e:
+            warnings.append(f"skipping template '{name}': {e}")
+            continue
         suitability = manifest.get("suitability", {})
         content_kinds = suitability.get("content_kinds", [])
         keywords = suitability.get("keywords", [])
@@ -332,4 +347,4 @@ def score_templates(content_path: Path, templates: List[Tuple[str, Path]]) -> Li
         })
 
     results.sort(key=lambda r: (-r["score"], r["name"]))
-    return results
+    return results, warnings

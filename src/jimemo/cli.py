@@ -116,13 +116,26 @@ def cmd_render(args) -> int:
             print(f"content file not found: {content_path}", file=sys.stderr)
             return 1
         try:
-            ranked = score_templates(content_path, templates)
-        except (ManifestError, ContentError) as e:
+            ranked, warnings = score_templates(content_path, templates)
+        except ContentError as e:
             print(str(e), file=sys.stderr)
             return 1
+        for warning in warnings:
+            print(warning, file=sys.stderr)
+        if not ranked:
+            print("no usable templates", file=sys.stderr)
+            return 1
         top = ranked[0]
+        tied = [r["name"] for r in ranked[1:] if r["score"] == top["score"]]
         reason = top["reasons"][0] if top["reasons"] else "no distinguishing signal; alphabetical default"
-        print(f"auto-selected {top['name']}: {reason}", file=sys.stderr)
+        if tied:
+            print(
+                f"auto-selected {top['name']} (tie broken alphabetically; "
+                f"also tied: {', '.join(tied)}): {reason}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"auto-selected {top['name']}: {reason}", file=sys.stderr)
         template_dir = templates_by_name[top["name"]]
     else:
         template_dir = templates_by_name.get(args.template)
@@ -144,10 +157,13 @@ def cmd_suggest(args) -> int:
 
     templates = find_templates(default_search_dirs())
     try:
-        ranked = score_templates(content_path, templates)
-    except (ManifestError, ContentError) as e:
+        ranked, warnings = score_templates(content_path, templates)
+    except ContentError as e:
         print(str(e), file=sys.stderr)
         return 1
+
+    for warning in warnings:
+        print(warning, file=sys.stderr)
 
     if args.json:
         print(json.dumps(ranked, indent=2))
