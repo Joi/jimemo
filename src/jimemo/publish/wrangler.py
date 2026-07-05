@@ -18,6 +18,7 @@ KV dict, so ``cloudflare_backend.py`` tests never need a ``Wrangler`` +
 fake-runner pair at all.
 """
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,7 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from ..errors import PublishError
 
-Runner = Callable[[List[str]], CompletedProcess]
+Runner = Callable[[List[str], Optional[Dict[str, str]]], CompletedProcess]
 
 #: Raised (as a PublishError) by any Wrangler method when the ``npx``
 #: binary itself can't be found. Exported so cloudflare_backend.py can
@@ -38,10 +39,14 @@ NO_WRANGLER_MESSAGE = (
 )
 
 
-def _run(argv: List[str]) -> CompletedProcess:
+def _run(argv: List[str], env: Optional[Dict[str, str]] = None) -> CompletedProcess:
     """Default runner: a real subprocess, list-form argv only, never
-    shell=True."""
-    return subprocess.run(argv, capture_output=True, text=True)
+    shell=True. ``env=None`` (the default) means inherit the parent
+    process's environment unchanged -- Wrangler only passes a non-None
+    env when an account_id is configured, to layer
+    CLOUDFLARE_ACCOUNT_ID on top of that inherited environment (see
+    Wrangler._invoke)."""
+    return subprocess.run(argv, capture_output=True, text=True, env=env)
 
 
 class Wrangler:
@@ -50,20 +55,37 @@ class Wrangler:
     Cloudflare Pages, and reading/writing/listing the tombstone KV
     namespace.
 
-    Account scoping: CloudflareConfig carries an ``account_id``, but none
-    of these subcommands take an ``--account-id`` flag (checked against
+    Account scoping: CloudflareConfig carries an ``account_id``. None of
+    these subcommands take an ``--account-id`` flag (checked against
     ``npx wrangler pages deploy --help`` / ``npx wrangler kv key {put,get,
-    list} --help``), so it isn't threaded through here. If a friend's API
-    token is scoped without ``User:Memberships:Read`` and wrangler's
-    account-discovery call fails as a result, they can set
-    ``CLOUDFLARE_ACCOUNT_ID`` in their own shell environment (wrangler
-    reads it directly) -- the same workaround notes-ito-com's
-    ``bin/notes-publish`` applies for itself.
+    list} --help``), so it's threaded through via the
+    ``CLOUDFLARE_ACCOUNT_ID`` environment variable instead -- the same
+    variable wrangler already reads directly from its own environment,
+    and the same workaround notes-ito-com's ``bin/notes-publish`` applies
+    for itself when a friend's API token is scoped without
+    ``User:Memberships:Read`` and wrangler's own account-discovery call
+    would otherwise fail or guess wrong. When ``account_id`` is set,
+    every subprocess call this class makes runs with
+    ``CLOUDFLARE_ACCOUNT_ID`` layered on top of the inherited environment
+    (see ``_invoke``). It is never used to touch the Cloudflare API
+    token itself, which stays wherever it already was -- inherited from
+    the parent environment, untouched and unread by this module.
     """
 
-    def __init__(self, runner: Runner = _run, npx: str = "npx"):
+    def __init__(
+        self,
+        runner: Runner = _run,
+        npx: str = "npx",
+        account_id: Optional[str] = None,
+    ):
         self._run = runner
         self._npx = npx
+        #: Non-secret Cloudflare account id. Public and mutable (not
+        #: constructor-only) because setup.py's `jimemo publish setup`
+        #: wizard only learns it partway through the wizard -- after
+        #: this Wrangler is already constructed -- and sets it here once
+        #: known, before the first real call (see setup.py's run_setup).
+        self.account_id = account_id
 
     def check_available(self) -> bool:
         """True if ``npx`` resolves on PATH.
@@ -78,8 +100,13 @@ class Wrangler:
         return shutil.which(self._npx) is not None
 
     def _invoke(self, argv: List[str], action: str) -> CompletedProcess:
+        env = (
+            dict(os.environ, CLOUDFLARE_ACCOUNT_ID=self.account_id)
+            if self.account_id
+            else None
+        )
         try:
-            result = self._run([self._npx, "wrangler"] + argv)
+            result = self._run([self._npx, "wrangler"] + argv, env)
         except FileNotFoundError:
             raise PublishError(NO_WRANGLER_MESSAGE)
         if result.returncode != 0:

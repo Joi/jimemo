@@ -13,7 +13,7 @@
  * Anything outside the /<24-hex-hash>/ namespace passes through to static
  * Pages serving (root index, _headers, etc.).
  *
- * Security model (unchanged from notes-ito-com):
+ * Security model:
  *   - The 24-hex-char hash is the access control. 96 bits = unguessable.
  *   - Read access and purge access are intentionally symmetric: anyone with
  *     the URL can read, anyone with the URL can purge.
@@ -22,19 +22,33 @@
  *   - Staged files remain on disk locally after purge; the tombstone in KV
  *     makes them inaccessible. Run `jimemo publish gc` locally to actually
  *     delete files and reclaim deploy size.
+ *   - FAILS CLOSED on a missing/misconfigured TOMBSTONES binding — see
+ *     "KV binding" below. This is a deliberate divergence from the
+ *     notes-ito-com original, which fails OPEN in that situation.
  *
  * KV binding: this Worker reads/writes the tombstone namespace as
  * `env.TOMBSTONES`. Whatever provisions the Pages project (jimemo's
  * `publish setup` wizard, or a manual wrangler/dashboard binding) MUST
- * create the KV namespace binding under this exact name — if it's bound
- * under a different name, `env.TOMBSTONES` is `undefined`, tombstone reads
- * silently become "nothing purged" (open-fail, not fail-safe), and any
- * purge attempt throws on `.put()`.
+ * create the KV namespace binding under this exact name. Unlike the
+ * notes-ito-com original this was ported from — which treats a missing
+ * binding as "nothing purged" and serves the page anyway (open-fail, not
+ * fail-safe) — this Worker FAILS CLOSED: any request under the hash-path
+ * namespace with `env.TOMBSTONES` absent or falsy gets an error response
+ * instead of being served, before any tombstone check or purge logic runs.
+ * This is intentional hardening for jimemo, which auto-provisions this
+ * binding per friend's account via `jimemo publish setup` — a more
+ * error-prone path than a single hand-configured site — so that a page
+ * someone already purged can never silently come back online just
+ * because its KV binding broke. See CREDITS.md for the note on this
+ * divergence.
  *
- * The only change from the notes-ito-com original beyond the rename above
- * is that purge/confirm page copy now reads the hostname from the
- * incoming request (`url.host`) instead of a hardcoded "notes.ito.com" —
- * everything else (control flow, regex, headers, CSS) is verbatim.
+ * Two changes from the notes-ito-com original beyond the KV-binding-name
+ * rename: (1) purge/confirm page copy now reads the hostname from the
+ * incoming request (`url.host`) instead of a hardcoded "notes.ito.com";
+ * (2) the missing-TOMBSTONES-binding case fails CLOSED here instead of
+ * OPEN (see above) — deliberate, not an oversight. Everything else
+ * (control flow, regex, purge flow, cross-site guard, headers, CSS) is
+ * verbatim.
  */
 
 const HASH_RE = /^\/([a-f0-9]{24})(\/.*)?$/;
@@ -48,7 +62,19 @@ export const onRequest = async (ctx) => {
   if (!m) return next();
 
   const hash = m[1];
-  const tombstone = env.TOMBSTONES ? await env.TOMBSTONES.get(hash) : null;
+
+  // FAIL CLOSED (deliberate divergence from the notes-ito-com original,
+  // which fails OPEN here — see header comment above). Refuse to serve,
+  // or even show purge/confirm UI, rather than risk treating an
+  // actually-tombstoned page as live just because its KV binding broke.
+  if (!env.TOMBSTONES) {
+    return htmlResponse(
+      errorPage("Tombstone store unavailable — refusing to serve."),
+      500,
+    );
+  }
+
+  const tombstone = await env.TOMBSTONES.get(hash);
 
   // Purge flow (?purge in query string)
   if (url.searchParams.has("purge")) {

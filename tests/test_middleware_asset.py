@@ -45,6 +45,31 @@ def test_middleware_references_tombstone_kv_binding():
     assert "env.TOMBSTONES" in src
 
 
+def test_middleware_fails_closed_on_missing_tombstone_binding():
+    """jimemo deliberately diverges from the notes-ito-com original here:
+    a missing/misconfigured TOMBSTONES binding must refuse to serve
+    (fail CLOSED) rather than silently pass through to next() and serve
+    the page anyway (fail OPEN) -- see the middleware's own header
+    comment and CREDITS.md for why this matters more for jimemo's
+    auto-provisioned-per-friend deployments than it did for the single
+    hand-configured original."""
+    src = _middleware_source()
+    hash_idx = src.index("const hash = m[1]")
+    guard_idx = src.index("!env.TOMBSTONES", hash_idx)
+    get_idx = src.index("env.TOMBSTONES.get(hash)")
+    # The guard must run after the hash is extracted but before the
+    # tombstone is ever read.
+    assert hash_idx < guard_idx < get_idx
+    # Between the guard and the (now unconditional) tombstone read, the
+    # code must short-circuit with an error response and must never call
+    # next() -- a hash-path request with no binding may never fall
+    # through to static-asset serving.
+    guard_to_get = src[guard_idx:get_idx]
+    assert "return htmlResponse(" in guard_to_get
+    assert "errorPage(" in guard_to_get
+    assert "next()" not in guard_to_get
+
+
 def test_middleware_implements_purge_get_and_post_flow():
     src = _middleware_source()
     assert re.search(r'searchParams\.has\(["\']purge["\']\)', src)

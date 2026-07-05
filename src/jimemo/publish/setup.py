@@ -431,6 +431,14 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
             io.print("An account id is required.")
             account_id = io.prompt("Cloudflare account id")
 
+    # account_id is only known once collected here (unlike
+    # CloudflarePublisher's steady-state construction, where it's already
+    # in config.toml) -- set it on the Wrangler seam now so Step 3's
+    # deploy and the post-deploy KV check below are scoped to the right
+    # Cloudflare account for a multi-account token. A harmless no-op
+    # attribute on test doubles (e.g. MockWrangler) that don't consult it.
+    wrangler.account_id = account_id
+
     _validate_project_name(project)
 
     base_url = f"https://{project}.pages.dev"

@@ -12,16 +12,18 @@ from jimemo.publish.wrangler import NO_WRANGLER_MESSAGE, MockWrangler, Wrangler
 
 
 class FakeRunner:
-    """Records every argv it's called with and returns a scripted result
-    (or the next of several, in order) instead of touching a real
-    subprocess."""
+    """Records every argv (and the env dict passed alongside it, if any)
+    it's called with and returns a scripted result (or the next of
+    several, in order) instead of touching a real subprocess."""
 
     def __init__(self, *results):
         self.calls = []
+        self.envs = []
         self._results = list(results)
 
-    def __call__(self, argv):
+    def __call__(self, argv, env=None):
         self.calls.append(argv)
+        self.envs.append(env)
         if len(self._results) == 1:
             return self._results[0]
         return self._results.pop(0)
@@ -30,7 +32,7 @@ class FakeRunner:
 class RaisingRunner:
     """Simulates `npx` itself being absent from PATH."""
 
-    def __call__(self, argv):
+    def __call__(self, argv, env=None):
         raise FileNotFoundError("npx: command not found")
 
 
@@ -172,16 +174,90 @@ def test_mock_wrangler_kv_get_unknown_key_returns_empty_string():
     assert mock.kv_get("ns", "never-written") == ""
 
 
-def test_module_never_reads_or_logs_cf_token():
-    """jimemo must never touch the Cloudflare API token itself -- wrangler
-    resolves its own auth from the environment/its credential store. This
-    greps the actual source for env access (the module has no legitimate
-    reason to import `os` or touch `os.environ` at all) so the invariant
-    can't silently regress. (CLOUDFLARE_API_TOKEN itself is named in a
-    docstring, purely as documentation of wrangler's own behavior.)"""
+def test_account_id_threads_cloudflare_account_id_into_subprocess_env():
+    runner = FakeRunner(CompletedProcess([], 0, stdout="", stderr=""))
+    w = Wrangler(runner=runner, account_id="acct-123")
+
+    w.kv_get("ns123", "abc123")
+
+    assert len(runner.envs) == 1
+    env = runner.envs[0]
+    assert env is not None
+    assert env["CLOUDFLARE_ACCOUNT_ID"] == "acct-123"
+
+
+def test_account_id_env_is_inherited_environment_plus_account_id(monkeypatch):
+    monkeypatch.setenv("SOME_UNRELATED_VAR", "keep-me")
+    runner = FakeRunner(CompletedProcess([], 0, stdout="", stderr=""))
+    w = Wrangler(runner=runner, account_id="acct-123")
+
+    w.kv_get("ns123", "abc123")
+
+    env = runner.envs[0]
+    assert env["SOME_UNRELATED_VAR"] == "keep-me"
+    assert env["CLOUDFLARE_ACCOUNT_ID"] == "acct-123"
+
+
+def test_no_account_id_passes_no_env_override():
+    """Without an account_id, Wrangler must not touch the subprocess
+    environment at all -- env stays None, i.e. subprocess.run's own
+    default of inheriting the parent process environment unchanged."""
+    runner = FakeRunner(CompletedProcess([], 0, stdout="", stderr=""))
+    w = Wrangler(runner=runner)
+
+    w.kv_get("ns123", "abc123")
+
+    assert runner.envs == [None]
+
+
+def test_account_id_settable_after_construction():
+    """setup.py's wizard only learns the account id partway through --
+    after the Wrangler is already constructed -- so account_id must be
+    settable as a plain attribute, not fixed at __init__ time."""
+    runner = FakeRunner(CompletedProcess([], 0, stdout="", stderr=""))
+    w = Wrangler(runner=runner)
+
+    w.account_id = "acct-456"
+    w.kv_get("ns123", "abc123")
+
+    assert runner.envs[0]["CLOUDFLARE_ACCOUNT_ID"] == "acct-456"
+
+
+def test_account_id_never_carries_the_cf_api_token(monkeypatch):
+    """account_id is a non-secret identifier threaded through the
+    subprocess env; it must never carry the Cloudflare API token itself
+    -- that stays wherever it already was, in the inherited environment,
+    untouched and unread by this module."""
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "super-secret-token")
+    runner = FakeRunner(CompletedProcess([], 0, stdout="", stderr=""))
+    w = Wrangler(runner=runner, account_id="acct-123")
+
+    w.kv_get("ns123", "abc123")
+
+    env = runner.envs[0]
+    # Inherited unchanged (subprocess would see it exactly as it exists
+    # in this process's own environment) -- not read, copied, or altered
+    # by Wrangler itself.
+    assert env["CLOUDFLARE_API_TOKEN"] == "super-secret-token"
+
+
+def test_module_never_reads_the_cf_api_token_value():
+    """jimemo must never read the value of CLOUDFLARE_API_TOKEN --
+    wrangler resolves its own auth directly, from its own subprocess
+    environment (inherited unchanged) or its own credential store.
+    Passing CLOUDFLARE_ACCOUNT_ID through the subprocess env for account
+    scoping is fine and expected (a non-secret identifier) -- os /
+    os.environ are now legitimately used for that -- but nothing in this
+    module may ever look up the token's value."""
     import jimemo.publish.wrangler as mod
 
     src = Path(mod.__file__).read_text()
-    assert "import os" not in src
-    assert "os.environ" not in src
-    assert "getenv" not in src
+    for pattern in (
+        'os.environ.get("CLOUDFLARE_API_TOKEN")',
+        "os.environ.get('CLOUDFLARE_API_TOKEN')",
+        'os.environ["CLOUDFLARE_API_TOKEN"]',
+        "os.environ['CLOUDFLARE_API_TOKEN']",
+        'os.getenv("CLOUDFLARE_API_TOKEN")',
+        "os.getenv('CLOUDFLARE_API_TOKEN')",
+    ):
+        assert pattern not in src

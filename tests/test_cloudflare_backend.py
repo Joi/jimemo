@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from jimemo.config import CloudflareConfig, PublishConfig
 from jimemo.errors import PublishError
 from jimemo.publish.cloudflare_backend import CLOUDFLARE_ASSETS_DIR, CloudflarePublisher
-from jimemo.publish.wrangler import MockWrangler
+from jimemo.publish.wrangler import MockWrangler, Wrangler
 
 HASH_RE = re.compile(r"[a-f0-9]{24}")
 
@@ -381,6 +381,18 @@ def test_gc_does_not_clobber_already_installed_middleware(tmp_path):
     publisher.gc()
 
     assert (functions_dir / "_middleware.js").read_text() == sentinel
+
+
+def test_default_wrangler_is_scoped_to_configured_account_id(tmp_path):
+    """When CloudflarePublisher constructs its own Wrangler (no wrangler
+    passed in), it must scope it to the configured account_id -- so
+    every pages_deploy / kv_* call the Wrangler seam makes is scoped to
+    the right Cloudflare account for a friend's multi-account token (see
+    Wrangler's own account-scoping docstring)."""
+    publisher = CloudflarePublisher(_publish_config(), state_dir=tmp_path / "state")
+
+    assert isinstance(publisher._wrangler, Wrangler)
+    assert publisher._wrangler.account_id == "acct1"
 
 
 def test_default_state_dir_is_under_home_jimemo_cloudflare(monkeypatch, tmp_path):

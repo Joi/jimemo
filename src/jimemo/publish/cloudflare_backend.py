@@ -149,7 +149,9 @@ class CloudflarePublisher(Publisher):
                 "not configured"
             )
         self._cf = cf
-        self._wrangler = wrangler if wrangler is not None else Wrangler()
+        self._wrangler = (
+            wrangler if wrangler is not None else Wrangler(account_id=cf.account_id)
+        )
         self._state_dir = (
             Path(state_dir) if state_dir is not None else _default_state_dir(cf.project)
         )
