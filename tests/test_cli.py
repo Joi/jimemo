@@ -23,7 +23,7 @@ def test_doctor_on_clean_repo(capsys):
     out = capsys.readouterr().out
     assert "python" in out.lower()
     assert "vendor" in out.lower()
-    assert "ok   vendored imports (jinja2, markdown, yaml)" in out
+    assert "ok   vendored imports (jinja2, markdown, yaml, tomli)" in out
     assert "ok   charts vendored (chart.js 4.5.1)" in out
 
 
@@ -99,6 +99,7 @@ def test_importing_cli_does_not_import_vendored_libs():
         "assert 'jinja2' not in sys.modules, sorted(sys.modules)\n"
         "assert 'yaml' not in sys.modules, sorted(sys.modules)\n"
         "assert 'markdown' not in sys.modules, sorted(sys.modules)\n"
+        "assert 'tomli' not in sys.modules, sorted(sys.modules)\n"
         "print('OK')\n"
     )
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
@@ -132,6 +133,7 @@ def test_doctor_tampered_checksums_never_imports_vendored_libs(tmp_path):
         "assert 'jinja2' not in sys.modules, sorted(sys.modules)\n"
         "assert 'yaml' not in sys.modules, sorted(sys.modules)\n"
         "assert 'markdown' not in sys.modules, sorted(sys.modules)\n"
+        "assert 'tomli' not in sys.modules, sorted(sys.modules)\n"
         "print('OK')\n"
     )
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)

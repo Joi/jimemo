@@ -17,6 +17,13 @@ def test_vendored_jinja2_is_used():
     assert Path(jinja2.__file__).resolve().is_relative_to(VENDOR_DIR)
 
 
+def test_vendored_tomli_is_used():
+    add_vendor_to_path()
+    import tomli
+    assert Path(tomli.__file__).resolve().is_relative_to(VENDOR_DIR)
+    assert tomli.loads("a = 1\n") == {"a": 1}
+
+
 def test_add_vendor_is_idempotent():
     add_vendor_to_path()
     add_vendor_to_path()
