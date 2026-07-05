@@ -6,7 +6,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import jimemo.publish.cloudflare_backend as cloudflare_backend_mod
-from jimemo.config import load_config
+import jimemo.publish.setup as setup_mod
+from jimemo.config import load_config, valid_project_name
 from jimemo.errors import PublishError
 from jimemo.publish.cloudflare_backend import CloudflarePublisher, _default_state_dir
 from jimemo.publish.setup import (
@@ -18,6 +19,13 @@ from jimemo.publish.setup import (
     run_setup,
 )
 from jimemo.publish.wrangler import NO_WRANGLER_MESSAGE, MockWrangler
+
+
+def test_setup_validates_project_names_via_configs_shared_validator():
+    # Both this wizard's input validation and load_config()'s
+    # [publish.cloudflare] validation must enforce the exact same rule --
+    # via the exact same function, not two regexes that could drift.
+    assert setup_mod.valid_project_name is valid_project_name
 
 MIDDLEWARE_SRC = (CLOUDFLARE_ASSETS_DIR / "_middleware.js").read_text(encoding="utf-8")
 
@@ -577,3 +585,19 @@ def test_cloudflare_assets_dir_is_the_bundled_middleware_directory():
     assert (CLOUDFLARE_ASSETS_DIR / "_middleware.js").is_file()
     assert (CLOUDFLARE_ASSETS_DIR / "_headers").is_file()
     assert (CLOUDFLARE_ASSETS_DIR / "index.html").is_file()
+
+
+# ---------------------------------------------------------------------------
+# The completion message's example must actually work: `jimemo render`
+# writes a file (via -o), it doesn't stream HTML on stdout, and `jimemo
+# publish` takes a file path -- so the two commands can never be chained
+# with a pipe, only run as two separate steps.
+# ---------------------------------------------------------------------------
+
+def test_completion_message_shows_a_working_render_then_publish_example(tmp_path, monkeypatch):
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+
+    text = io.text()
+    assert "jimemo render ... -o out.html" in text
+    assert "jimemo publish out.html" in text
+    assert "| jimemo publish" not in text

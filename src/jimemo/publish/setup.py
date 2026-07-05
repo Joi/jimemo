@@ -82,12 +82,12 @@ call fail confusingly; wrangler resolves its own auth from that same
 environment variable.
 """
 import os
-import re
 import shutil
 from pathlib import Path
 from typing import Optional
 
 from .._paths import REPO_ROOT
+from ..config import valid_project_name
 from ..errors import PublishError
 from .cloudflare_backend import _default_state_dir
 from .wrangler import NO_WRANGLER_MESSAGE
@@ -100,15 +100,6 @@ from .wrangler import NO_WRANGLER_MESSAGE
 CLOUDFLARE_ASSETS_DIR = REPO_ROOT / "publish" / "cloudflare"
 
 DEFAULT_PROJECT_NAME = "jimemo-notes"
-
-#: Cloudflare Pages project names: lowercase letters, digits, and
-#: hyphens; no leading or trailing hyphen; 1-63 characters. The project
-#: name flows unescaped into a filesystem path join (_default_state_dir
-#: -> ~/.jimemo/cloudflare/<project>/, so e.g. "../evil" would escape
-#: that directory), into base_url, and into a raw TOML write (an
-#: embedded newline would produce invalid TOML) -- so it is validated
-#: once, up front, before any of those uses.
-PROJECT_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 #: The KV binding name the ported middleware reads as `env.TOMBSTONES`
 #: (publish/cloudflare/_middleware.js). MUST match exactly -- see
@@ -345,7 +336,8 @@ def _post_deploy_binding_check(
         "  project's Functions settings -- that only shows up on a live "
         "request. Verify\n"
         "  it end to end once, manually:\n"
-        "    jimemo render ... | jimemo publish   # note the printed URL\n"
+        "    jimemo render ... -o out.html\n"
+        "    jimemo publish out.html   # note the printed URL\n"
         "    jimemo publish purge <that URL>\n"
         "    curl -o /dev/null -w '%{http_code}\\n' <that URL>   "
         "# expect 404\n"
@@ -357,10 +349,12 @@ def _post_deploy_binding_check(
 
 def _validate_project_name(project: str) -> None:
     """Raise PublishError if ``project`` isn't a valid Cloudflare Pages
-    project name (see PROJECT_NAME_RE). Called once, before the project
-    name is used to derive a state directory, a base URL, or config.toml
-    content."""
-    if not PROJECT_NAME_RE.match(project):
+    project name (see config.py's valid_project_name(), shared with
+    load_config()'s [publish.cloudflare] validation so a hand-edited
+    config.toml can never accept a name this wizard would reject). Called
+    once, before the project name is used to derive a state directory, a
+    base URL, or config.toml content."""
+    if not valid_project_name(project):
         raise PublishError(
             f"invalid Cloudflare Pages project name: {project!r} -- must "
             "be lowercase letters, digits, and hyphens only, and may not "
@@ -409,9 +403,9 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
     never trigger a real deploy/KV write against their Cloudflare
     account just by declining the config write at the very end). Then
     prompts for a project name (default DEFAULT_PROJECT_NAME, validated
-    against PROJECT_NAME_RE), an account id, and a KV namespace id
-    (printing manual instructions for the latter, since no wrangler-seam
-    call can create/bind one -- see module docstring), installs the
+    against config.py's valid_project_name()), an account id, and a KV
+    namespace id (printing manual instructions for the latter, since no
+    wrangler-seam call can create/bind one -- see module docstring), installs the
     middleware/_headers/index.html into ``~/.jimemo/cloudflare/<project>/``
     (the SAME local state directory cloudflare_backend.py's
     CloudflarePublisher deploys on every future publish() call -- see
@@ -544,7 +538,9 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
     _write_config(config_path, project, account_id, kv_namespace_id, base_url)
     io.print(f"  wrote {config_path}")
     io.print(
-        f"\nDone. Try: jimemo render ... | jimemo publish\n"
+        f"\nDone. Try:\n"
+        f"    jimemo render ... -o out.html\n"
+        f"    jimemo publish out.html\n"
         f"Reminder: {state_dir} is this project's single source of truth "
         "for what's deployed -- see the single-machine note above."
     )
