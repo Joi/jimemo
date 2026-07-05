@@ -23,6 +23,41 @@ MAX_OUTPUT_BYTES = 8_000_000
 # Attributes whose values are URLs the browser may act on.
 _URL_ATTRS = frozenset({"href", "src", "action", "formaction", "xlink:href"})
 
+# Tag -> attribute(s) the browser fetches automatically at page-load time,
+# as opposed to <a href>, which fetches only on click. A surviving remote
+# URL in any of these is a hard error: output must be fully self-contained
+# at view time, and inline_images() only ever localizes <img> (src and
+# srcset), so nothing else could have been made local automatically.
+# Markdown-authored content never reaches most of these -- sanitize.py
+# discards iframe/object/embed outright and unwraps video/audio/source/
+# track (tag stripped, children kept) -- so this guards template-authored
+# markup and text/data-slot values written straight into a macro's
+# attribute, which bypass markdown sanitization entirely.
+_FETCH_ON_LOAD_ATTRS: Dict[str, Tuple[str, ...]] = {
+    "img": ("src", "srcset"),
+    "link": ("href",),
+    "iframe": ("src",),
+    "embed": ("src",),
+    "object": ("data",),
+    "source": ("src", "srcset"),
+    "video": ("src",),
+    "audio": ("src",),
+    "track": ("src",),
+}
+
+
+def _srcset_urls(value: str) -> List[str]:
+    """URL candidates out of a ``srcset`` value: a comma-separated list of
+    ``<url> <descriptor>?`` entries. Only the URL (the first whitespace-
+    delimited token of each candidate) is returned; width/density
+    descriptors like ``2x`` or ``600w`` are irrelevant to this check."""
+    urls = []
+    for candidate in value.split(","):
+        tokens = candidate.split()
+        if tokens:
+            urls.append(tokens[0])
+    return urls
+
 
 class _Linter(HTMLParser):
     def __init__(self, charts_declared: bool) -> None:
@@ -68,33 +103,38 @@ class _Linter(HTMLParser):
                     "script-scheme URLs are never allowed"
                 )
                 continue
-            # Output must be self-contained: nothing may fetch at view
-            # time. <a href> is fine (fetches only on click); img/link
-            # fetch on load, so a surviving remote URL there is a hard
-            # error (inline_images already converted every legitimate
-            # local image to a data: URI). A protocol-relative URL
-            # (``//host/x``) has no scheme but is just as much a fetch —
-            # the browser resolves it against the page's own scheme.
-            if tag == "img" and name == "src":
-                if scheme == "data":
-                    if not is_allowed_image_data_uri(value):
-                        self.errors.append(
-                            f"<img src={value!r}> is not an allowed image "
-                            "data URI — only data:image/{png,jpeg,jpg,gif,webp} "
-                            "are permitted (svg+xml can carry markup; other "
-                            "data: subtypes aren't images at all)"
-                        )
-                elif scheme in ("http", "https") or is_protocol_relative(value):
-                    self.errors.append(
-                        f"external image {value!r} would fetch at view time — "
-                        "use a local file so it can be inlined"
-                    )
-            elif tag == "link" and name == "href":
-                if scheme in ("http", "https") or is_protocol_relative(value):
-                    self.errors.append(
-                        f"external <link href={value!r}> would fetch at view "
-                        "time — external stylesheets/resources are never allowed"
-                    )
+
+        for attr_name in _FETCH_ON_LOAD_ATTRS.get(tag, ()):
+            value = next((v for n, v in attrs if n.lower() == attr_name), None)
+            if value is None:
+                continue
+            candidates = _srcset_urls(value) if attr_name == "srcset" else [value]
+            for candidate in candidates:
+                self._check_fetch_on_load_url(tag, attr_name, candidate)
+
+    def _check_fetch_on_load_url(self, tag: str, attr_name: str, value: str) -> None:
+        # Output must be self-contained: nothing may fetch at view time.
+        # <a href> is fine (fetches only on click); the tags/attrs in
+        # _FETCH_ON_LOAD_ATTRS fetch on load, so a surviving remote URL
+        # there is a hard error (inline_images already converted every
+        # legitimate local image to a data: URI). A protocol-relative URL
+        # (``//host/x``) has no scheme but is just as much a fetch — the
+        # browser resolves it against the page's own scheme.
+        scheme = url_scheme(value)
+        if tag == "img" and attr_name == "src" and scheme == "data":
+            if not is_allowed_image_data_uri(value):
+                self.errors.append(
+                    f"<img src={value!r}> is not an allowed image "
+                    "data URI — only data:image/{png,jpeg,jpg,gif,webp} "
+                    "are permitted (svg+xml can carry markup; other "
+                    "data: subtypes aren't images at all)"
+                )
+            return
+        if scheme in ("http", "https") or is_protocol_relative(value):
+            self.errors.append(
+                f"external <{tag} {attr_name}={value!r}> would fetch at view "
+                "time — use a local file so the output stays self-contained"
+            )
 
 
 def lint_html(html: str, manifest: Dict[str, Any]) -> Tuple[List[str], List[str]]:

@@ -148,3 +148,85 @@ def test_reserved_slot_name_rejected(tmp_path, reserved):
     template_dir = write_manifest(tmp_path, data)
     with pytest.raises(ManifestError, match=reserved):
         load_manifest(template_dir)
+
+
+# --- suitability/list-element type validation (Fix 3) ---
+
+def test_non_string_keyword_element_named(tmp_path):
+    data = dict(VALID)
+    data["suitability"] = dict(VALID["suitability"])
+    data["suitability"]["keywords"] = ["briefing", 42]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="keywords"):
+        load_manifest(template_dir)
+
+
+def test_keywords_not_a_list_named(tmp_path):
+    data = dict(VALID)
+    data["suitability"] = dict(VALID["suitability"])
+    data["suitability"]["keywords"] = "briefing"
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="keywords"):
+        load_manifest(template_dir)
+
+
+def test_non_string_content_kind_element_named(tmp_path):
+    data = dict(VALID)
+    data["suitability"] = dict(VALID["suitability"])
+    data["suitability"]["content_kinds"] = [3]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="content_kinds"):
+        load_manifest(template_dir)
+
+
+def test_content_kind_outside_vocab_still_named(tmp_path):
+    # Still covered after adding the str check ahead of it.
+    data = dict(VALID)
+    data["suitability"] = dict(VALID["suitability"])
+    data["suitability"]["content_kinds"] = ["space-opera"]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="space-opera"):
+        load_manifest(template_dir)
+
+
+def test_good_for_non_string_named(tmp_path):
+    data = dict(VALID)
+    data["suitability"] = dict(VALID["suitability"])
+    data["suitability"]["good_for"] = ["not", "a", "string"]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="good_for"):
+        load_manifest(template_dir)
+
+
+def test_labeled_hash_non_string_named(tmp_path):
+    data = dict(VALID)
+    data["suitability"] = dict(VALID["suitability"])
+    data["suitability"]["labeled_hash"] = 12345
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="labeled_hash"):
+        load_manifest(template_dir)
+
+
+def test_non_string_component_element_named(tmp_path):
+    data = dict(VALID)
+    data["components"] = ["stat-tile", 7]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="components"):
+        load_manifest(template_dir)
+
+
+def test_non_string_chart_element_named(tmp_path):
+    data = dict(VALID)
+    data["charts"] = [{"not": "a string"}]
+    template_dir = write_manifest(tmp_path, data)
+    with pytest.raises(ManifestError, match="charts"):
+        load_manifest(template_dir)
+
+
+def test_valid_manifest_with_full_suitability_still_loads(tmp_path):
+    template_dir = write_manifest(tmp_path, VALID)
+    manifest = load_manifest(template_dir)
+    assert manifest["suitability"]["keywords"] == ["briefing", "memo", "report"]
+    assert manifest["suitability"]["content_kinds"] == ["narrative"]
+    assert manifest["suitability"]["good_for"] == "one line"
+    assert manifest["suitability"]["labeled_hash"] == "deadbeef"

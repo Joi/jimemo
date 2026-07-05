@@ -8,13 +8,16 @@ from pathlib import Path
 from . import __version__
 from ._vendor import VENDOR_DIR, add_vendor_to_path
 from .checksums import verify_checksums
-from .content import load_content
 from .discovery import default_search_dirs, find_templates
 from .errors import ContentError, ManifestError, ScaffoldError
 from .manifest import load_manifest
-from .render import render_page, write_output
 from .scaffold import create_template
-from .suggest import is_stale_labels, score_templates
+
+# render/content/suggest are NOT imported here: each transitively imports
+# vendored jinja2/yaml/markdown at its own module top, and doctor (plus
+# --version and list) must be able to run with zero vendored imports until
+# after verify_checksums has passed. Each command handler that actually
+# needs one of them imports it locally instead.
 
 PYTHON_FLOOR = (3, 9)
 
@@ -50,6 +53,11 @@ def cmd_doctor(args) -> int:
             print(f"FAIL vendored imports: {e}")
             ok = False
 
+    # Lazy: suggest.py itself defers its yaml import (see suggest.py), so
+    # this import is vendor-free — importing it here, unconditionally,
+    # does not compromise the checksum gate above.
+    from .suggest import is_stale_labels
+
     stale_names = []
     for name, template_dir in find_templates(default_search_dirs()):
         try:
@@ -80,6 +88,9 @@ def cmd_list(args) -> int:
 
 
 def _do_render(template_dir: Path, content_path: Path, args) -> int:
+    from .content import load_content
+    from .render import render_page, write_output
+
     out_path = Path(args.out) if args.out else Path("dist") / f"{content_path.stem}.html"
     try:
         manifest = load_manifest(template_dir)
@@ -109,6 +120,9 @@ def cmd_render(args) -> int:
     templates_by_name = dict(templates)
 
     if args.template == "auto":
+        from .content import load_content
+        from .suggest import score_templates
+
         if not templates:
             print("no templates to choose from", file=sys.stderr)
             return 1
@@ -177,6 +191,8 @@ def cmd_render(args) -> int:
 
 
 def cmd_suggest(args) -> int:
+    from .suggest import score_templates
+
     content_path = Path(args.content)
     if not content_path.is_file():
         print(f"content file not found: {content_path}", file=sys.stderr)

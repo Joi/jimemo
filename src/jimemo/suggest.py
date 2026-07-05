@@ -20,8 +20,12 @@ from ._vendor import add_vendor_to_path
 from .errors import ContentError, ManifestError
 from .manifest import load_manifest
 
-add_vendor_to_path()
-import yaml  # noqa: E402
+# yaml is NOT imported at module level: is_stale_labels (used by `doctor`'s
+# unconditional stale-label scan) lives in this module but never touches
+# yaml, and doctor must not trigger a vendored import as a side effect of
+# merely importing this module. Only _parse_frontmatter and
+# _load_raw_content (reached solely via score_templates, i.e. the
+# `suggest`/`render auto` commands) import it, right where it's used.
 
 # --- Weights -------------------------------------------------------------
 # Points added to a template's score when a content signal fires and the
@@ -93,6 +97,9 @@ PHOTO_ARRAY_KEYS = ("photos", "images")
 # shape against every candidate template's differing manifest.
 
 def _parse_frontmatter(path: Path, text: str) -> Tuple[Dict[str, Any], str]:
+    add_vendor_to_path()
+    import yaml
+
     lines = text.splitlines(keepends=True)
     if not lines or lines[0].strip() != "---":
         return {}, text
@@ -124,6 +131,9 @@ def _parse_frontmatter(path: Path, text: str) -> Tuple[Dict[str, Any], str]:
 
 
 def _load_raw_content(path: Path) -> Dict[str, Any]:
+    add_vendor_to_path()
+    import yaml
+
     suffix = path.suffix.lower()
     try:
         text = path.read_text(encoding="utf-8")

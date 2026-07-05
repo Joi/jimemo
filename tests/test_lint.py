@@ -199,3 +199,110 @@ def test_relative_img_src_and_fragment_and_data_still_fine_with_protocol_relativ
     )
     errors, warnings = lint_html(html, {"charts": []})
     assert errors == []
+
+
+# --- fetch-on-load tags beyond img/link (Fix 2) ---
+
+def test_remote_iframe_src_errors():
+    html = '<html><body><iframe src="https://evil.example/x"></iframe></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("https://evil.example/x" in e for e in errors)
+
+
+def test_remote_embed_src_errors():
+    html = '<html><body><embed src="https://evil.example/x.swf"></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("https://evil.example/x.swf" in e for e in errors)
+
+
+def test_remote_object_data_errors():
+    html = '<html><body><object data="https://evil.example/x.pdf"></object></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("https://evil.example/x.pdf" in e for e in errors)
+
+
+def test_remote_video_src_errors():
+    html = '<html><body><video src="https://evil.example/x.mp4"></video></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("https://evil.example/x.mp4" in e for e in errors)
+
+
+def test_remote_audio_src_errors():
+    html = '<html><body><audio src="https://evil.example/x.mp3"></audio></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("https://evil.example/x.mp3" in e for e in errors)
+
+
+def test_remote_track_src_errors():
+    html = (
+        "<html><body><video>"
+        '<track src="https://evil.example/x.vtt">'
+        "</video></body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("https://evil.example/x.vtt" in e for e in errors)
+
+
+def test_remote_source_src_errors():
+    html = (
+        "<html><body><video>"
+        '<source src="https://evil.example/x.mp4">'
+        "</video></body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("https://evil.example/x.mp4" in e for e in errors)
+
+
+def test_remote_srcset_candidate_on_img_errors():
+    html = (
+        "<html><body>"
+        '<img src="local.png" srcset="local.png 1x, https://evil.example/x2.png 2x">'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("https://evil.example/x2.png" in e for e in errors)
+
+
+def test_remote_srcset_candidate_on_source_errors():
+    html = (
+        "<html><body><video>"
+        '<source srcset="local.png 1x, //cdn.example/x2.png 2x">'
+        "</video></body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": []})
+    assert any("//cdn.example/x2.png" in e for e in errors)
+
+
+def test_local_iframe_src_ok():
+    html = '<html><body><iframe src="local.html"></iframe></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert errors == []
+
+
+def test_local_video_and_source_srcset_ok():
+    html = (
+        "<html><body><video src=\"local.mp4\">"
+        '<source srcset="a.png 1x, b.png 2x">'
+        "</video></body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": []})
+    assert errors == []
+
+
+def test_local_object_embed_audio_track_ok():
+    html = (
+        "<html><body>"
+        '<object data="local.pdf"></object>'
+        '<embed src="local.swf">'
+        '<audio src="local.mp3"></audio>'
+        '<track src="local.vtt">'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": []})
+    assert errors == []
+
+
+def test_local_img_srcset_ok():
+    html = '<html><body><img src="a.png" srcset="a.png 1x, b.png 2x"></body></html>'
+    errors, warnings = lint_html(html, {"charts": []})
+    assert errors == []

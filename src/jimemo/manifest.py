@@ -96,20 +96,60 @@ def load_manifest(template_dir: Path) -> Dict[str, Any]:
     data.setdefault("components", [])
     if not isinstance(data["components"], list):
         raise ManifestError("manifest field 'components' must be a list")
+    for item in data["components"]:
+        if not isinstance(item, str):
+            raise ManifestError(
+                f"manifest field 'components' must be a list of strings, got {item!r}"
+            )
 
     data.setdefault("charts", [])
     if not isinstance(data["charts"], list):
         raise ManifestError("manifest field 'charts' must be a list")
+    for item in data["charts"]:
+        if not isinstance(item, str):
+            raise ManifestError(
+                f"manifest field 'charts' must be a list of strings, got {item!r}"
+            )
 
     suitability = data.get("suitability", {})
     if not isinstance(suitability, dict):
         raise ManifestError("manifest field 'suitability' must be an object")
-    for kind in suitability.get("content_kinds", []):
-        if kind not in CONTENT_KINDS:
-            raise ManifestError(
-                f"suitability.content_kinds has invalid kind {kind!r} "
-                f"(must be one of {list(CONTENT_KINDS)})"
-            )
+
+    if "keywords" in suitability:
+        keywords = suitability["keywords"]
+        if not isinstance(keywords, list):
+            raise ManifestError("suitability.keywords must be a list of strings")
+        for kw in keywords:
+            if not isinstance(kw, str):
+                raise ManifestError(
+                    f"suitability.keywords must be a list of strings, got {kw!r}"
+                )
+
+    if "content_kinds" in suitability:
+        content_kinds = suitability["content_kinds"]
+        if not isinstance(content_kinds, list):
+            raise ManifestError("suitability.content_kinds must be a list of strings")
+        for kind in content_kinds:
+            if not isinstance(kind, str):
+                raise ManifestError(
+                    f"suitability.content_kinds must be a list of strings, got {kind!r}"
+                )
+            if kind not in CONTENT_KINDS:
+                raise ManifestError(
+                    f"suitability.content_kinds has invalid kind {kind!r} "
+                    f"(must be one of {list(CONTENT_KINDS)})"
+                )
+
+    if "good_for" in suitability and not isinstance(suitability["good_for"], str):
+        raise ManifestError(
+            f"suitability.good_for must be a string, got {suitability['good_for']!r}"
+        )
+
+    if "labeled_hash" in suitability and not isinstance(suitability["labeled_hash"], str):
+        raise ManifestError(
+            f"suitability.labeled_hash must be a string, got {suitability['labeled_hash']!r}"
+        )
+
     data["suitability"] = suitability
 
     return data
