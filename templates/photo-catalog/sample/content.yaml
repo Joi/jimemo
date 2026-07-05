@@ -15,7 +15,7 @@ images:
       | Height | 8-12 m (tree form) |
   - name: Camellia sinensis
     image: plant-2.png
-    caption: The tea plant itself -- leaves picked two-and-a-bud, the way the tea room begins.
+    caption: The tea plant itself — leaves picked two-and-a-bud, the way the tea room begins.
     fields: |
       | Attribute | Value |
       |---|---|
@@ -40,11 +40,11 @@ images:
   - name: Primula denticulata
     image: plant-5.png
     caption: Lilac globes on bare stalks, the first color back after frost.
-    # No fields: this clump was divided last week and not yet remeasured --
+    # No fields: this clump was divided last week and not yet remeasured —
     # the card should still read cleanly without an attributes table.
   - name: Iris kemaonensis
     image: plant-6.png
-    # No caption: a field note wasn't taken on this specimen -- the card
+    # No caption: a field note wasn't taken on this specimen — the card
     # should still read cleanly with only a name, photo, and attributes.
     fields: |
       | Attribute | Value |
