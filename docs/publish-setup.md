@@ -67,6 +67,11 @@ live), so this is a documentation-only guardrail, not a code one.
    jimemo publish setup
    ```
 
+   How to read its output: a command you must run yourself appears on
+   its own `$ `-prefixed line (run it in a separate terminal where the
+   wizard says so); `running:` lines are wrangler calls the wizard makes
+   for you.
+
    It will:
    - prompt for a Cloudflare Pages project name (default `jimemo-notes`)
      and your Cloudflare account id,

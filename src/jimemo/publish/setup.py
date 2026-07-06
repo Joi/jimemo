@@ -89,6 +89,14 @@ CLOUDFLARE_API_TOKEN. It only checks whether that variable is *set*, to
 fail fast with a clear message rather than letting the first wrangler
 call fail confusingly; wrangler resolves its own auth from that same
 environment variable.
+
+Output convention: a command the HUMAN must run themselves is printed on
+its own ``$ ``-prefixed line (see ``_print_user_command``); flat
+``running:`` / ``[dry-run] would run:`` lines are wrangler calls this
+wizard makes on its own. The intro states the convention up front.
+Feedback from the first external setup run: without the marker the two
+read alike, and the one command setup actually blocks on (the KV
+namespace create) was easy to miss mid-prose.
 """
 import os
 import tempfile
@@ -130,7 +138,8 @@ TOKEN_MISSING_MESSAGE = (
     "Then export it in your shell -- jimemo never stores this token; "
     "wrangler reads it\n"
     "directly from the environment:\n"
-    "    export CLOUDFLARE_API_TOKEN=...\n"
+    "\n"
+    "      $ export CLOUDFLARE_API_TOKEN=...\n"
     "\n"
     "Re-run `jimemo publish setup` once it's set."
 )
@@ -214,6 +223,16 @@ def _kv_get_argv(kv_namespace_id: str) -> str:
     )
 
 
+def _print_user_command(io: SetupIO, command: str) -> None:
+    """Print a command the HUMAN runs themselves: blank-line padded, on
+    its own ``$ ``-prefixed line. One shared shape for every such
+    command, deliberately distinct from the flat ``running:`` /
+    ``[dry-run] would run:`` lines this wizard prints for wrangler calls
+    it makes on its own -- see the module docstring's output-convention
+    note for the incident this exists to prevent."""
+    io.print(f"\n      $ {command}\n")
+
+
 def _print_intro(io: SetupIO) -> None:
     io.print(
         "jimemo publish setup\n"
@@ -239,6 +258,11 @@ def _print_intro(io: SetupIO) -> None:
         "account id, KV\n"
         "     namespace id, base URL) get written to ~/.jimemo/config.toml.\n"
         "  3. Node + npx (wrangler runs via `npx wrangler`).\n"
+        "\n"
+        "How to read this output: a command you must run yourself appears "
+        "on its own\n"
+        "`$ `-prefixed line; `running:` lines are wrangler calls setup "
+        "makes for you.\n"
     )
 
 
@@ -264,13 +288,24 @@ def _print_single_machine_warning(io: SetupIO, state_dir: Path) -> None:
 def _print_kv_instructions(io: SetupIO, project: str) -> None:
     io.print(
         "\n"
-        "Cloudflare KV namespace + binding (manual -- no wrangler-seam "
-        "call automates\n"
-        "this; see setup.py's module docstring for why):\n"
+        "ACTION REQUIRED -- Cloudflare KV namespace + binding. These two "
+        "steps are\n"
+        "yours to do (no wrangler-seam call automates them; see setup.py's "
+        "module\n"
+        "docstring for why), and setup waits for step (a)'s id before "
+        "continuing:\n"
+        "\n"
         "  a. Create a KV namespace, if you don't have one for this "
-        "project yet:\n"
-        f"       npx wrangler kv namespace create {project}-tombstones\n"
-        "     Copy the \"id\" field from its output.\n"
+        "project yet.\n"
+        "     Run this yourself, in a separate terminal:"
+    )
+    _print_user_command(
+        io, f"npx wrangler kv namespace create {project}-tombstones"
+    )
+    io.print(
+        "     Copy the \"id\" field from its output -- the prompt below "
+        "asks for it.\n"
+        "\n"
         "  b. In the Cloudflare dashboard, open this Pages project's "
         "Settings ->\n"
         "     Functions -> KV namespace bindings, and bind that "
@@ -335,10 +370,10 @@ def _post_deploy_binding_check(
         "  project's Functions settings -- that only shows up on a live "
         "request. Verify\n"
         "  it end to end once, manually:\n"
-        "    jimemo render ... -o out.html\n"
-        "    jimemo publish out.html   # note the printed URL\n"
-        "    jimemo publish purge <that URL>\n"
-        "    curl -o /dev/null -w '%{http_code}\\n' <that URL>   "
+        "      $ jimemo render ... -o out.html\n"
+        "      $ jimemo publish out.html   # note the printed URL\n"
+        "      $ jimemo publish purge <that URL>\n"
+        "      $ curl -o /dev/null -w '%{http_code}\\n' <that URL>   "
         "# expect 404\n"
         f"  A 200 instead of 404 means the {KV_BINDING_NAME} binding is "
         "missing or\n"
@@ -451,8 +486,9 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
         project = DEFAULT_PROJECT_NAME
         account_id = "<ACCOUNT_ID>"
         kv_namespace_id = "<KV_NAMESPACE_ID>"
+        io.print("\nStep 1: Cloudflare Pages project")
         io.print(
-            f"\n[dry-run] would prompt for a Cloudflare Pages project "
+            f"[dry-run] would prompt for a Cloudflare Pages project "
             f"name (default {DEFAULT_PROJECT_NAME!r}); using the default."
         )
         io.print(
@@ -592,8 +628,8 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
     io.print(f"  wrote {config_path}")
     io.print(
         f"\nDone. Try:\n"
-        f"    jimemo render ... -o out.html\n"
-        f"    jimemo publish out.html\n"
+        f"      $ jimemo render ... -o out.html\n"
+        f"      $ jimemo publish out.html\n"
         f"Reminder: {state_dir} is this project's single source of truth "
         "for what's deployed -- see the single-machine note above."
     )

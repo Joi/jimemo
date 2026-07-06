@@ -801,3 +801,73 @@ def test_completion_message_shows_a_working_render_then_publish_example(tmp_path
     assert "jimemo render ... -o out.html" in text
     assert "jimemo publish out.html" in text
     assert "| jimemo publish" not in text
+
+
+# ---------------------------------------------------------------------------
+# The you-run-this convention: a command the HUMAN must run themselves is
+# printed on its own `$ `-prefixed line -- visually distinct from the flat
+# `running:` / `[dry-run] would run:` lines for wrangler calls the wizard
+# makes on its own. Feedback from the first external setup run: the two
+# read alike, and the one command setup actually blocks on (the KV
+# namespace create) was easy to miss mid-prose.
+# ---------------------------------------------------------------------------
+
+def test_kv_create_is_a_standout_user_run_command(tmp_path, monkeypatch):
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+
+    text = io.text()
+    assert (
+        "      $ npx wrangler kv namespace create friend-notes-tombstones"
+        in text.splitlines()
+    )
+    assert "separate terminal" in text
+
+
+def test_dry_run_kv_create_is_a_standout_user_run_command(tmp_path):
+    io = FakeIO()
+
+    run_setup(True, MockWrangler(), tmp_path / "config.toml", io)
+
+    assert (
+        f"      $ npx wrangler kv namespace create "
+        f"{DEFAULT_PROJECT_NAME}-tombstones"
+        in io.text().splitlines()
+    )
+
+
+def test_completion_and_verify_examples_use_the_dollar_marker(tmp_path, monkeypatch):
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+
+    stripped = [line.strip() for line in io.text().splitlines()]
+    assert "$ jimemo render ... -o out.html" in stripped
+    assert "$ jimemo publish out.html" in stripped
+    assert "$ jimemo publish purge <that URL>" in stripped
+
+
+def test_wizards_own_wrangler_calls_never_carry_the_dollar_marker(
+    tmp_path, monkeypatch
+):
+    # If the wizard's own `running:` lines ever picked up the `$ ` marker,
+    # the convention would stop distinguishing "jimemo did this" from
+    # "I am supposed to do this" -- the exact confusion it exists to fix.
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+
+    text = io.text()
+    assert "  running: npx wrangler pages deploy" in text
+    for line in text.splitlines():
+        if "running:" in line or "would run:" in line:
+            assert not line.lstrip().startswith("$")
+
+
+def test_token_missing_message_marks_the_export_as_user_run():
+    assert "\n      $ export CLOUDFLARE_API_TOKEN=..." in TOKEN_MISSING_MESSAGE
+
+
+def test_intro_explains_the_dollar_convention(tmp_path):
+    io = FakeIO()
+
+    run_setup(True, MockWrangler(), tmp_path / "config.toml", io)
+
+    text = io.text()
+    assert "$ " in text
+    assert "run yourself" in text
