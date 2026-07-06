@@ -60,12 +60,22 @@ __all__ = ["build_theme", "theme_structure_errors"]
 
 _THEME_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _THEME_BLOCK_RE = re.compile(r"(?::root|@font-face)\s*\{[^{}]*\}")
+# A single top-level :root block. build_theme emits EXACTLY ONE, and the
+# importer only ever appends @font-face blocks -- never a second :root. More
+# than one after comment-stripping means an injected `:root{...}` (e.g. via
+# a header-comment breakout that reopened live CSS) rode in alongside the
+# legitimate one. _THEME_BLOCK_RE alone cannot catch that: it strips EVERY
+# :root block, so an injected extra one leaves an empty remainder and would
+# pass. Counting them is the safety net regardless of which field was the
+# vector.
+_THEME_ROOT_BLOCK_RE = re.compile(r":root\s*\{[^{}]*\}")
 
 
 def theme_structure_errors(css: str) -> List[str]:
     """Structural safety errors in a generated theme, or [] if its shape
     is inert: braces balanced, no comment delimiter left outside a
-    well-formed `/* ... */`, and nothing at top level except `:root` and
+    well-formed `/* ... */`, EXACTLY ONE top-level `:root` block, and
+    nothing at top level except that `:root` block and zero or more
     `@font-face` blocks. `css_reference_errors` (lint) only catches
     url()/@import -- it is blind to brace/comment/declaration injection --
     so this is the OUTPUT-side gate that closes that whole class no
@@ -85,6 +95,13 @@ def theme_structure_errors(css: str) -> List[str]:
         errors.append(
             "unbalanced braces ({} '{{' vs {} '}}')".format(
                 stripped.count("{"), stripped.count("}")
+            )
+        )
+    root_blocks = _THEME_ROOT_BLOCK_RE.findall(stripped)
+    if len(root_blocks) > 1:
+        errors.append(
+            "multiple :root blocks ({}) -- possible injection".format(
+                len(root_blocks)
             )
         )
     remainder = _THEME_BLOCK_RE.sub("", stripped).strip()
@@ -476,12 +493,38 @@ _ROLE_ORDER = (
 )
 
 
+def _reject_comment_close(*values: str) -> None:
+    """Backstop for the header COMMENT: no value interpolated into it may
+    contain `*/`, which would close the comment early and turn the rest of
+    the header into live CSS. The reader's namespace / token-name /
+    font-family validators already reject `*/` in every field that feeds
+    the header (and the theme_structure_errors gate is the output-side
+    net), so this should never fire on validated input -- it is the
+    fail-closed belt-and-braces for a hand-built DesignExport (or a future
+    forgotten field) that reached build_theme without the reader, mirroring
+    build_theme's own defense-in-depth re-validation of names/values."""
+    for v in values:
+        if "*/" in v:
+            raise DesignImportError(
+                "refusing to build theme: value {!r} would close the theme "
+                "header comment (contains '*/')".format(v)
+            )
+
+
 def _build_header(
     name: str,
     export: DesignExport,
     mapped_lines: List[Tuple[str, str]],
     review_notes: List[str],
 ) -> str:
+    # Every dynamic string below lands inside the /* ... */ header comment;
+    # a stray `*/` in any of them breaks it open. Names/namespace/source
+    # tokens/families are already validated upstream, but guard here too.
+    _reject_comment_close(name, export.namespace or "")
+    for _role, source in mapped_lines:
+        _reject_comment_close(source)
+    for note in review_notes:
+        _reject_comment_close(note)
     lines = [
         "/* jimemo theme {!r} -- auto-generated from a Claude-design export".format(name),
         " * (namespace: {}). Deterministic: re-running the import on the".format(

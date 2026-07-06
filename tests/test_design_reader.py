@@ -477,6 +477,37 @@ def test_brand_font_family_injection_rejected(tmp_path):
         read_export(export_dir)
 
 
+# BrandFont.referencing_token_names (manifest brandFonts[].tokens) is picked
+# by mapping as the font role's source_token and interpolated into the
+# generated theme's header COMMENT -- the same injection channel as a token
+# name, so it must pass the same validate_token_name allowlist + reserved
+# --jm- prefix check. An unvalidated entry is the roborev header-comment /
+# second-:root breakout vector.
+@pytest.mark.parametrize(
+    "bad_token",
+    [
+        "*/:root{--jm-font-mono:serif}/*",  # header-comment + :root breakout PoC
+        "--jm-accent",  # reserved jimemo role prefix
+        "}",  # brace injection
+        "*/",  # bare comment close
+        "x: red } :root{ --y",  # not a --ident name
+    ],
+)
+def test_brand_font_referencing_token_name_injection_rejected(tmp_path, bad_token):
+    brand = {"family": "Legit", "status": "ok", "tokens": [bad_token]}
+    export_dir = _manifest_with_brand_font(tmp_path, brand)
+    with pytest.raises(DesignImportError):
+        read_export(export_dir)
+
+
+def test_brand_font_referencing_token_name_normal_accepted(tmp_path):
+    brand = {"family": "Legit", "status": "ok", "tokens": ["--ct-font"]}
+    export_dir = _manifest_with_brand_font(tmp_path, brand)
+    export = read_export(export_dir)
+    finder = next(b for b in export.brand_fonts if b.family == "Legit")
+    assert finder.referencing_token_names == ["--ct-font"]
+
+
 # -- security: manifest shape validation (fail closed, not TypeError) -----
 #
 # A manifest is untrusted DATA (see module docstring): a malformed shape

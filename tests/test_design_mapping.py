@@ -309,6 +309,54 @@ def test_theme_structure_flags_stray_comment_delimiter():
     assert any("comment delimiter" in e for e in errors)
 
 
+def test_theme_structure_flags_multiple_root_blocks():
+    # A second :root block (e.g. injected via a header-comment breakout)
+    # rides in alongside the legitimate one. _THEME_BLOCK_RE strips both, so
+    # only the dedicated :root count catches it. Fail closed.
+    css = (
+        "/* header */\n"
+        ":root {\n  --x: 1;\n}\n"
+        ":root {\n  --jm-font-mono: serif;\n}\n"
+    )
+    errors = theme_structure_errors(css)
+    assert any("multiple :root" in e for e in errors)
+
+
+def test_theme_structure_passes_on_multiple_font_face_blocks():
+    # One :root + N @font-face is exactly the --embed-fonts shape.
+    css = (
+        ":root {\n  --x: 1;\n}\n\n"
+        '@font-face {\n  font-family: "A";\n'
+        '  src: url(data:font/ttf;base64,AAAA) format("truetype");\n}\n'
+        '@font-face {\n  font-family: "B";\n'
+        '  src: url(data:font/ttf;base64,BBBB) format("truetype");\n}\n'
+    )
+    assert theme_structure_errors(css) == []
+
+
+def test_build_theme_rejects_comment_breakout_source_token():
+    # A hand-built export (bypassing the reader's referencing-name
+    # validation) whose brand-font source token would break the header
+    # comment open AND inject a second :root. build_theme's
+    # _reject_comment_close is the input-side belt-and-braces; the single-
+    # :root / comment-delimiter structural gate is the output-side net --
+    # this must fail closed either way.
+    export = DesignExport(
+        tokens=[Token(name="--ct-font", value='"Finder", sans-serif', kind="font")],
+        fonts=[],
+        brand_fonts=[
+            BrandFont(
+                family="Finder",
+                referencing_token_names=["*/:root{--jm-font-mono:serif}/*"],
+                status="ok",
+            )
+        ],
+        namespace="Evil",
+    )
+    with pytest.raises(DesignImportError):
+        build_theme(export, "evil")
+
+
 def test_build_theme_structural_gate_catches_injection_past_input_validation(monkeypatch):
     # Hypothetical: input validation has a hole (here: forced off), so a
     # hostile value smuggles `} body { display:none } :root {` into the

@@ -541,6 +541,41 @@ def test_cli_import_design_namespace_injection_rc1_writes_nothing(tmp_path, monk
     assert not themes_dir.exists() or not list(themes_dir.iterdir())
 
 
+def test_cli_import_design_brand_font_referencing_token_injection_rc1_writes_nothing(
+    tmp_path, monkeypatch
+):
+    # The roborev proof-of-concept, run through the whole importer: a
+    # brandFonts referencing token that would break the header comment open
+    # AND inject a second :root{...} carrying a reserved --jm- override.
+    # Must exit rc=1 with no theme written (blocked at the reader boundary).
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = tmp_path / "evil-brandfont-export"
+    export_dir.mkdir()
+    manifest = {
+        "namespace": "Evil",
+        "tokens": [
+            {"name": "--ev-ink", "value": "#111111", "kind": "color"},
+            {"name": "--ct-font", "value": '"Finder", sans-serif', "kind": "font"},
+        ],
+        "fonts": [],
+        "brandFonts": [
+            {
+                "family": "Finder",
+                "status": "ok",
+                "tokens": ["*/:root{--jm-font-mono:serif}/*"],
+            }
+        ],
+        "globalCssPaths": [],
+        "themes": [],
+    }
+    (export_dir / "_ds_manifest.json").write_text(json.dumps(manifest))
+
+    rc = main(["import-design", str(export_dir), "--name", "evil"])
+    assert rc == 1
+    themes_dir = tmp_path / ".jimemo" / "themes"
+    assert not themes_dir.exists() or not list(themes_dir.iterdir())
+
+
 # -- security: font-metadata CSS injection (end-to-end) ------------------
 
 

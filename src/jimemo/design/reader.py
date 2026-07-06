@@ -207,6 +207,20 @@ def _from_manifest(manifest: dict) -> DesignExport:
             for tn in _manifest_list(b.get("tokens"), "brandFont 'tokens'")
             if isinstance(tn, str)
         ]
+        # A referencing token name is NOT merely informational: mapping picks
+        # one of these as the font role's `source_token`, which build_theme
+        # interpolates UNESCAPED into the generated theme's header COMMENT
+        # (mapping._build_header). Each names a token exactly like a tokens[]
+        # entry, so it is the same injection channel as a token name -- an
+        # unvalidated name like `*/:root{--jm-font-mono:serif}/*` would break
+        # the header comment open AND inject a second :root block carrying a
+        # reserved --jm- override. Validate every entry with the same
+        # allowlist + reserved-prefix check applied to token names, and
+        # fail-closed (raise) for consistency with the family/weight/style/
+        # namespace validation here -- so no unvalidated referencing name can
+        # reach mapping.
+        for tn in referencing:
+            validate_token_name(tn)
         family = b.get("family")
         family = family if isinstance(family, str) else ""
         # BrandFont.family flows into mapping._font_declaration's quoted
