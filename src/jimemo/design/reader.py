@@ -53,6 +53,7 @@ __all__ = [
     "validate_token_value",
     "validate_namespace",
     "validate_font_family",
+    "THEME_NAME_RE",
 ]
 
 
@@ -589,6 +590,19 @@ _TOKEN_NAME_RE = re.compile(r"^" + _TOKEN_NAME_BODY + r"\Z")
 # empty is the reader's sentinel for "the export declared none" (always the
 # case on the CSS-fallback path).
 _NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_-]*\Z")
+
+# The shape of a jimemo theme name: lowercase letters/digits in
+# single-hyphen-separated segments -- exactly what
+# `design.importer.slugify_name` always produces from arbitrary input.
+# Exported so `jimemo.inline` can validate a user-typed `--theme NAME`
+# CLI value against the same allowlist before resolving it to
+# `<themes_dir>/<name>.css`: an unvalidated name containing '..' or '/'
+# (or an absolute path) would otherwise let `--theme` read an arbitrary
+# .css file off disk. Lives here rather than in design.importer, which
+# imports jimemo.inline for personal_themes_dir -- importing this
+# constant from there back into jimemo.inline would be a load-time
+# import cycle.
+THEME_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 
 # jimemo's own semantic role tokens (--jm-bg, --jm-accent, --jm-font-prose,
 # ...) all live under this prefix -- reserved for the toolkit, never for an

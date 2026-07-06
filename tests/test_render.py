@@ -1,5 +1,6 @@
 import base64
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -488,3 +489,78 @@ def test_assemble_css_unknown_component_raises_manifest_error():
 
     with pytest.raises(ManifestError, match="no-such-component"):
         assemble_css({"components": ["no-such-component"]})
+
+
+# -- theme name validation: --theme must not be a filesystem path -------
+#
+# `_resolve_theme_path` used to build `<themes_dir>/<theme>.css` from the
+# raw `--theme` value with no shape check at all. `Path.__truediv__`
+# discards the left side when the right side is absolute, so
+# `--theme /etc/passwd` (or, via `..`, any path reachable relative to a
+# themes dir) could resolve straight to an arbitrary local file and
+# inline its bytes into the page. These confirm every such value is
+# rejected -- and the file is never even opened -- before any filesystem
+# access, while a normal theme name is unaffected.
+
+
+def _spy_on_read_text(monkeypatch, forbidden: Path):
+    """Fail the test immediately if anything reads `forbidden` via
+    Path.read_text, proving a rejected --theme value never reaches the
+    file it points at (not just that the end result excludes its
+    content) -- same technique as
+    test_embed_fonts_rejects_traversal_even_when_target_exists."""
+    original_read_text = Path.read_text
+
+    def spying_read_text(self, *args, **kwargs):
+        assert self != forbidden, f"traversal theme name must never read {forbidden}"
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", spying_read_text)
+
+
+def test_assemble_css_rejects_dotdot_theme_name(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    outside = tmp_path / "secret.css"
+    outside.write_text(":root { --leaked: yes; }\n", encoding="utf-8")
+    _spy_on_read_text(monkeypatch, outside)
+
+    with pytest.raises(ManifestError, match=re.escape("../../secret")):
+        assemble_css({"components": []}, theme="../../secret")
+
+
+def test_assemble_css_rejects_absolute_path_theme_name(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    outside = tmp_path / "secret.css"
+    outside.write_text(":root { --leaked: yes; }\n", encoding="utf-8")
+    theme_value = str(outside.with_suffix(""))  # --theme <abs path, no .css>
+    _spy_on_read_text(monkeypatch, outside)
+
+    with pytest.raises(ManifestError, match=re.escape(theme_value)):
+        assemble_css({"components": []}, theme=theme_value)
+
+
+def test_assemble_css_rejects_theme_name_with_slash(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+    with pytest.raises(ManifestError, match="has/slash"):
+        assemble_css({"components": []}, theme="has/slash")
+
+
+def test_assemble_css_valid_theme_name_still_resolves(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    fake_toolkit = tmp_path / "toolkit"
+    shutil.copytree(inline.TOOLKIT_DIR, fake_toolkit)
+    (fake_toolkit / "themes").mkdir(exist_ok=True)
+    (fake_toolkit / "themes" / "chiba.css").write_text(
+        ":root { --jm-accent: #4c4499; }\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(inline, "TOOLKIT_DIR", fake_toolkit)
+
+    css = assemble_css({"components": []}, theme="chiba")
+    assert "#4c4499" in css

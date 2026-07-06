@@ -398,6 +398,55 @@ def test_build_theme_rejects_comment_breakout_source_token():
         build_theme(export, "evil")
 
 
+def test_build_theme_rejects_hand_built_brand_font_with_unsafe_family():
+    # read_export always runs validate_font_family on brand_fonts/fonts
+    # entries, but a caller building a DesignExport directly (bypassing
+    # the reader entirely) skips that. build_theme's _font_declaration
+    # would otherwise interpolate the family straight into the
+    # --jm-font-prose/ui role value unescaped -- the same injection
+    # class validate_token_value/validate_token_name/validate_namespace
+    # are already re-validated against above. This is that same
+    # defense-in-depth for BrandFont.family.
+    export = DesignExport(
+        tokens=[Token(name="--ct-font", value='"Finder", sans-serif', kind="font")],
+        fonts=[],
+        brand_fonts=[
+            BrandFont(
+                family='"} body{display:none} .x{',
+                referencing_token_names=["--ct-font"],
+                status="ok",
+            )
+        ],
+        namespace="",
+    )
+    with pytest.raises(DesignImportError):
+        build_theme(export, "evil")
+
+
+def test_build_theme_rejects_hand_built_fontface_with_unsafe_family():
+    # Same bypass, but via the FontFace fallback `_infer_font_declaration`
+    # reads (export.fonts[0].family) when there is no confident brand
+    # font -- also never validated for a hand-built DesignExport.
+    from jimemo.design.reader import FontFace
+
+    export = DesignExport(
+        tokens=[],
+        fonts=[FontFace(family='"} body{display:none} .x{', weight="normal", style="normal")],
+        brand_fonts=[],
+        namespace="",
+    )
+    with pytest.raises(DesignImportError):
+        build_theme(export, "evil")
+
+
+def test_build_theme_normal_export_unaffected_by_font_family_revalidation():
+    # The re-validation added above must be a no-op for input that already
+    # passed the reader -- read_export's own output is unaffected.
+    _, css = _theme()
+    assert '"Finder"' in css
+    assert not theme_structure_errors(css)
+
+
 def test_build_theme_structural_gate_catches_injection_past_input_validation(monkeypatch):
     # Hypothetical: input validation has a hole (here: forced off), so a
     # hostile value smuggles `} body { display:none } :root {` into the

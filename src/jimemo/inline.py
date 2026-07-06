@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ._paths import REPO_ROOT
+from .design.reader import THEME_NAME_RE
 from .errors import ContentError, ManifestError
 from .sanitize import is_allowed_image_data_uri, parse_srcset
 
@@ -76,9 +77,26 @@ def _theme_search_dirs() -> List[Path]:
 
 
 def _resolve_theme_path(theme: str) -> Optional[Path]:
+    """The `<theme>.css` path a `--theme NAME` value resolves to, or None
+    if no search dir has one (see `assemble_css`). `theme` is a CLI
+    value, so it is validated against `THEME_NAME_RE` -- the same
+    lowercase-alnum-and-hyphens shape `design.importer.slugify_name`
+    always produces -- before it ever touches a path: unvalidated, a
+    name like `../../etc/passwd` or an absolute path would let `--theme`
+    read an arbitrary local .css file and inline it into the page.
+    Belt-and-braces after that: the resolved candidate must still land
+    inside the search dir it came from, in case a future charset change
+    ever reintroduces a path separator."""
+    if not THEME_NAME_RE.match(theme):
+        raise ManifestError(
+            f"theme name {theme!r} is not a valid theme name (expected "
+            "lowercase letters/digits in hyphen-separated segments, e.g. "
+            "'chiba-tech') -- refusing to resolve it to a file"
+        )
     for base in _theme_search_dirs():
-        candidate = base / f"{theme}.css"
-        if candidate.is_file():
+        base_resolved = base.resolve()
+        candidate = (base_resolved / f"{theme}.css").resolve()
+        if candidate.is_relative_to(base_resolved) and candidate.is_file():
             return candidate
     return None
 

@@ -588,19 +588,30 @@ def build_theme(export: DesignExport, name: str) -> str:
     re-declaring every imported token verbatim, plus a deterministic
     subset mapped onto jimemo's `--jm-*` roles (see module docstring).
 
-    Raises DesignImportError if a token name/value or the namespace
-    fails the same safety checks reader.read_export already applied
-    (defense in depth for a hand-built DesignExport that bypassed the
-    reader -- names land verbatim in the :root block and var() refs, the
-    namespace in the header comment), if the assembled CSS still trips
-    the Phase-3 self-contained lint's url()/@import scan, or if the
-    output fails `theme_structure_errors`' shape check (the output-side
-    gate for the injection class the lint cannot see).
+    Raises DesignImportError if a token name/value, the namespace, or a
+    brand/font family fails the same safety checks reader.read_export
+    already applied (defense in depth for a hand-built DesignExport that
+    bypassed the reader -- names land verbatim in the :root block and
+    var() refs, the namespace in the header comment, and a family in the
+    `_font_declaration` role value / the header's review notes), if the
+    assembled CSS still trips the Phase-3 self-contained lint's
+    url()/@import scan, or if the output fails `theme_structure_errors`'
+    shape check (the output-side gate for the injection class the lint
+    cannot see).
     """
     for t in export.tokens:
         validate_token_name(t.name)
         validate_token_value(t.name, t.value)
     validate_namespace(export.namespace)
+    # _font_declaration below reads export.brand_fonts / export.fonts
+    # straight off the dataclass, the same way it reads export.tokens --
+    # a hand-built DesignExport can carry an unvalidated family in either
+    # list, so both get the same re-validation the tokens above just did,
+    # ahead of any of it reaching _font_declaration/_infer_font_declaration.
+    for b in export.brand_fonts:
+        validate_font_family(b.family)
+    for f in export.fonts:
+        validate_font_family(f.family)
 
     mapped_lines: List[Tuple[str, str]] = []
     review_notes: List[str] = []
