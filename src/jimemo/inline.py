@@ -88,8 +88,17 @@ def _theme_search_dirs() -> List[Path]:
 
 def _resolve_theme_path(theme: str) -> Optional[Path]:
     """The `<theme>.css` path a `--theme NAME` value resolves to, or None
-    if no search dir has one (see `assemble_css`). `theme` is a CLI
-    value, so it is validated against `THEME_NAME_RE` -- the same
+    if `theme` is a built-in mode name (`_BUILTIN_THEME_MODES`) or no
+    search dir has a file for it (see `assemble_css`). The built-in-mode
+    check runs first and unconditionally, before any filesystem lookup:
+    `light`/`dark` must never resolve to a file even if a stray or
+    legacy `light.css`/`dark.css` happens to sit in a search dir, since
+    `design.importer` already refuses to ever create one under those
+    names (`RESERVED_THEME_NAMES`) -- a file that exists anyway is not
+    the one the user meant.
+
+    `theme` is a CLI value, so -- for anything past the built-in check --
+    it is validated against `THEME_NAME_RE` -- the same
     lowercase-alnum-and-hyphens shape `design.importer.slugify_name`
     always produces -- before it ever touches a path: unvalidated, a
     name like `../../etc/passwd` or an absolute path would let `--theme`
@@ -97,6 +106,8 @@ def _resolve_theme_path(theme: str) -> Optional[Path]:
     Belt-and-braces after that: the resolved candidate must still land
     inside the search dir it came from, in case a future charset change
     ever reintroduces a path separator."""
+    if theme in _BUILTIN_THEME_MODES:
+        return None
     if not THEME_NAME_RE.match(theme):
         raise ManifestError(
             f"theme name {theme!r} is not a valid theme name (expected "

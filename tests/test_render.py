@@ -618,6 +618,34 @@ def test_assemble_css_builtin_dark_mode_does_not_error(tmp_path, monkeypatch):
     assert isinstance(css, str) and css  # no exception; base CSS still assembled
 
 
+def test_assemble_css_builtin_light_mode_ignores_planted_theme_file(tmp_path, monkeypatch):
+    """A stray/legacy `light.css` sitting in the personal themes dir must
+    never be applied for `--theme light`: `light` is a built-in mode name,
+    and `_resolve_theme_path` short-circuits on `_BUILTIN_THEME_MODES`
+    before it ever looks at the filesystem. `design.importer` already
+    refuses to create a theme file under a reserved name, so this
+    exercises the defense-in-depth path, not the normal one."""
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    themes_dir = inline.personal_themes_dir()
+    themes_dir.mkdir(parents=True)
+    marker = "/* PLANTED-LIGHT-THEME-MARKER */"
+    (themes_dir / "light.css").write_text(marker, encoding="utf-8")
+
+    css = assemble_css({"components": []}, theme="light")
+    assert marker not in css
+
+
+def test_assemble_css_builtin_dark_mode_ignores_planted_theme_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    themes_dir = inline.personal_themes_dir()
+    themes_dir.mkdir(parents=True)
+    marker = "/* PLANTED-DARK-THEME-MARKER */"
+    (themes_dir / "dark.css").write_text(marker, encoding="utf-8")
+
+    css = assemble_css({"components": []}, theme="dark")
+    assert marker not in css
+
+
 def test_render_page_unknown_theme_raises_manifest_error(tmp_path, monkeypatch):
     from jimemo.errors import ManifestError
 
