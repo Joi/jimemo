@@ -57,6 +57,43 @@ def test_font_inferred_from_font_named_token_when_brand_fonts_empty():
         assert '"Custom"' in m.group(1)
 
 
+def test_font_inference_rejects_unsafe_family_extracted_from_token_value():
+    # `"Bad"Name, sans-serif` passes validate_token_value (a bare '"' is
+    # legal in a token value), but the family carved out of it --
+    # literally `"Bad"Name` -- fails the stricter font-family check. Left
+    # unvalidated, it would re-quote into a malformed
+    # `--jm-font-prose: ""Bad"Name", ...` declaration; it must instead be
+    # rejected and the role left unmapped (no other font source here).
+    export = _export_with_tokens(
+        [Token(name="--x-font", value='"Bad"Name, sans-serif', kind="font")]
+    )
+    css = build_theme(export, "inferred")
+    # jimemo's font roles are left unmapped -- not corrupted -- while the
+    # raw token is still re-declared verbatim below (module contract:
+    # "All imported tokens are re-declared verbatim ... mapped or not").
+    assert not re.search(r"--jm-font-prose:\s*[^;]+;", css)
+    assert not re.search(r"--jm-font-ui:\s*[^;]+;", css)
+    assert '--x-font: "Bad"Name, sans-serif;' in css
+    assert not theme_structure_errors(css)
+
+
+def test_font_inference_falls_through_to_fontface_when_token_family_unsafe():
+    # Same unsafe token value, but with a valid (reader-validated)
+    # FontFace also present -- the rejected token-derived family must
+    # fall through to source (b) rather than give up entirely.
+    from jimemo.design.reader import FontFace
+
+    export = _export_with_tokens(
+        [Token(name="--x-font", value='"Bad"Name, sans-serif', kind="font")],
+        fonts=[FontFace(family="Safe Face", weight="400", style="normal")],
+    )
+    css = build_theme(export, "inferred")
+    m = re.search(r"--jm-font-prose:\s*([^;]+);", css)
+    assert m and '"Safe Face"' in m.group(1)
+    assert "Bad" not in m.group(1)
+    assert not theme_structure_errors(css)
+
+
 def test_font_inferred_from_fontface_when_no_font_token():
     from jimemo.design.reader import FontFace
 

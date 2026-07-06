@@ -48,6 +48,7 @@ from .reader import (
     validate_namespace,
     validate_token_name,
     validate_token_value,
+    validate_font_family,
 )
 
 __all__ = ["build_theme", "theme_structure_errors"]
@@ -230,19 +231,38 @@ def _infer_font_declaration(export: DesignExport) -> Optional[Tuple[str, str, st
           sans-serif/...) still picks the fallback stack exactly as the
           brand_fonts path does; or
       (b) the first parsed FontFace's family, if (a) found no usable
-          token -- there's no font-stack value to read a generic from
-          here, so the default fallback stack applies.
+          token, or (a)'s family failed validation -- there's no
+          font-stack value to read a generic from here, so the default
+          fallback stack applies.
 
     None if neither yields a family, so the caller leaves jimemo's font
-    defaults alone rather than emit a broken/empty family."""
+    defaults alone rather than emit a broken/empty family.
+
+    (a)'s family is carved out of a token VALUE that only passed
+    `validate_token_value` -- a generic CSS-value check that allows a
+    bare `"` (needed for quoted families), not the stricter
+    `validate_font_family` reader.py applies to brand_fonts/fonts[]
+    metadata. A value like `--x-font: "Bad"Name, sans-serif` passes
+    validate_token_value but would re-quote into a malformed
+    `--jm-font-prose: ""Bad"Name", ...` if the carved family were
+    interpolated as-is. So the extracted family gets that same stricter
+    check here; one that fails it isn't safely fixable by this function,
+    so it falls through to (b) (itself already validated at
+    read_export time, so it needs no re-check here) rather than emit the
+    broken declaration."""
     token = _pick_font_name_token(export)
     if token is not None:
         family = _first_family_in_stack(token.value)
         if family:
-            generic = _generic_family_of(token.value)
-            stack = _FALLBACK_STACKS.get(generic or _DEFAULT_GENERIC, _FALLBACK_STACKS[_DEFAULT_GENERIC])
-            value = '"{}", {}'.format(family, stack)
-            return value, family, token.name
+            try:
+                validate_font_family(family)
+            except DesignImportError:
+                family = None
+            if family:
+                generic = _generic_family_of(token.value)
+                stack = _FALLBACK_STACKS.get(generic or _DEFAULT_GENERIC, _FALLBACK_STACKS[_DEFAULT_GENERIC])
+                value = '"{}", {}'.format(family, stack)
+                return value, family, token.name
 
     if export.fonts and export.fonts[0].family:
         family = export.fonts[0].family

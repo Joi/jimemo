@@ -52,6 +52,7 @@ __all__ = [
     "validate_token_name",
     "validate_token_value",
     "validate_namespace",
+    "validate_font_family",
 ]
 
 
@@ -211,7 +212,7 @@ def _from_manifest(manifest: dict) -> DesignExport:
         # BrandFont.family flows into mapping._font_declaration's quoted
         # `"<family>", <stack>` role value -- same interpolation risk as a
         # FontFace family, so it gets the same validation here.
-        _validate_font_family(family)
+        validate_font_family(family)
         brand_fonts.append(
             BrandFont(
                 family=family,
@@ -656,7 +657,7 @@ _FONT_STYLE_KEYWORDS = frozenset({"normal", "italic", "oblique"})
 _OBLIQUE_ANGLE_RE = re.compile(r"^oblique\s+-?\d+(?:\.\d+)?deg$", re.IGNORECASE)
 
 
-def _validate_font_family(family: str) -> None:
+def validate_font_family(family: str) -> None:
     """Reject a font family name that isn't safe to interpolate into the
     generated CSS, both inside a quoted `font-family: "<family>"` string
     AND as a bare token in a `"<family>", <stack>` role value. A legit
@@ -730,6 +731,6 @@ def _validate_font_style(family: str, style: str) -> None:
 def _validate_font_metadata(family: str, weight: str, style: str) -> None:
     """Validate all three interpolated FontFace fields together (family,
     weight, style) at the reader trust boundary."""
-    _validate_font_family(family)
+    validate_font_family(family)
     _validate_font_weight(family, weight)
     _validate_font_style(family, style)
