@@ -380,6 +380,26 @@ def test_cli_render_writes_file(tmp_path, monkeypatch):
     assert "<strong>text</strong>" in html
 
 
+def test_cli_render_unknown_theme_exits_1_cleanly(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    make_template_dir(tmp_path / "templates", "test-tpl", BASIC_TEMPLATE)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [tmp_path / "templates"])
+
+    content_file = tmp_path / "content.md"
+    content_file.write_text("---\ntitle: From CLI\n---\nBody text.\n")
+    out_path = tmp_path / "out.html"
+
+    rc = cli.main([
+        "render", "test-tpl", str(content_file), "-o", str(out_path),
+        "--theme", "no-such-theme",
+    ])
+    assert rc == 1
+    assert not out_path.exists()
+    err = capsys.readouterr().err
+    assert "unknown theme" in err
+    assert "Traceback" not in err
+
+
 def test_cli_render_lint_error_writes_no_file(tmp_path, monkeypatch, capsys):
     make_template_dir(
         tmp_path / "templates",
@@ -564,3 +584,46 @@ def test_assemble_css_valid_theme_name_still_resolves(tmp_path, monkeypatch):
 
     css = assemble_css({"components": []}, theme="chiba")
     assert "#4c4499" in css
+
+
+# -- unknown --theme: error, not a silent unthemed render ----------------
+#
+# `_resolve_theme_path` returning None used to mean "skip the override
+# quietly" for every well-formed name, which is correct for "light"/"dark"
+# (no file by design) but wrong for a typo'd or never-imported theme: the
+# page rendered anyway, with a `data-theme` attribute matching nothing and
+# no error to explain why it looks unthemed.
+
+
+def test_assemble_css_unknown_theme_raises_manifest_error(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+    with pytest.raises(ManifestError, match=re.escape("unknown theme 'no-such-theme'")):
+        assemble_css({"components": []}, theme="no-such-theme")
+
+
+def test_assemble_css_builtin_light_mode_does_not_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+    css = assemble_css({"components": []}, theme="light")
+    assert isinstance(css, str) and css  # no exception; base CSS still assembled
+
+
+def test_assemble_css_builtin_dark_mode_does_not_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+    css = assemble_css({"components": []}, theme="dark")
+    assert isinstance(css, str) and css  # no exception; base CSS still assembled
+
+
+def test_render_page_unknown_theme_raises_manifest_error(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
+    content = {"title": "Hello", "body": Markup("<p>World</p>")}
+
+    with pytest.raises(ManifestError, match="unknown theme"):
+        render_page(template_dir, content, theme="no-such-theme")

@@ -12,6 +12,16 @@ from .sanitize import is_allowed_image_data_uri, parse_srcset
 
 TOOLKIT_DIR = REPO_ROOT / "toolkit"
 
+# Built-in mode names: `--theme light` / `--theme dark` pin the OS-following
+# `[data-theme]` CSS in tokens.css/base.css and never resolve to a file, so
+# `_resolve_theme_path` legitimately returns None for them -- that must not
+# be treated as an unknown theme (see `assemble_css`). Mirrors
+# `design.importer.RESERVED_THEME_NAMES`, which reserves the same two names
+# so an imported theme can never collide with them; duplicated rather than
+# imported to avoid a cycle (importer.py imports `personal_themes_dir` from
+# this module).
+_BUILTIN_THEME_MODES = {"light", "dark"}
+
 # Extensions inline_images will read and embed. Raster only, mirroring
 # is_allowed_image_data_uri: a local .svg could only ever produce a
 # data:image/svg+xml URI that lint rejects anyway (SVG can carry
@@ -101,6 +111,18 @@ def _resolve_theme_path(theme: str) -> Optional[Path]:
     return None
 
 
+def _available_theme_names() -> List[str]:
+    """Every theme name currently resolvable via `_theme_search_dirs`,
+    sorted and de-duplicated, for the unknown-theme error message (see
+    `assemble_css`). Empty if neither search dir exists or has any
+    `*.css` file yet."""
+    names = set()
+    for base in _theme_search_dirs():
+        if base.is_dir():
+            names.update(css_path.stem for css_path in base.glob("*.css"))
+    return sorted(names)
+
+
 def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
     """tokens.css + base.css + only the components the manifest lists
     (+ a <theme>.css override, if one resolves — see `_resolve_theme_path`:
@@ -114,6 +136,12 @@ def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
     `:root` rule occurring after base.css in the assembly would otherwise
     win over the print force and leak screen colors into print output. See
     toolkit/print-force.css's own header comment for the full explanation.
+
+    Raises ManifestError if `theme` is neither a built-in mode name
+    (`_BUILTIN_THEME_MODES`, which never resolve to a file by design) nor
+    a name `_resolve_theme_path` can find a file for — otherwise a typo'd
+    or never-imported theme would render successfully but unthemed, with
+    a `data-theme` attribute matching nothing, and no error to say why.
     """
     parts = [
         (TOOLKIT_DIR / "tokens.css").read_text(encoding="utf-8"),
@@ -128,6 +156,14 @@ def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
         theme_path = _resolve_theme_path(theme)
         if theme_path is not None:
             parts.append(theme_path.read_text(encoding="utf-8"))
+        elif theme not in _BUILTIN_THEME_MODES:
+            available = _available_theme_names()
+            hint = f" (available: {', '.join(available)})" if available else ""
+            raise ManifestError(
+                f"unknown theme {theme!r} (not found in repo themes/ or "
+                f"~/.jimemo/themes/; import one with `jimemo import-design`)"
+                f"{hint}"
+            )
     parts.append((TOOLKIT_DIR / "print-force.css").read_text(encoding="utf-8"))
     return "\n".join(parts)
 
