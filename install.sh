@@ -67,8 +67,11 @@ print_usage() {
 Usage: install.sh [--dry-run] [--uninstall] [--help]
 
 Symlinks the jimemo CLI onto PATH and registers the jimemo skill with
-every agent harness found on this machine (Claude Code/Cowork, Codex,
-and Amplifier if present). One clone; `git pull` updates every harness.
+every agent harness that reads a filesystem skills dir (Claude Code --
+and pi, which reads the same dir; Codex; Amplifier if present). Claude
+Desktop / Cowork loads skills app-side, not from disk, so it gets the
+CLI only (which works in its local-agent mode). One clone; `git pull`
+updates every harness.
 
   --dry-run     print every action without doing it
   --uninstall   remove exactly the symlinks this script creates
@@ -158,7 +161,7 @@ unlink_one() {
 
 install_all() {
     link_one "$CLI_TARGET" "$CLI_SOURCE" "jimemo CLI"
-    link_one "$CLAUDE_TARGET" "$SKILL_SOURCE" "Claude Code / Cowork skill"
+    link_one "$CLAUDE_TARGET" "$SKILL_SOURCE" "Claude Code skill (also read by pi)"
     link_one "$CODEX_TARGET" "$SKILL_SOURCE" "Codex skill"
 
     if [ "$AMPLIFIER_DETECTED" = "1" ]; then
@@ -177,6 +180,10 @@ install_all() {
 
     if [ "$DRY_RUN" != "1" ]; then
         echo
+        note "pi reads ~/.claude/skills, so it picks up the skill above -- no separate step." \
+            "Claude Desktop (Cowork) does NOT load filesystem skills, but the jimemo CLI" \
+            "works in its local-agent mode: tell it to run 'jimemo', or point it at AGENTS.md."
+        echo
         echo "Done. Next:"
         echo "  jimemo doctor   # sanity-check the install"
         echo "  jimemo --help   # full command reference"
@@ -185,7 +192,7 @@ install_all() {
 
 uninstall_all() {
     unlink_one "$CLI_TARGET" "$CLI_SOURCE" "jimemo CLI"
-    unlink_one "$CLAUDE_TARGET" "$SKILL_SOURCE" "Claude Code / Cowork skill"
+    unlink_one "$CLAUDE_TARGET" "$SKILL_SOURCE" "Claude Code skill (also read by pi)"
     unlink_one "$CODEX_TARGET" "$SKILL_SOURCE" "Codex skill"
     unlink_one "$AMPLIFIER_TARGET" "$SKILL_SOURCE" "Amplifier skill"
 

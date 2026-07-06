@@ -19,17 +19,46 @@ jimemo doctor
 ```
 
 Requires Python >= 3.9 and nothing else -- stdlib plus vendored
-dependencies only, nothing to `pip install`. `install.sh` symlinks the
-`jimemo` executable onto `~/.local/bin` and registers the agent skill
-(`skill/`) with any harness it finds installed (Claude Code/Cowork,
-Codex, Amplifier); it's idempotent, and `./install.sh --uninstall`
-reverses it, leaving the clone untouched. One clone; `git pull` updates
-every harness that points at it.
+dependencies only, nothing to `pip install`. It's one clone: `install.sh`
+symlinks everything back to it, so `git pull` updates every harness at
+once. The script is idempotent, refuses to clobber a real file/dir that
+isn't its own symlink, and `./install.sh --uninstall` reverses exactly
+what it created, leaving the clone untouched. `--dry-run` prints the plan
+without touching anything.
 
-Without `install.sh`, the manual equivalent is a symlink:
+`install.sh` creates:
+
+- `~/.local/bin/jimemo` -> the CLI (add `~/.local/bin` to your `PATH` if
+  it isn't already).
+- the agent skill (`skill/`) symlinked into each harness skills directory
+  that applies (see the table).
+
+### Per-harness coverage
+
+| Harness | How it gets jimemo | Set up by `install.sh`? |
+|---|---|---|
+| **Claude Code** | skill at `~/.claude/skills/jimemo` | yes |
+| **pi** | reads `~/.claude/skills` (its `settings.json` `skills` paths), so it picks up the same skill | yes -- no separate step |
+| **Codex** | skill at `~/.codex/skills/jimemo` | yes |
+| **Amplifier** | skill at `~/.amplifier/skills/jimemo` | yes |
+| **Claude Desktop** (Cowork / local-agent mode) | **skill is not auto-loaded** -- its skills are app-managed, not read from `~/.claude/skills`. But local-agent mode runs shell commands, so the **`jimemo` CLI works** there directly. | CLI only |
+
+**Claude Desktop note:** because Cowork can't load a filesystem skill,
+just tell it to use the `jimemo` command (it's on `PATH`), or point it at
+[`AGENTS.md`](AGENTS.md), which is the same CLI contract the skill wraps.
+jimemo is CLI-first by design -- the skill is a convenience layer, so any
+agent that can run a shell can drive the tool without it.
+
+### Manual install
+
+Without `install.sh`, the CLI is just a symlink, and the skill is a
+symlink per harness:
 
 ```
-ln -s /path/to/jimemo/jimemo ~/.local/bin/jimemo
+ln -s /path/to/jimemo/jimemo   ~/.local/bin/jimemo
+ln -s /path/to/jimemo/skill    ~/.claude/skills/jimemo    # Claude Code (and pi)
+ln -s /path/to/jimemo/skill    ~/.codex/skills/jimemo     # Codex
+ln -s /path/to/jimemo/skill    ~/.amplifier/skills/jimemo # Amplifier
 ```
 
 ## Usage
