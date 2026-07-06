@@ -209,6 +209,12 @@ bundled with this repo, ever. Point `import-design` at an export
 directory someone gave you, or keep a personal collection in a
 private repo you control, cloned to `~/.jimemo/design-systems/`:
 
+> **Respect the copyright.** A design system you import belongs to its
+> owner — only use ones you have the rights to, don't redistribute them,
+> and don't publish pages that embed their fonts (`--embed-fonts`) unless
+> you're licensed to. jimemo is the tool; the brand material is not yours
+> to hand on.
+
 ```
 git clone <your-private-design-systems-repo> ~/.jimemo/design-systems
 jimemo import-design --from mybrand    # resolves ~/.jimemo/design-systems/mybrand/
