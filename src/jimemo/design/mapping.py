@@ -158,11 +158,14 @@ def _font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
     family, used only for the header's mapping table.
 
     brand_fonts (manifest metadata) is the primary source when present.
-    When it's empty -- a manifest lacking `brandFonts`, or the
-    CSS-fallback path, which never populates it at all -- falls back to
-    `_infer_font_declaration`'s name/FontFace heuristics instead of
-    leaving every export without a manifest unable to map a font at
-    all."""
+    When there's no *confident* brand font to use -- a manifest lacking
+    `brandFonts`, the CSS-fallback path (which never populates it at
+    all), or a manifest whose brand_fonts are all unreferenced/unknown
+    -- falls back to `_infer_font_declaration`'s name/FontFace
+    heuristics instead of leaving every such export unable to map a
+    font at all. An unreferenced-only brand_fonts list is treated the
+    same as an empty one; a brand font the export itself flagged as
+    unused is not a reason to skip inference."""
     family = _pick_primary_font(export)
     if family:
         brand = next(b for b in export.brand_fonts if b.family == family and b.status == "ok")
@@ -181,7 +184,10 @@ def _font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
         value = '"{}", {}'.format(family, stack)
         return value, family, (source_token or brand.referencing_token_names[0])
 
-    if not export.brand_fonts:
+    has_confident_brand_font = any(
+        b.status == "ok" and b.referencing_token_names for b in export.brand_fonts
+    )
+    if not has_confident_brand_font:
         return _infer_font_declaration(export)
     return None
 

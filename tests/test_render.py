@@ -56,6 +56,20 @@ SCRIPT_TEMPLATE = """\
 """
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch):
+    """Every test in this file runs with HOME pointed at an empty,
+    per-test directory. `assemble_css` (via `personal_themes_dir`)
+    checks `~/.jimemo/themes/<theme>.css` before any repo/fake toolkit
+    dir a test sets up, so leaving the real HOME in place would let a
+    theme file that happens to exist on the machine running the suite
+    shadow the fixture under test -- see
+    test_assemble_css_print_force_wins_over_theme_root_override, which
+    monkeypatches TOOLKIT_DIR but relies on this fixture for the
+    personal-dir side of theme resolution."""
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+
 def make_template_dir(tmp_path: Path, name: str, template_source: str, manifest_source: str = BASIC_MANIFEST) -> Path:
     template_dir = tmp_path / name
     template_dir.mkdir(parents=True)

@@ -7,7 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo.design.mapping import build_theme, theme_structure_errors
-from jimemo.design.reader import DesignExport, Token, read_export
+from jimemo.design.reader import BrandFont, DesignExport, Token, read_export
 from jimemo.errors import DesignImportError
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "design-export"
@@ -75,6 +75,26 @@ def test_font_not_inferred_when_nothing_to_infer_from():
     assert not re.search(r"--jm-font-prose:\s*[^;]+;", css)
     assert not re.search(r"--jm-font-ui:\s*[^;]+;", css)
     assert "no confident primary font found" in css
+
+
+def test_font_inferred_when_brand_fonts_has_only_unreferenced_entries():
+    # An unreferenced-only brand_fonts list (referencing_token_names=[])
+    # must behave like an empty one: _pick_primary_font correctly refuses
+    # to name an unreferenced brand font as primary, and _font_declaration
+    # must fall through to the --*-font token inference rather than give
+    # up just because export.brand_fonts happens to be non-empty.
+    export = DesignExport(
+        tokens=[Token(name="--x-font", value='"Custom", sans-serif', kind="font")],
+        fonts=[],
+        brand_fonts=[BrandFont(family="Unused", referencing_token_names=[], status="ok")],
+        namespace="",
+    )
+    css = build_theme(export, "inferred")
+    for role in ("--jm-font-prose", "--jm-font-ui"):
+        m = re.search(re.escape(role) + r":\s*([^;]+);", css)
+        assert m, f"{role} not set in theme"
+        assert '"Custom"' in m.group(1)
+        assert "Unused" not in m.group(1)
 
 
 def test_chiba_font_mapping_unchanged_when_brand_fonts_present():
