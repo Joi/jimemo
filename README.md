@@ -6,18 +6,31 @@ optional private-link publishing setup. Stdlib + vendored dependencies only;
 nothing to `pip install`, no network access at render time.
 
 Design spec: `docs/superpowers/specs/2026-07-05-jimemo-design.md`. Module
-map and layout: `docs/architecture.md`.
+map and layout: `docs/architecture.md`. Setting this up for someone
+else? See [`docs/friends.md`](docs/friends.md) for the exact steps.
 
 ## Install
 
-Clone the repo and put `jimemo` (the executable at the repo root) on your
-`PATH`, e.g.:
+```
+git clone <this repo's URL> jimemo
+cd jimemo
+./install.sh
+jimemo doctor
+```
+
+Requires Python >= 3.9 and nothing else -- stdlib plus vendored
+dependencies only, nothing to `pip install`. `install.sh` symlinks the
+`jimemo` executable onto `~/.local/bin` and registers the agent skill
+(`skill/`) with any harness it finds installed (Claude Code/Cowork,
+Codex, Amplifier); it's idempotent, and `./install.sh --uninstall`
+reverses it, leaving the clone untouched. One clone; `git pull` updates
+every harness that points at it.
+
+Without `install.sh`, the manual equivalent is a symlink:
 
 ```
 ln -s /path/to/jimemo/jimemo ~/.local/bin/jimemo
 ```
-
-Requires Python >= 3.9.
 
 ## Usage
 
@@ -188,6 +201,27 @@ Imported themes are written to `~/.jimemo/themes/<name>.css`, never
 into the repo, and take precedence over a repo theme of the same
 name — a theme you just imported wins even on a name collision.
 
+### Design systems are bring-your-own
+
+jimemo ships **zero** design systems: they're copyrighted brand
+material (colors, typefaces, logos), not tool code, so none are
+bundled with this repo, ever. Point `import-design` at an export
+directory someone gave you, or keep a personal collection in a
+private repo you control, cloned to `~/.jimemo/design-systems/`:
+
+```
+git clone <your-private-design-systems-repo> ~/.jimemo/design-systems
+jimemo import-design --from mybrand    # resolves ~/.jimemo/design-systems/mybrand/
+```
+
+`--from <name>` is sugar for the positional export-dir argument — it
+resolves `<name>` (a lowercase-letters/digits/hyphens slug; nothing
+else, since it becomes a path component) against that convention dir
+and errors out, naming the exact path it expected, if nothing's there
+yet. It's mutually exclusive with passing an export dir positionally;
+the positional form still works unchanged for a one-off export
+that isn't part of a collection.
+
 ## Publish
 
 `jimemo publish` turns a rendered `out.html` into an unlisted private
@@ -250,6 +284,24 @@ nobody without the link can find it. Purging tombstones the hash
 including the `cloudflare` backend's single-machine limitation, are in
 [`docs/publish-setup.md`](docs/publish-setup.md).
 
+## Security posture
+
+- **Self-contained output.** A rendered `out.html` inlines its CSS and
+  images; nothing is fetched when it's opened. Hand it to anyone with
+  no server involved.
+- **No network at view or render time.** `jimemo render` never shells
+  out or touches the network. `jimemo publish` is the only subcommand
+  that does (and only when you run it).
+- **Sanitized content.** Markdown-typed slot content goes through a
+  stdlib allowlist sanitizer before it lands in the page.
+- **Design exports are untrusted data.** `import-design` reads an
+  export's tokens and font references; it never opens, imports, or
+  executes any code the export directory contains.
+- **Vendored, checksummed dependencies.** Jinja2, MarkupSafe, Markdown,
+  PyYAML, tomli, and Chart.js are vendored into the repo, not fetched
+  at install or run time; `jimemo doctor` verifies them against
+  checked-in SHA-256 sums and refuses to import a tampered copy.
+
 ## Development
 
 ```
@@ -262,4 +314,7 @@ Regenerate golden renders after a deliberate template/pipeline change:
 JIMEMO_UPDATE_GOLDENS=1 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_golden.py
 ```
 
-MIT license.
+## License
+
+MIT — see [`LICENSE`](LICENSE). Third-party credits (vendored libraries,
+design inspiration, ported code) are in [`CREDITS.md`](CREDITS.md).

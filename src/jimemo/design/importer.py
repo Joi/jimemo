@@ -33,9 +33,15 @@ from ..errors import DesignImportError
 from ..inline import personal_themes_dir
 from ..lint import css_reference_errors
 from .mapping import build_theme, theme_structure_errors
-from .reader import DesignExport, FontFace, read_export
+from .reader import THEME_NAME_RE, DesignExport, FontFace, read_export
 
-__all__ = ["ImportResult", "import_design", "slugify_name"]
+__all__ = [
+    "ImportResult",
+    "import_design",
+    "slugify_name",
+    "design_systems_dir",
+    "resolve_from_name",
+]
 
 
 # The toolkit's own `:root[data-theme="light"]` / `[data-theme="dark"]`
@@ -85,6 +91,49 @@ class ImportResult:
     header: str
     embedded_font_families: List[str] = field(default_factory=list)
     embedded_bytes: int = 0
+
+
+def design_systems_dir() -> Path:
+    """The conventional home for a personal collection of design
+    exports (e.g. a private repo of Claude-design exports cloned
+    here) that `--from NAME` resolves against. Respects a `HOME`
+    override the same way `personal_themes_dir` does (`Path.home()`
+    reads it), so tests can point it at a tmp dir. jimemo never
+    creates, clones into, or otherwise manages this directory -- it
+    only reads from `<design_systems_dir()>/NAME` if the caller
+    points `--from` there."""
+    return Path.home() / ".jimemo" / "design-systems"
+
+
+def resolve_from_name(name: str) -> Path:
+    """Resolve `--from NAME` to `<design_systems_dir()>/NAME`.
+
+    `name` is validated against `THEME_NAME_RE` -- the same
+    lowercase-alnum-and-single-hyphens slug shape a theme name must
+    match -- before it ever touches a path. Without that check a
+    hostile `--from ../../etc` (or an absolute path smuggled in as a
+    "name") would escape `design_systems_dir()` the same way an
+    unvalidated `--theme` value would escape `personal_themes_dir()`
+    (see `inline.py`'s resolution of `--theme`). Raises
+    DesignImportError if the name doesn't validate or the resulting
+    directory doesn't exist -- the caller (a friend who hasn't cloned
+    their design-systems repo yet, or mistyped a name) needs to know
+    exactly what path was expected."""
+    if not THEME_NAME_RE.match(name):
+        raise DesignImportError(
+            f"--from name {name!r} is not a valid slug (expected lowercase "
+            f"letters, digits, and single hyphens, e.g. 'chiba-tech') -- "
+            f"refusing to resolve it against {design_systems_dir()}"
+        )
+    candidate = design_systems_dir() / name
+    if not candidate.is_dir():
+        raise DesignImportError(
+            f"no design system named {name!r} at {candidate} -- clone your "
+            f"private design-systems repo there (e.g. "
+            f"'git clone <your-repo> {design_systems_dir()}'), or pass an "
+            f"export directory path directly instead of --from"
+        )
+    return candidate
 
 
 def _default_name(export: DesignExport, export_dir: Path) -> str:

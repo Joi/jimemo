@@ -42,7 +42,7 @@ Every subcommand has its own `--help`; this is the map, not the manual.
 | `jimemo info <template> [--json]` | shows a template's slot schema, components, charts, and suitability metadata |
 | `jimemo render <template\|auto> <content> [-o OUT] [--theme NAME] [--open]` | renders a template + content file to one HTML file; `auto` uses the same scorer as `suggest` and falls through to the next-best template if the top pick's manifest rejects the content |
 | `jimemo new-template <name>` | scaffolds a personal template under `~/.jimemo/templates/<name>/` |
-| `jimemo import-design <export-dir> [--name NAME] [--embed-fonts]` | parses a Claude-design export into a jimemo theme at `~/.jimemo/themes/<name>.css` |
+| `jimemo import-design <export-dir>\|--from NAME [--name NAME] [--embed-fonts]` | parses a Claude-design export into a jimemo theme at `~/.jimemo/themes/<name>.css`; `--from NAME` resolves `~/.jimemo/design-systems/NAME/` instead of a positional path |
 | `jimemo publish <file>` / `purge <hash-or-url>` / `list` / `gc` / `setup [--dry-run]` | publishes a rendered file to an unlisted link and manages it; `setup` provisions a backend in `~/.jimemo/config.toml` |
 
 ## The content contract
@@ -77,7 +77,10 @@ copyrighted brand material, not tool code. Point `import-design` at
 whatever export directory the user provides. A reasonable personal
 convention is a private repo of exports cloned to
 `~/.jimemo/design-systems/`, but that repo is never assumed to exist and
-is never fetched automatically.
+is never fetched automatically. `import-design --from NAME` is sugar for
+that convention: it resolves `NAME` (validated as a plain slug) against
+`~/.jimemo/design-systems/NAME/` and errors out, naming the expected
+path, if nothing's cloned there yet.
 
 ## Agent skill
 

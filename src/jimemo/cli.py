@@ -418,11 +418,25 @@ def cmd_import_design(args) -> int:
     # a command-specific feature, not something doctor/list/--version
     # need, so it follows the same "only the handler that needs it pays
     # for it" convention rather than being imported at module scope.
-    from .design.importer import import_design
+    from .design.importer import import_design, resolve_from_name
     from .errors import DesignImportError
 
-    export_dir = Path(args.export_dir)
+    if args.export_dir and args.from_name:
+        print(
+            "jimemo import-design: provide either an export directory or "
+            "--from NAME, not both",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.export_dir and not args.from_name:
+        print(
+            "jimemo import-design: provide an export directory, or --from NAME",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
+        export_dir = resolve_from_name(args.from_name) if args.from_name else Path(args.export_dir)
         result = import_design(export_dir, name=args.name, embed_fonts=args.embed_fonts)
     except DesignImportError as e:
         print(str(e), file=sys.stderr)
@@ -500,7 +514,18 @@ def main(argv=None) -> int:
         "import-design",
         help="import a Claude-design export as a jimemo theme (~/.jimemo/themes/)",
     )
-    import_design_p.add_argument("export_dir", help="path to the design export directory")
+    import_design_p.add_argument(
+        "export_dir", nargs="?", default=None,
+        help="path to the design export directory (or use --from NAME)",
+    )
+    import_design_p.add_argument(
+        "--from",
+        dest="from_name",
+        metavar="NAME",
+        help="resolve NAME against ~/.jimemo/design-systems/NAME/ instead "
+        "of a positional export dir (e.g. --from chiba-tech); mutually "
+        "exclusive with the positional export dir",
+    )
     import_design_p.add_argument(
         "--name",
         help="theme name (default: derived from the export's namespace, or "

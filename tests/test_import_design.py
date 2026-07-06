@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -10,7 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo import inline
 from jimemo.cli import main
-from jimemo.design.importer import import_design, slugify_name
+from jimemo.design.importer import (
+    design_systems_dir,
+    import_design,
+    resolve_from_name,
+    slugify_name,
+)
 from jimemo.errors import DesignImportError
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "design-export"
@@ -725,3 +731,105 @@ def test_cli_import_design_malformed_manifest_shape_returns_rc1(tmp_path, monkey
     assert rc == 1
     assert not (tmp_path / ".jimemo" / "themes" / "evil.css").exists()
     assert "Traceback" not in capsys.readouterr().err
+
+
+# -- --from NAME: resolve against ~/.jimemo/design-systems/NAME/ ---------
+
+
+def _seed_design_system(tmp_path: Path, name: str) -> Path:
+    """Copies the synthetic fixture into a fake
+    `~/.jimemo/design-systems/<name>/` under `tmp_path` (used as HOME),
+    the shape a friend gets by cloning their private design-systems
+    repo there."""
+    dest = design_systems_dir() / name
+    shutil.copytree(FIXTURE_DIR, dest)
+    return dest
+
+
+def test_resolve_from_name_finds_seeded_design_system(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seeded = _seed_design_system(tmp_path, "chiba-tech")
+
+    resolved = resolve_from_name("chiba-tech")
+
+    assert resolved == seeded
+    assert resolved == tmp_path / ".jimemo" / "design-systems" / "chiba-tech"
+
+
+def test_resolve_from_name_missing_raises_clean_error_naming_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    expected_path = tmp_path / ".jimemo" / "design-systems" / "nope"
+
+    with pytest.raises(DesignImportError, match=re.escape(str(expected_path))):
+        resolve_from_name("nope")
+
+
+def test_resolve_from_name_rejects_slash():
+    with pytest.raises(DesignImportError, match="not a valid slug"):
+        resolve_from_name("foo/bar")
+
+
+def test_resolve_from_name_rejects_dotdot_traversal():
+    with pytest.raises(DesignImportError, match="not a valid slug"):
+        resolve_from_name("../etc")
+
+
+def test_resolve_from_name_rejects_uppercase_and_underscore():
+    with pytest.raises(DesignImportError, match="not a valid slug"):
+        resolve_from_name("Chiba_Tech")
+
+
+def test_cli_import_design_from_resolves_and_writes_theme(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _seed_design_system(tmp_path, "chiba-tech")
+
+    rc = main(["import-design", "--from", "chiba-tech", "--name", "viafrom"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "wrote theme:" in out
+    assert (tmp_path / ".jimemo" / "themes" / "viafrom.css").is_file()
+
+
+def test_cli_import_design_from_nonexistent_returns_rc1_clean_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    rc = main(["import-design", "--from", "nope"])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no design system named 'nope'" in err
+    assert "Traceback" not in err
+
+
+def test_cli_import_design_from_and_positional_both_given_returns_rc2(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _seed_design_system(tmp_path, "chiba-tech")
+
+    rc = main(["import-design", str(FIXTURE_DIR), "--from", "chiba-tech"])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "not both" in err
+    assert not (tmp_path / ".jimemo" / "themes").exists()
+
+
+def test_cli_import_design_neither_positional_nor_from_returns_rc2(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    rc = main(["import-design"])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--from NAME" in err
+
+
+def test_cli_import_design_positional_still_works_unaffected_by_from(tmp_path, monkeypatch):
+    # The pre-existing positional-path form must keep working exactly as
+    # before now that it's optional (nargs="?") to make room for --from.
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    rc = main(["import-design", str(FIXTURE_DIR), "--name", "positional-still-works"])
+
+    assert rc == 0
+    assert (tmp_path / ".jimemo" / "themes" / "positional-still-works.css").is_file()

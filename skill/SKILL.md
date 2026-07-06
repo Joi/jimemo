@@ -109,11 +109,18 @@ produced by the design-system Skill) — a folder, not a URL. **Design
 systems are copyrighted and are never bundled with jimemo.** The user
 brings their own export, or keeps a personal collection in a private repo
 they control (a reasonable convention: clone it to
-`~/.jimemo/design-systems/` and pass a path under there to
-`import-design`). Never fetch, clone, or reference someone else's design
-export on their behalf without them providing it. The import is
-parse-only — jimemo reads tokens as data and never executes any code in
-the export directory.
+`~/.jimemo/design-systems/`). If they do, `import-design --from <name>`
+resolves `<name>` against `~/.jimemo/design-systems/<name>/` instead of
+typing the full path:
+
+```
+jimemo import-design --from <name> --name <theme-name>
+```
+
+Never fetch, clone, or reference someone else's design export on their
+behalf without them providing it. The import is parse-only — jimemo
+reads tokens as data and never executes any code in the export
+directory.
 
 ## Stale suitability labels
 
