@@ -51,9 +51,9 @@ def _run(argv: List[str], env: Optional[Dict[str, str]] = None) -> CompletedProc
 
 class Wrangler:
     """Thin argv-building wrapper around ``npx wrangler``, one method per
-    subcommand the cloudflare backend needs: deploying a directory to
-    Cloudflare Pages, and reading/writing/listing the tombstone KV
-    namespace.
+    subcommand the cloudflare backend needs: listing/creating Cloudflare
+    Pages projects for setup, deploying a directory to Cloudflare Pages,
+    and reading/writing/listing the tombstone KV namespace.
 
     Account scoping: CloudflareConfig carries an ``account_id``. None of
     these subcommands take an ``--account-id`` flag (checked against
@@ -131,6 +131,59 @@ class Wrangler:
             "pages deploy",
         )
 
+    def pages_project_names(self) -> List[str]:
+        """Return the names of the account's Cloudflare Pages projects.
+
+        Setup uses this before its first deploy so it can create a
+        missing project explicitly. Current Wrangler prompts to create a
+        missing Pages project during ``pages deploy --project-name``; that
+        prompt fails under jimemo's captured, non-interactive subprocess.
+        """
+        result = self._invoke(
+            ["pages", "project", "list", "--json"],
+            "pages project list",
+        )
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            raise PublishError(
+                f"wrangler pages project list: could not parse JSON output: {e}"
+            )
+
+        if isinstance(payload, list):
+            projects = payload
+        elif isinstance(payload, dict):
+            projects = (
+                payload.get("result")
+                or payload.get("projects")
+                or payload.get("items")
+            )
+        else:
+            projects = None
+        if not isinstance(projects, list):
+            raise PublishError(
+                "wrangler pages project list: expected a JSON list of projects"
+            )
+
+        return [
+            item["name"]
+            for item in projects
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        ]
+
+    def pages_project_create(
+        self, project: str, branch: str = "main"
+    ) -> CompletedProcess:
+        """Create a Cloudflare Pages project with the production branch
+        jimemo deploys to."""
+        return self._invoke(
+            [
+                "pages", "project", "create", project,
+                "--production-branch", branch,
+            ],
+            "pages project create",
+        )
+
     def kv_put(self, namespace_id: str, key: str, value: str) -> None:
         """Write ``value`` under ``key`` in the KV namespace. ``--remote``
         is explicit so this always hits the real (production) namespace,
@@ -179,10 +232,15 @@ class MockWrangler:
     a real KV namespace.
     """
 
-    def __init__(self, deploy_stdout: str = "Deployment complete!\n"):
+    def __init__(
+        self,
+        deploy_stdout: str = "Deployment complete!\n",
+        projects: Optional[List[str]] = None,
+    ):
         self.calls: List[tuple] = []
         self._kv: Dict[str, str] = {}
         self._deploy_stdout = deploy_stdout
+        self._projects = set(projects or [])
 
     def check_available(self) -> bool:
         self.calls.append(("check_available",))
@@ -193,6 +251,17 @@ class MockWrangler:
     ) -> CompletedProcess:
         self.calls.append(("pages_deploy", project, str(directory), branch))
         return CompletedProcess([], 0, stdout=self._deploy_stdout, stderr="")
+
+    def pages_project_names(self) -> List[str]:
+        self.calls.append(("pages_project_names",))
+        return sorted(self._projects)
+
+    def pages_project_create(
+        self, project: str, branch: str = "main"
+    ) -> CompletedProcess:
+        self.calls.append(("pages_project_create", project, branch))
+        self._projects.add(project)
+        return CompletedProcess([], 0, stdout="", stderr="")
 
     def kv_put(self, namespace_id: str, key: str, value: str) -> None:
         self.calls.append(("kv_put", namespace_id, key, value))

@@ -9,14 +9,14 @@ publish setup`").
 
 What this wizard can and cannot automate, and why
 --------------------------------------------------
-wrangler.py's Wrangler seam is deliberately narrow: ``check_available``,
-``pages_deploy``, ``kv_put``, ``kv_get``, ``kv_list`` -- exactly the five
-operations cloudflare_backend.py needs for publish/purge/list/gc. There
-is no "create a Pages project", "create a KV namespace", or "bind a KV
-namespace to a Pages project" method, and this wizard does not add any:
-those are one-time account-setup actions, not things the steady-state
-publish/purge/list/gc path ever needs again, so growing the seam to cover
-them would be permanent surface area for a one-time job.
+wrangler.py's Wrangler seam is deliberately narrow: it exposes the
+Pages project list/create calls setup needs, plus ``pages_deploy``,
+``kv_put``, ``kv_get``, ``kv_list`` for the steady-state
+publish/purge/list/gc path. There is still no "create a KV namespace" or
+"bind a KV namespace to a Pages project" method: those are one-time
+account-setup actions without a single reliable wrangler verb for the
+binding, so setup prints the manual steps and asks the human for the
+resulting id.
 
 Concretely, this wizard:
   - Installs the bundled middleware/``_headers``/root index (source:
@@ -40,6 +40,11 @@ Concretely, this wizard:
     ``<state_dir>/_headers``, ``<state_dir>/index.html`` -- NOT a flat
     copy of ``publish/cloudflare/``, whose ``_middleware.js`` sits at its
     own root purely as a distributable source file.
+  - DOES ensure the Cloudflare Pages project exists before printing the
+    KV binding instructions. Wrangler 4.107.0 prompts to create a missing
+    project during ``pages deploy --project-name``; that prompt fails in
+    jimemo's captured, non-interactive subprocess, so setup now lists
+    projects and runs ``pages project create`` only when needed.
   - DOES drive ``pages_deploy``, for the initial deploy, against a
     throwaway ALLOWLISTED copy of that state directory -- built via
     cloudflare_backend.py's own ``_build_deploy_dir`` (imported, not
@@ -49,10 +54,7 @@ Concretely, this wizard:
     friend re-runs setup against a state directory they already synced
     from another machine (see the single-machine section below), which
     may already hold strays -- ``.git/``, ``.DS_Store``, sync-conflict
-    copies -- that must never be deployed. Wrangler creates the Pages
-    project automatically on this call if the account doesn't already
-    have one by that name, so no separate "create project" call is
-    needed.
+    copies -- that must never be deployed.
   - Does NOT create a KV namespace or bind it to the Pages project as
     ``TOMBSTONES`` -- there is no wrangler-seam call for either. It
     prints the exact manual command / dashboard step for both, in every
@@ -173,6 +175,28 @@ def _deploy_argv(project: str, directory) -> str:
     return (
         f"npx wrangler pages deploy {directory} "
         f"--project-name {project} --branch main"
+    )
+
+
+def _project_list_argv() -> str:
+    return "npx wrangler pages project list --json"
+
+
+def _project_create_argv(project: str) -> str:
+    return (
+        f"npx wrangler pages project create {project} "
+        "--production-branch main"
+    )
+
+
+def _is_existing_pages_project_error(exc: PublishError) -> bool:
+    msg = str(exc)
+    return (
+        "pages project create" in msg
+        and (
+            "code: 8000002" in msg
+            or "A project with this name already exists" in msg
+        )
     )
 
 
@@ -378,9 +402,10 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
     never trigger a real deploy/KV write against their Cloudflare
     account just by declining the config write at the very end). Then
     prompts for a project name (default DEFAULT_PROJECT_NAME, validated
-    against config.py's valid_project_name()), an account id, and a KV
-    namespace id (printing manual instructions for the latter, since no
-    wrangler-seam call can create/bind one -- see module docstring), installs the
+    against config.py's valid_project_name()), an account id, ensures the
+    Pages project exists, and prompts for a KV namespace id (printing
+    manual instructions for the latter, since no wrangler-seam call can
+    create/bind one -- see module docstring), installs the
     middleware/_headers/index.html into ``~/.jimemo/cloudflare/<project>/``
     (the SAME local state directory cloudflare_backend.py's
     CloudflarePublisher deploys on every future publish() call -- see
@@ -446,10 +471,11 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
 
     # account_id is only known once collected here (unlike
     # CloudflarePublisher's steady-state construction, where it's already
-    # in config.toml) -- set it on the Wrangler seam now so Step 3's
-    # deploy and the post-deploy KV check below are scoped to the right
-    # Cloudflare account for a multi-account token. A harmless no-op
-    # attribute on test doubles (e.g. MockWrangler) that don't consult it.
+    # in config.toml) -- set it on the Wrangler seam now so the project
+    # list/create, deploy, and post-deploy KV check below are scoped to
+    # the right Cloudflare account for a multi-account token. A harmless
+    # no-op attribute on test doubles (e.g. MockWrangler) that don't
+    # consult it.
     wrangler.account_id = account_id
 
     _validate_project_name(project)
@@ -459,6 +485,30 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
     # default, imported rather than re-derived, so the two can never
     # disagree on where the deployed state lives.
     state_dir = _default_state_dir(project)
+
+    io.print(f"\nStep 2: ensure Cloudflare Pages project {project!r} exists")
+    if dry_run:
+        io.print(f"  [dry-run] would run: {_project_list_argv()}")
+        io.print(
+            "  [dry-run] would create it if missing via: "
+            f"{_project_create_argv(project)}"
+        )
+    else:
+        project_names = wrangler.pages_project_names()
+        if project in project_names:
+            io.print(f"  project {project!r} already exists")
+        else:
+            io.print(f"  creating project via: {_project_create_argv(project)}")
+            try:
+                wrangler.pages_project_create(project)
+            except PublishError as exc:
+                if not _is_existing_pages_project_error(exc):
+                    raise
+                io.print(
+                    f"  project {project!r} already exists; continuing"
+                )
+            else:
+                io.print(f"  created project {project!r}")
 
     _print_single_machine_warning(io, state_dir)
 
@@ -475,7 +525,7 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
             kv_namespace_id = io.prompt("Cloudflare KV namespace id")
 
     io.print(
-        f"\nStep 2: install the tombstone/purge middleware into {state_dir}\n"
+        f"\nStep 3: install the tombstone/purge middleware into {state_dir}\n"
         "(this directory -- not this repo's publish/cloudflare/ -- is what "
         "gets deployed,\n"
         "on this call and on every future `jimemo publish`; see module "
@@ -493,14 +543,13 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
         )
 
     io.print(
-        f"\nStep 3: deploy {state_dir} to Pages project {project!r}\n"
+        f"\nStep 4: deploy {state_dir} to Pages project {project!r}\n"
         "(deploys an allowlisted copy -- only functions/_middleware.js, "
         "_headers, index.html,\nand published hash directories -- never "
         "the raw state directory itself, which may\nalready hold synced "
         "strays like .git/ if this is a re-run against a state directory\n"
         "synced from another machine; see cloudflare_backend.py's "
-        "_build_deploy_dir. This\nalso creates the project if your "
-        "account doesn't have one by that name yet)"
+        "_build_deploy_dir)"
     )
     if dry_run:
         io.print(
@@ -523,7 +572,7 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
 
     _post_deploy_binding_check(wrangler, kv_namespace_id, base_url, io, dry_run)
 
-    io.print(f"\nStep 4: write {config_path}")
+    io.print(f"\nStep 5: write {config_path}")
     if dry_run:
         io.print(
             "  [dry-run] would write:\n"

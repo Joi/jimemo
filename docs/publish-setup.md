@@ -70,6 +70,8 @@ live), so this is a documentation-only guardrail, not a code one.
    It will:
    - prompt for a Cloudflare Pages project name (default `jimemo-notes`)
      and your Cloudflare account id,
+   - create that Pages project if your account does not already have one
+     by that name,
    - print the command to create a KV namespace
      (`npx wrangler kv namespace create <project>-tombstones`) and ask
      for the resulting id,
@@ -82,8 +84,7 @@ live), so this is a documentation-only guardrail, not a code one.
      directory `jimemo publish` deploys from every time, not a one-off
      copy of the repo's `publish/cloudflare/` template (see "Single-
      machine limitation" above for why this directory matters),
-   - deploy that directory to the Pages project, creating the project if
-     your account doesn't already have one by that name,
+   - deploy that directory to the Pages project,
    - run a best-effort KV round-trip check,
    - write `~/.jimemo/config.toml` (no token in it -- see below).
 
