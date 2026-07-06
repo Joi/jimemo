@@ -2,12 +2,18 @@
 
 > REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Per-task review gates + whole-phase review + roborev before merge.
 
-**Goal:** `jimemo import-design <export-dir>` reads a Claude Design export and produces a jimemo **theme** (a `--jm-*` token override file) that `jimemo render --theme <name>` can apply — parse-only, never executing export code. Fonts map to family + fallback by default (embed opt-in). Validated against a real export (Chiba Tech Design System).
+**Goal:** `jimemo import-design <export-dir>` reads a Claude Design export and produces a jimemo **theme** (a `--jm-*` token override file) that `jimemo render --theme <name>` can apply — parse-only, never executing export code. Fonts map to family + fallback by default (embed opt-in). Validated against a real client design export.
+
+> Note (Phase 7, 2026-07-06): the checked-in test fixture below was later
+> replaced with a fully synthetic, fictional design export (no real brand
+> data) so the public repo carries zero copyrighted design material; the
+> real export used during this phase's development moved to a private
+> design-systems repo. See docs/superpowers/plans/2026-07-06-jimemo-phase7-skill-and-distribution.md, Task 1/2.
 
 **Tracker:** kata j4dh (parent 9wk1). Branch: phase6. Base: main @ f3616e5.
 
 ## The real export format (grounded in the fixture, not the Phase-1 guess)
-The fixture `/Users/joi/Downloads/Chiba Tech Design System` is a STRUCTURED export, not a single HTML:
+The fixture (a real client Claude-Design export used during development, since moved to a private design-systems repo — see the note above) is a STRUCTURED export, not a single HTML:
 - `_ds_manifest.json` — the clean source of truth. Keys used: `tokens` (list of `{name, value, kind, definedIn}` — kind ∈ color/font/spacing/typography/…), `fonts` (`{family, weight, style, cssPath, files[]}`), `brandFonts` (`{family, status, tokens[], path}` — tells which tokens reference which family), `globalCssPaths`, `themes` (may be empty), `namespace`.
 - `tokens/{colors,typography,spacing,fonts}.css` — the human-readable `:root { --ns-*: value }` + `@font-face` forms (same values as the manifest).
 - `uploads/` + `assets/fonts/` — real font files (.ttf/.otf), often licensed.
@@ -28,7 +34,7 @@ The fixture `/Users/joi/Downloads/Chiba Tech Design System` is a STRUCTURED expo
 ### Task 1: Export reader (parse-only) + trimmed fixture
 - `src/jimemo/design/reader.py`: `read_export(export_dir: Path) -> DesignExport` — locate + parse `_ds_manifest.json` (preferred); if absent, fall back to parsing `tokens/*.css` / `globalCssPaths` for `:root` custom props (defensive, for exports lacking a manifest). Returns a normalized structure: tokens (name/value/kind), fonts (family/weight/files), brandFonts (family→referencing tokens). NEVER reads/opens `.js/.jsx/.ts`. Raise DesignImportError (new, in errors.py) on a malformed/absent manifest+css.
 - Value sanitization: each token value validated (reject `<`, unbalanced `}`, `url(` non-data/remote, `expression(`, `javascript:`/`vbscript:`) → DesignImportError naming the bad token. (Reuse sanitize/lint scheme helpers where possible.)
-- Fixture: create tests/fixtures/design-export/ = a trimmed copy of the Chiba Tech export's `_ds_manifest.json` + `tokens/*.css` (NO font binaries — strip/ië the uploads). Small, checked-in, license-safe.
+- Fixture: create tests/fixtures/design-export/ = a trimmed copy of the real export's `_ds_manifest.json` + `tokens/*.css` (NO font binaries — strip/ië the uploads). Small, checked-in, license-safe. (Phase 7 Task 1 later replaced this with a fully synthetic fixture — see the note above.)
 - Tests: reads the fixture manifest → correct token count/kinds; the css-fallback path (delete manifest in a tmp copy) still extracts :root tokens; a token value with `url(https://evil)` → DesignImportError; a `.js` file in the export is never opened (assert reader doesn't touch it).
 
 ### Task 2: Token → jimemo theme mapping
@@ -39,7 +45,7 @@ The fixture `/Users/joi/Downloads/Chiba Tech Design System` is a STRUCTURED expo
   - positive/negative: green→positive, red→negative if present.
   Anything unmapped stays available as its raw `--ct-*` token. Emit a header comment listing what was auto-mapped and what the user should review.
 - Deterministic (no LLM); mappings are named heuristics with a comment table. The SKILL (Phase 7) can layer agent refinement, but the CLI is deterministic.
-- Tests: the Chiba fixture → --jm-font maps to Finder with a fallback; --jm-accent maps to --ct-blue-core (or the brand's primary); positive/negative map to green/red; the raw tokens are all present; the output is valid CSS with balanced braces and no remote url/@import (passes the Phase-3 lint).
+- Tests: the fixture → --jm-font maps to the brand's primary family with a fallback; --jm-accent maps to the brand's core/primary color token; positive/negative map to green/red; the raw tokens are all present; the output is valid CSS with balanced braces and no remote url/@import (passes the Phase-3 lint).
 
 ### Task 3: `jimemo import-design` CLI + theme install + font handling
 - `jimemo import-design <export-dir> [--name NAME] [--embed-fonts]`:
@@ -52,7 +58,7 @@ The fixture `/Users/joi/Downloads/Chiba Tech Design System` is a STRUCTURED expo
 - README: an "Import a design" section — `jimemo import-design <export> --name mybrand` then `--theme mybrand`; parse-only/never-executes-export-code; fonts family-by-default / --embed-fonts opt-in + licensing note; where themes live.
 - architecture.md: the design/ package (reader, mapping), theme resolution incl. ~/.jimemo/themes/.
 - Acceptance: full suite green; import the trimmed fixture end-to-end; render a seed template with the imported theme and confirm the brand identity shows (font + accent); the generated theme passes the self-contained lint; doctor clean; import jimemo.cli loads no vendored python.
-- MANUAL verification note: import the FULL Chiba Tech folder (with fonts, --embed-fonts) and eyeball a rendered page — documented for Joi.
+- MANUAL verification note: import the FULL real export folder (with fonts, --embed-fonts) and eyeball a rendered page — documented for Joi.
 - Append phase summary to the SDD ledger.
 
 ## Out of scope (defer)

@@ -1,108 +1,70 @@
 /* ============================================================
-   Chiba Tech — Typography
-   Primary typeface: Finder (all Latin). Japanese: Ro NOW Std.
-   Pixel faces (3x4 / 5x5): special/expressive use only.
-   Signature settings: letter-spacing -0.05em everywhere;
-   line-height 0.9 for display/headings, 1.0 for body/labels.
-   Sizes transcribed from manual usage (200/110/100/80/60/30/17/15/11).
+   Northwind Field Kit — Typography
+   Primary typeface: Northwind Sans (all Latin). Japanese: Northwind
+   Gothic JP. Signature settings: letter-spacing -0.02em everywhere;
+   line-height 0.92 for display/headings, 1.05 for body/labels.
    ============================================================ */
 :root {
   /* families */
-  --ct-font: "Finder", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --ct-font-display: var(--ct-font);
-  --ct-font-jp: "Ro NOW Std", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
-  --ct-font-pixel: "3x4", "Finder", monospace;   /* logotype / 3x4 pixel face */
-  --ct-font-pixel-5: "5x5", "Finder", monospace;  /* 5x5 pixel face */
+  --nw-font: "Northwind Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --nw-font-display: var(--nw-font);
+  --nw-font-jp: "Northwind Gothic JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  --nw-font-label: "Northwind Sans", sans-serif;   /* condensed label use */
 
   /* weights */
-  --ct-weight-light: 300;
-  --ct-weight-regular: 400;
-  --ct-weight-bold: 700;
+  --nw-weight-light: 300;
+  --nw-weight-regular: 400;
+  --nw-weight-bold: 700;
 
   /* shared metrics */
-  --ct-tracking: -0.05em;
-  --ct-leading-tight: 0.9;
-  --ct-leading-body: 1;
+  --nw-tracking: -0.02em;
+  --nw-leading-tight: 0.92;
+  --nw-leading-body: 1.05;
 
   /* type scale (px) */
-  --ct-size-mega: 200px;   /* chapter dividers */
-  --ct-size-cover: 100px;  /* cover contents list */
-  --ct-size-hero: 110px;   /* application headlines */
-  --ct-size-hero-light: 80px;
-  --ct-size-section: 60px;  /* web section headers */
-  --ct-size-display: 40px;
-  --ct-size-heading: 30px;  /* page / spread headings */
-  --ct-size-subhead: 25px;
-  --ct-size-body: 17px;     /* body copy & labels */
-  --ct-size-small: 15px;
-  --ct-size-caption: 11px;
+  --nw-size-mega: 180px;    /* chapter dividers */
+  --nw-size-hero: 96px;     /* application headlines */
+  --nw-size-section: 54px; /* web section headers */
+  --nw-size-heading: 28px; /* page / spread headings */
+  --nw-size-body: 16px;    /* body copy & labels */
+  --nw-size-caption: 12px;
 }
 
 /* ---- Text-style utility classes ---- */
-.ct-mega,
-.ct-title,
-.ct-heading,
-.ct-subhead,
-.ct-body,
-.ct-body-bold,
-.ct-label,
-.ct-caption {
-  font-family: var(--ct-font);
-  letter-spacing: var(--ct-tracking);
-  color: var(--ct-ink);
+.nw-mega,
+.nw-title,
+.nw-heading,
+.nw-body,
+.nw-caption {
+  font-family: var(--nw-font);
+  letter-spacing: var(--nw-tracking);
+  color: var(--nw-ink);
   margin: 0;
 }
 
-.ct-mega {   /* chapter divider */
-  font-weight: var(--ct-weight-bold);
-  font-size: var(--ct-size-mega);
-  line-height: var(--ct-leading-tight);
+.nw-mega {
+  font-weight: var(--nw-weight-bold);
+  font-size: var(--nw-size-mega);
+  line-height: var(--nw-leading-tight);
 }
-.ct-title {  /* application / hero headline */
-  font-weight: var(--ct-weight-bold);
-  font-size: var(--ct-size-hero);
-  line-height: var(--ct-leading-tight);
+.nw-title {
+  font-weight: var(--nw-weight-bold);
+  font-size: var(--nw-size-hero);
+  line-height: var(--nw-leading-tight);
 }
-.ct-section {
-  font-family: var(--ct-font);
-  font-weight: var(--ct-weight-bold);
-  font-size: var(--ct-size-section);
-  line-height: var(--ct-leading-tight);
-  letter-spacing: var(--ct-tracking);
-  color: var(--ct-ink);
-  margin: 0;
+.nw-heading {
+  font-weight: var(--nw-weight-bold);
+  font-size: var(--nw-size-heading);
+  line-height: var(--nw-leading-tight);
 }
-.ct-heading { /* spread / page heading */
-  font-weight: var(--ct-weight-bold);
-  font-size: var(--ct-size-heading);
-  line-height: var(--ct-leading-tight);
+.nw-body {
+  font-weight: var(--nw-weight-regular);
+  font-size: var(--nw-size-body);
+  line-height: var(--nw-leading-body);
 }
-.ct-subhead {
-  font-weight: var(--ct-weight-bold);
-  font-size: var(--ct-size-subhead);
-  line-height: var(--ct-leading-tight);
+.nw-caption {
+  font-weight: var(--nw-weight-regular);
+  font-size: var(--nw-size-caption);
+  line-height: var(--nw-leading-body);
 }
-.ct-body {
-  font-weight: var(--ct-weight-regular);
-  font-size: var(--ct-size-body);
-  line-height: var(--ct-leading-body);
-}
-.ct-body-bold {
-  font-weight: var(--ct-weight-bold);
-  font-size: var(--ct-size-body);
-  line-height: var(--ct-leading-tight);
-}
-.ct-label {
-  font-weight: var(--ct-weight-bold);
-  font-size: var(--ct-size-small);
-  line-height: var(--ct-leading-tight);
-  text-transform: uppercase;
-}
-.ct-caption {
-  font-weight: var(--ct-weight-regular);
-  font-size: var(--ct-size-caption);
-  line-height: var(--ct-leading-body);
-}
-.ct-jp { font-family: var(--ct-font-jp); letter-spacing: 0; }
-.ct-pixel { font-family: var(--ct-font-pixel); letter-spacing: 0; }
-.ct-pixel-5 { font-family: var(--ct-font-pixel-5); letter-spacing: 0; }
+.nw-jp { font-family: var(--nw-font-jp); letter-spacing: 0; }

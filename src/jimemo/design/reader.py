@@ -586,7 +586,7 @@ def validate_token_value(name: str, value: str) -> None:
 # newline, letting "--x\n" through the allowlist.
 _TOKEN_NAME_RE = re.compile(r"^" + _TOKEN_NAME_BODY + r"\Z")
 
-# An export namespace is an identifier like `ChibaTechDesignSystem_9e0e92`;
+# An export namespace is an identifier like `NorthwindFieldKit_7b3f21`;
 # empty is the reader's sentinel for "the export declared none" (always the
 # case on the CSS-fallback path).
 _NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_-]*\Z")
@@ -650,7 +650,7 @@ def validate_namespace(namespace: str) -> None:
     namespace is interpolated into the generated theme's header COMMENT
     (mapping._build_header), where a `*/` would close the comment and turn
     the rest of the string into live CSS. Every real namespace is an
-    identifier (`ChibaTechDesignSystem_9e0e92`), so allowlisting the
+    identifier (`NorthwindFieldKit_7b3f21`), so allowlisting the
     identifier shape is both safe and strictly stronger than blocklisting
     comment delimiters."""
     if not _NAMESPACE_RE.match(namespace):
@@ -699,8 +699,8 @@ def validate_font_family(family: str) -> None:
     """Reject a font family name that isn't safe to interpolate into the
     generated CSS, both inside a quoted `font-family: "<family>"` string
     AND as a bare token in a `"<family>", <stack>` role value. A legit
-    family (letters, digits, spaces, hyphens -- e.g. ``Finder``,
-    ``Ro NOW Std``) contains none of the constructs rejected here.
+    family (letters, digits, spaces, hyphens -- e.g. ``Northwind Sans``,
+    ``Northwind Gothic JP``) contains none of the constructs rejected here.
 
     An empty family is allowed (it's the reader's sentinel for a font
     entry that named no family; it can't inject anything). Everything else

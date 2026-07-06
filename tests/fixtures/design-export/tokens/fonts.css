@@ -1,96 +1,68 @@
 /* ============================================================
-   Chiba Tech — Webfonts
-   English display/text: Finder (Black[Foundry])
-   Japanese: Ro NOW Std (Now / Gothic)
-   Pixel display faces: 3x4 and 5x5 (derived from the logotype grid)
+   Northwind Field Kit — Webfonts
+   English display/text: Northwind Sans
+   Japanese: Northwind Gothic JP
+   Mono (code / labels, unreferenced by any token): Northwind Mono
    ============================================================ */
 
-/* ---- Finder (primary typeface, all Latin text) ---- */
+/* ---- Northwind Sans (primary typeface, all Latin text) ---- */
 @font-face {
-  font-family: "Finder";
-  src: url("../assets/fonts/Finder-Light.ttf") format("truetype");
+  font-family: "Northwind Sans";
+  src: url("../assets/fonts/NorthwindSans-Light.ttf") format("truetype");
   font-weight: 300;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: "Finder";
-  src: url("../assets/fonts/Finder-Regular.ttf") format("truetype");
+  font-family: "Northwind Sans";
+  src: url("../assets/fonts/NorthwindSans-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: "Finder";
-  src: url("../assets/fonts/Finder-Bold.ttf") format("truetype");
+  font-family: "Northwind Sans";
+  src: url("../assets/fonts/NorthwindSans-Bold.ttf") format("truetype");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
-/* Alias so components/screens carried over from Figma ("TRY Finder") resolve too */
+/* Condensed alias for tight label contexts — reuses the Northwind Sans files */
 @font-face {
-  font-family: "TRY Finder";
-  src: url("../assets/fonts/Finder-Regular.ttf") format("truetype");
+  font-family: "Northwind Sans Cond";
+  src: url("../assets/fonts/NorthwindSans-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: "TRY Finder";
-  src: url("../assets/fonts/Finder-Bold.ttf") format("truetype");
+  font-family: "Northwind Sans Cond";
+  src: url("../assets/fonts/NorthwindSans-Bold.ttf") format("truetype");
   font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "TRY Finder";
-  src: url("../assets/fonts/Finder-Light.ttf") format("truetype");
-  font-weight: 300;
   font-style: normal;
   font-display: swap;
 }
 
-/* ---- Ro NOW Std (Japanese typeface) ---- */
+/* ---- Northwind Gothic JP (Japanese typeface) ---- */
 @font-face {
-  font-family: "Ro NOW Std";
-  src: url("../assets/fonts/RoNOWStd-GE.otf") format("opentype");
+  font-family: "Northwind Gothic JP";
+  src: url("../assets/fonts/NorthwindGothicJP-Regular.otf") format("opentype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: "Ro NOW Std";
-  src: url("../assets/fonts/RoNOWStd-GM.otf") format("opentype");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Ro NOW Std";
-  src: url("../assets/fonts/RoNOWStd-GB.otf") format("opentype");
+  font-family: "Northwind Gothic JP";
+  src: url("../assets/fonts/NorthwindGothicJP-Bold.otf") format("opentype");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
-@font-face {
-  font-family: "Ro NOW Std";
-  src: url("../assets/fonts/RoNOWStd-GU.otf") format("opentype");
-  font-weight: 900;
-  font-style: normal;
-  font-display: swap;
-}
 
-/* ---- Pixel display faces (special use only) ---- */
+/* ---- Mono (unreferenced by any token in this export) ---- */
 @font-face {
-  font-family: "3x4";
-  src: url("../assets/fonts/3x4-Regular.otf") format("opentype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "5x5";
-  src: url("../assets/fonts/5x5-Regular.otf") format("opentype");
+  font-family: "Northwind Mono";
+  src: url("../assets/fonts/NorthwindMono-Regular.otf") format("opentype");
   font-weight: 400;
   font-style: normal;
   font-display: swap;

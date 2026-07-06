@@ -33,7 +33,7 @@ def _manual_export(
     font_files=None,
 ) -> Path:
     """A minimal hand-built export (manifest + one font reference) --
-    small and self-contained, unlike the checked-in Chiba fixture, which
+    small and self-contained, unlike the checked-in fixture, which
     has no font BINARIES on disk at all (see the plan's "no font
     binaries in the repo" constraint) and so can't exercise
     --embed-fonts on its own. `font_files` overrides the manifest's
@@ -77,7 +77,7 @@ def _manual_export(
 
 
 def test_slugify_name_collapses_and_lowercases():
-    assert slugify_name("ChibaTechDesignSystem_9e0e92") == "chibatechdesignsystem-9e0e92"
+    assert slugify_name("NorthwindFieldKit_7b3f21") == "northwindfieldkit-7b3f21"
     assert slugify_name("My Brand!!") == "my-brand"
 
 
@@ -146,20 +146,20 @@ def test_cli_import_design_reserved_name_returns_rc1_writes_nothing(tmp_path, mo
 
 def test_import_writes_personal_theme_with_mapped_font_and_accent(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    result = import_design(FIXTURE_DIR, name="chiba")
+    result = import_design(FIXTURE_DIR, name="northwind")
 
-    expected_path = tmp_path / ".jimemo" / "themes" / "chiba.css"
+    expected_path = tmp_path / ".jimemo" / "themes" / "northwind.css"
     assert result.theme_path == expected_path
     assert expected_path.is_file()
     css = expected_path.read_text(encoding="utf-8")
-    assert '--jm-font-prose: "Finder"' in css
-    assert "--jm-accent: var(--ct-blue-core)" in css
+    assert '--jm-font-prose: "Northwind Sans"' in css
+    assert "--jm-accent: var(--nw-blue-core)" in css
 
 
 def test_import_default_name_from_export_namespace(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     result = import_design(FIXTURE_DIR)
-    assert result.name == "chibatechdesignsystem-9e0e92"
+    assert result.name == "northwindfieldkit-7b3f21"
     assert (tmp_path / ".jimemo" / "themes" / f"{result.name}.css").is_file()
 
 
@@ -182,9 +182,9 @@ def test_import_missing_export_dir_raises_clean_error(tmp_path, monkeypatch):
 
 def test_import_header_lists_mappings(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    result = import_design(FIXTURE_DIR, name="chiba")
+    result = import_design(FIXTURE_DIR, name="northwind")
     assert "Auto-mapped roles" in result.header
-    assert "--ct-blue-core -> --jm-accent" in result.header
+    assert "--nw-blue-core -> --jm-accent" in result.header
 
 
 # -- theme-write filesystem errors: clean DesignImportError, no traceback --
@@ -199,7 +199,7 @@ def test_import_theme_dir_mkdir_oserror_wrapped(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "mkdir", raising_mkdir)
 
     with pytest.raises(DesignImportError, match="could not write theme"):
-        import_design(FIXTURE_DIR, name="chiba")
+        import_design(FIXTURE_DIR, name="northwind")
 
 
 def test_import_theme_write_text_oserror_wrapped(tmp_path, monkeypatch):
@@ -211,7 +211,7 @@ def test_import_theme_write_text_oserror_wrapped(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "write_text", raising_write_text)
 
     with pytest.raises(DesignImportError, match="could not write theme"):
-        import_design(FIXTURE_DIR, name="chiba")
+        import_design(FIXTURE_DIR, name="northwind")
 
 
 def test_cli_theme_write_oserror_returns_rc1_not_traceback(tmp_path, monkeypatch, capsys):
@@ -222,7 +222,7 @@ def test_cli_theme_write_oserror_returns_rc1_not_traceback(tmp_path, monkeypatch
 
     monkeypatch.setattr(Path, "write_text", raising_write_text)
 
-    rc = main(["import-design", str(FIXTURE_DIR), "--name", "chiba"])
+    rc = main(["import-design", str(FIXTURE_DIR), "--name", "northwind"])
     assert rc == 1
     err = capsys.readouterr().err
     assert "could not write theme" in err
@@ -234,18 +234,18 @@ def test_cli_theme_write_oserror_returns_rc1_not_traceback(tmp_path, monkeypatch
 
 def test_render_with_imported_theme_uses_brand_font_and_accent(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    import_design(FIXTURE_DIR, name="chiba")
+    import_design(FIXTURE_DIR, name="northwind")
 
     out_path = tmp_path / "out.html"
     rc = main([
         "render", "briefing", str(BRIEFING_SAMPLE),
-        "--theme", "chiba", "-o", str(out_path),
+        "--theme", "northwind", "-o", str(out_path),
     ])
     assert rc == 0
 
     html = out_path.read_text(encoding="utf-8")
-    assert "Finder" in html
-    assert "#4c4499" in html  # --ct-blue-core, the accent's underlying value
+    assert "Northwind Sans" in html
+    assert "#33418f" in html  # --nw-blue-core, the accent's underlying value
     # self-contained: nothing fetched at view time
     assert "http://" not in html
     assert "https://" not in html
@@ -624,12 +624,12 @@ def test_cli_import_design_brand_font_referencing_token_injection_rc1_writes_not
         "namespace": "Evil",
         "tokens": [
             {"name": "--ev-ink", "value": "#111111", "kind": "color"},
-            {"name": "--ct-font", "value": '"Finder", sans-serif', "kind": "font"},
+            {"name": "--ev-font", "value": '"Helios", sans-serif', "kind": "font"},
         ],
         "fonts": [],
         "brandFonts": [
             {
-                "family": "Finder",
+                "family": "Helios",
                 "status": "ok",
                 "tokens": ["*/:root{--jm-font-mono:serif}/*"],
             }

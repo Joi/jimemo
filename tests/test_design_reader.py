@@ -33,27 +33,26 @@ def test_reads_manifest_tokens():
 
 def test_reads_manifest_namespace():
     export = read_export(FIXTURE_DIR)
-    assert export.namespace == "ChibaTechDesignSystem_9e0e92"
+    assert export.namespace == "NorthwindFieldKit_7b3f21"
 
 
 def test_reads_manifest_brand_fonts():
     export = read_export(FIXTURE_DIR)
-    finder = next(b for b in export.brand_fonts if b.family == "Finder")
-    assert finder.status == "ok"
-    assert "--ct-font" in finder.referencing_token_names
-    assert "--ct-font-pixel" in finder.referencing_token_names
-    assert "--ct-font-pixel-5" in finder.referencing_token_names
+    primary = next(b for b in export.brand_fonts if b.family == "Northwind Sans")
+    assert primary.status == "ok"
+    assert "--nw-font" in primary.referencing_token_names
+    assert "--nw-font-label" in primary.referencing_token_names
 
 
 def test_reads_manifest_fonts():
     export = read_export(FIXTURE_DIR)
     families = {f.family for f in export.fonts}
-    assert "Finder" in families
-    assert "Ro NOW Std" in families
-    finder_regular = next(
-        f for f in export.fonts if f.family == "Finder" and f.weight == "400"
+    assert "Northwind Sans" in families
+    assert "Northwind Gothic JP" in families
+    primary_regular = next(
+        f for f in export.fonts if f.family == "Northwind Sans" and f.weight == "400"
     )
-    assert finder_regular.files == ["assets/fonts/Finder-Regular.ttf"]
+    assert primary_regular.files == ["assets/fonts/NorthwindSans-Regular.ttf"]
 
 
 # -- css fallback path -----------------------------------------------------
@@ -66,12 +65,12 @@ def test_css_fallback_extracts_root_tokens(tmp_path):
     export = read_export(export_dir)
 
     names = {t.name for t in export.tokens}
-    assert "--ct-black" in names
-    assert "--ct-blue-core" in names
-    assert "--ct-font" in names
-    assert "--ct-space-1" in names
+    assert "--nw-black" in names
+    assert "--nw-blue-core" in names
+    assert "--nw-font" in names
+    assert "--nw-space-1" in names
 
-    black = next(t for t in export.tokens if t.name == "--ct-black")
+    black = next(t for t in export.tokens if t.name == "--nw-black")
     assert black.value == "#000000"
     assert black.defined_in == "tokens/colors.css"
 
@@ -247,11 +246,11 @@ def test_token_value_comment_delimiter_closes_expression_bypass(tmp_path):
 @pytest.mark.parametrize(
     "safe_value",
     [
-        "#4c4499",
+        "#336699",
         "1.25rem",
-        '"Finder", sans-serif',
-        "var(--ct-black)",
-        "2px solid var(--ct-black)",
+        '"Sample Sans", sans-serif',
+        "var(--brand-black)",
+        "2px solid var(--brand-black)",
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
         "data:font/ttf;base64,AAAA",
         "data:font/woff2;base64,AAAA",
@@ -292,9 +291,9 @@ def test_unsafe_token_name_rejected(tmp_path, bad_name):
 
 
 def test_valid_token_name_accepted(tmp_path):
-    export_dir = _manifest_with_token_value(tmp_path, "#111111", name="--ct-black")
+    export_dir = _manifest_with_token_value(tmp_path, "#111111", name="--brand-black")
     export = read_export(export_dir)
-    assert export.tokens[0].name == "--ct-black"
+    assert export.tokens[0].name == "--brand-black"
 
 
 @pytest.mark.parametrize(
@@ -315,7 +314,7 @@ def test_reserved_jm_prefix_token_name_rejected(tmp_path, reserved_name):
         read_export(export_dir)
 
 
-@pytest.mark.parametrize("normal_name", ["--ct-black", "--brand-blue"])
+@pytest.mark.parametrize("normal_name", ["--brand-black", "--brand-blue"])
 def test_non_reserved_token_name_accepted(tmp_path, normal_name):
     export_dir = _manifest_with_token_value(tmp_path, "#111111", name=normal_name)
     export = read_export(export_dir)
@@ -359,10 +358,10 @@ def test_unsafe_namespace_rejected(tmp_path, bad_namespace):
 
 def test_real_namespace_accepted(tmp_path):
     export_dir = _manifest_with_token_value(
-        tmp_path, "#111111", namespace="ChibaTechDesignSystem_9e0e92"
+        tmp_path, "#111111", namespace="NorthwindFieldKit_7b3f21"
     )
     export = read_export(export_dir)
-    assert export.namespace == "ChibaTechDesignSystem_9e0e92"
+    assert export.namespace == "NorthwindFieldKit_7b3f21"
 
 
 # -- security: font metadata sanitization ---------------------------------
@@ -518,11 +517,11 @@ def test_brand_font_referencing_token_name_injection_rejected(tmp_path, bad_toke
 
 
 def test_brand_font_referencing_token_name_normal_accepted(tmp_path):
-    brand = {"family": "Legit", "status": "ok", "tokens": ["--ct-font"]}
+    brand = {"family": "Legit", "status": "ok", "tokens": ["--brand-font"]}
     export_dir = _manifest_with_brand_font(tmp_path, brand)
     export = read_export(export_dir)
-    finder = next(b for b in export.brand_fonts if b.family == "Legit")
-    assert finder.referencing_token_names == ["--ct-font"]
+    legit = next(b for b in export.brand_fonts if b.family == "Legit")
+    assert legit.referencing_token_names == ["--brand-font"]
 
 
 # -- security: manifest shape validation (fail closed, not TypeError) -----
@@ -618,14 +617,14 @@ def test_manifest_token_non_string_name_rejected(tmp_path):
         read_export(export_dir)
 
 
-def test_chiba_fixture_fonts_still_import_cleanly():
-    # Every real font in the checked-in fixture is legit (Finder / Ro NOW
-    # Std, weights 300/400/500/700/900, style normal), so the fix must not
-    # regress it.
+def test_fixture_fonts_still_import_cleanly():
+    # Every font in the checked-in fixture is legit (Northwind Sans /
+    # Northwind Gothic JP, weights 300/400/700, style normal), so the fix
+    # must not regress it.
     export = read_export(FIXTURE_DIR)
     families = {f.family for f in export.fonts}
-    assert "Finder" in families
-    assert "Ro NOW Std" in families
+    assert "Northwind Sans" in families
+    assert "Northwind Gothic JP" in families
     assert {b.family for b in export.brand_fonts}  # brand fonts parsed, none rejected
 
 
@@ -643,11 +642,11 @@ def test_css_fallback_font_files_are_export_root_relative(tmp_path):
 
     export = read_export(export_dir)
 
-    finder_regular = next(
-        f for f in export.fonts if f.family == "Finder" and f.weight == "400"
+    primary_regular = next(
+        f for f in export.fonts if f.family == "Northwind Sans" and f.weight == "400"
     )
     # same form the manifest path stores (compare test_reads_manifest_fonts)
-    assert finder_regular.files == ["assets/fonts/Finder-Regular.ttf"]
+    assert primary_regular.files == ["assets/fonts/NorthwindSans-Regular.ttf"]
     for f in export.fonts:
         for p in f.files:
             assert not p.startswith("../"), f"{f.family} kept a css-relative path: {p}"
@@ -686,7 +685,7 @@ def test_never_reads_js_files(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_text", spying_read_text)
 
     export = read_export(export_dir)
-    assert export.namespace == "ChibaTechDesignSystem_9e0e92"
+    assert export.namespace == "NorthwindFieldKit_7b3f21"
 
 
 def test_css_fallback_never_reads_js_files(tmp_path, monkeypatch):
@@ -703,7 +702,7 @@ def test_css_fallback_never_reads_js_files(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_text", spying_read_text)
 
     export = read_export(export_dir)
-    assert any(t.name == "--ct-black" for t in export.tokens)
+    assert any(t.name == "--nw-black" for t in export.tokens)
 
 
 # -- read failures fail closed (non-UTF-8 / unreadable) ---------------------

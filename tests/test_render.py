@@ -577,13 +577,13 @@ def test_assemble_css_valid_theme_name_still_resolves(tmp_path, monkeypatch):
     fake_toolkit = tmp_path / "toolkit"
     shutil.copytree(inline.TOOLKIT_DIR, fake_toolkit)
     (fake_toolkit / "themes").mkdir(exist_ok=True)
-    (fake_toolkit / "themes" / "chiba.css").write_text(
-        ":root { --jm-accent: #4c4499; }\n", encoding="utf-8"
+    (fake_toolkit / "themes" / "brandtheme.css").write_text(
+        ":root { --jm-accent: #336699; }\n", encoding="utf-8"
     )
     monkeypatch.setattr(inline, "TOOLKIT_DIR", fake_toolkit)
 
-    css = assemble_css({"components": []}, theme="chiba")
-    assert "#4c4499" in css
+    css = assemble_css({"components": []}, theme="brandtheme")
+    assert "#336699" in css
 
 
 # -- unknown --theme: error, not a silent unthemed render ----------------

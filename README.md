@@ -141,15 +141,15 @@ override file that `jimemo render <template> <content> --theme mybrand`
 layers on top of the toolkit's defaults.
 
 ```
-$ jimemo import-design "Chiba Tech Design System" --name mybrand
+$ jimemo import-design "Northwind Field Kit" --name mybrand
 /* jimemo theme 'mybrand' -- auto-generated from a Claude-design export
- * (namespace: ChibaTechDesignSystem_9e0e92). Deterministic: re-running the import on the
+ * (namespace: NorthwindFieldKit_7b3f21). Deterministic: re-running the import on the
  * same export regenerates this file byte-for-byte.
  *
  * Auto-mapped roles (source token -> role):
- *   --ct-font -> --jm-font-prose
- *   --ct-font -> --jm-font-ui
- *   --ct-blue-core -> --jm-accent
+ *   --nw-font -> --jm-font-prose
+ *   --nw-font -> --jm-font-ui
+ *   --nw-blue-core -> --jm-accent
  *   ...
  */
 

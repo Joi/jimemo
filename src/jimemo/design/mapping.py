@@ -225,13 +225,13 @@ def _font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
 
 def _first_family_in_stack(value: str) -> Optional[str]:
     """The first font-family in a CSS font-stack VALUE (comma-separated),
-    quotes stripped -- e.g. '"Finder", -apple-system, ...' -> "Finder",
+    quotes stripped -- e.g. '"Sample Sans", -apple-system, ...' -> "Sample Sans",
     or None if the stack's first entry is empty (empty stack, whitespace
     only, or a leading comma) OR is an empty quoted family (`""` / `''`).
 
     Unquoting requires a MATCHING pair (`"..."` or `'...'`, backreferenced)
-    so a mismatched-quote fragment like `"Finder'` is not silently treated
-    as a clean family -- it's returned as-is and left for the caller's
+    so a mismatched-quote fragment like `"Sample Sans'` is not silently
+    treated as a clean family -- it's returned as-is and left for the caller's
     `validate_font_family` to reject. The extracted family is never trusted
     on its own: `_infer_font_declaration` runs it through
     `validate_font_family` (rejecting quotes, braces, ';', comment

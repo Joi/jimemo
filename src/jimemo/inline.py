@@ -112,7 +112,7 @@ def _resolve_theme_path(theme: str) -> Optional[Path]:
         raise ManifestError(
             f"theme name {theme!r} is not a valid theme name (expected "
             "lowercase letters/digits in hyphen-separated segments, e.g. "
-            "'chiba-tech') -- refusing to resolve it to a file"
+            "'northwind-field-kit') -- refusing to resolve it to a file"
         )
     for base in _theme_search_dirs():
         base_resolved = base.resolve()

@@ -52,7 +52,7 @@ _SLUG_COLLAPSE_RE = re.compile(r"[^a-z0-9]+")
 def slugify_name(raw: str) -> str:
     """`raw` lowercased with every run of non-alphanumeric characters
     collapsed to a single hyphen, and leading/trailing hyphens trimmed —
-    e.g. ``"ChibaTechDesignSystem_9e0e92"`` -> ``"chibatechdesignsystem-9e0e92"``.
+    e.g. ``"NorthwindFieldKit_7b3f21"`` -> ``"northwindfieldkit-7b3f21"``.
     Used for both an explicit ``--name`` and the default derived from the
     export's namespace or directory name, so the installed theme file
     name is always a well-formed CSS-file-safe, `--theme`-typeable

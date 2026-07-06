@@ -15,19 +15,19 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "design-export"
 
 def _theme():
     export = read_export(FIXTURE_DIR)
-    return export, build_theme(export, "chiba")
+    return export, build_theme(export, "northwind")
 
 
 # -- role mapping ----------------------------------------------------------
 
 
-def test_font_maps_to_finder_with_fallback():
+def test_font_maps_to_primary_family_with_fallback():
     _, css = _theme()
     for role in ("--jm-font-prose", "--jm-font-ui"):
         m = re.search(re.escape(role) + r":\s*([^;]+);", css)
         assert m, f"{role} not set in theme"
         value = m.group(1)
-        assert '"Finder"' in value
+        assert '"Northwind Sans"' in value
         # a real fallback stack, not just the bare family name
         assert "sans-serif" in value
         assert "Arial" in value or "Helvetica" in value
@@ -143,11 +143,11 @@ def test_duplicate_brand_fonts_same_family_no_indexerror():
     # object means the referenced entry is used directly -- no re-find, no
     # crash.
     export = DesignExport(
-        tokens=[Token(name="--ct-font", value='"Helios", sans-serif', kind="font")],
+        tokens=[Token(name="--brand-font", value='"Helios", sans-serif', kind="font")],
         fonts=[],
         brand_fonts=[
             BrandFont(family="Helios", referencing_token_names=[], status="ok"),
-            BrandFont(family="Helios", referencing_token_names=["--ct-font"], status="ok"),
+            BrandFont(family="Helios", referencing_token_names=["--brand-font"], status="ok"),
         ],
         namespace="",
     )
@@ -156,7 +156,7 @@ def test_duplicate_brand_fonts_same_family_no_indexerror():
         m = re.search(re.escape(role) + r":\s*([^;]+);", css)
         assert m and '"Helios"' in m.group(1)
     # header records the referenced token as the source, not a crash
-    assert "--ct-font -> --jm-font-prose" in css
+    assert "--brand-font -> --jm-font-prose" in css
     assert not theme_structure_errors(css)
 
 
@@ -175,23 +175,23 @@ def test_empty_quoted_family_in_token_value_falls_through():
     assert not theme_structure_errors(css)
 
 
-def test_chiba_font_mapping_unchanged_when_brand_fonts_present():
+def test_font_mapping_unchanged_when_brand_fonts_present():
     # Regression guard: brand_fonts stays the primary source when
     # present -- inference must not kick in and override it.
     export, css = _theme()
     assert export.brand_fonts  # sanity: the fixture really has brand_fonts
     for role in ("--jm-font-prose", "--jm-font-ui"):
         m = re.search(re.escape(role) + r":\s*([^;]+);", css)
-        assert m and '"Finder"' in m.group(1)
+        assert m and '"Northwind Sans"' in m.group(1)
 
 
 def test_accent_maps_to_brand_core_not_black_or_white():
     _, css = _theme()
     m = re.search(r"--jm-accent:\s*([^;]+);", css)
     assert m
-    assert m.group(1).strip() == "var(--ct-blue-core)"
+    assert m.group(1).strip() == "var(--nw-blue-core)"
     # the underlying brand color itself, re-declared verbatim
-    assert "--ct-blue-core: #4c4499;" in css
+    assert "--nw-blue-core: #33418f;" in css
 
 
 def test_accent_contrast_is_light_against_the_dark_accent():
@@ -205,8 +205,8 @@ def test_positive_and_negative_map_to_green_and_red():
     _, css = _theme()
     positive = re.search(r"--jm-positive:\s*([^;]+);", css)
     negative = re.search(r"--jm-negative:\s*([^;]+);", css)
-    assert positive and positive.group(1).strip() == "var(--ct-green)"
-    assert negative and negative.group(1).strip() == "var(--ct-red)"
+    assert positive and positive.group(1).strip() == "var(--nw-green)"
+    assert negative and negative.group(1).strip() == "var(--nw-red)"
 
 
 def test_text_bg_surface_map_to_semantic_aliases_not_pink():
@@ -214,9 +214,9 @@ def test_text_bg_surface_map_to_semantic_aliases_not_pink():
     text = re.search(r"--jm-text:\s*([^;]+);", css)
     bg = re.search(r"--jm-bg:\s*([^;]+);", css)
     surface = re.search(r"--jm-surface:\s*([^;]+);", css)
-    assert text and text.group(1).strip() == "var(--ct-ink)"
-    assert bg and bg.group(1).strip() == "var(--ct-paper)"
-    assert surface and surface.group(1).strip() == "var(--ct-surface)"
+    assert text and text.group(1).strip() == "var(--nw-ink)"
+    assert bg and bg.group(1).strip() == "var(--nw-paper)"
+    assert surface and surface.group(1).strip() == "var(--nw-surface)"
 
 
 def test_border_and_muted_pick_distinct_greys():
@@ -226,8 +226,8 @@ def test_border_and_muted_pick_distinct_greys():
     assert border and muted
     assert border.group(1).strip() != muted.group(1).strip()
     # border is the lightest grey, muted a darker one
-    assert border.group(1).strip() == "var(--ct-grey-b9)"
-    assert muted.group(1).strip() == "var(--ct-grey-64)"
+    assert border.group(1).strip() == "var(--nw-grey-cf)"
+    assert muted.group(1).strip() == "var(--nw-grey-58)"
 
 
 # -- raw token preservation --------------------------------------------------
@@ -260,8 +260,8 @@ def test_output_has_no_remote_url_or_import_or_markup():
 
 def test_deterministic_across_runs():
     export = read_export(FIXTURE_DIR)
-    first = build_theme(export, "chiba")
-    second = build_theme(export, "chiba")
+    first = build_theme(export, "northwind")
+    second = build_theme(export, "northwind")
     assert first == second
 
 
@@ -320,7 +320,7 @@ def test_build_theme_rejects_comment_breakout_namespace():
 # whose shape isn't pure :root/@font-face blocks must not be written.
 
 
-def test_theme_structure_passes_on_real_chiba_theme():
+def test_theme_structure_passes_on_real_fixture_theme():
     _, css = _theme()
     assert theme_structure_errors(css) == []
 
@@ -383,11 +383,11 @@ def test_build_theme_rejects_comment_breakout_source_token():
     # :root / comment-delimiter structural gate is the output-side net --
     # this must fail closed either way.
     export = DesignExport(
-        tokens=[Token(name="--ct-font", value='"Finder", sans-serif', kind="font")],
+        tokens=[Token(name="--brand-font", value='"Helios", sans-serif', kind="font")],
         fonts=[],
         brand_fonts=[
             BrandFont(
-                family="Finder",
+                family="Helios",
                 referencing_token_names=["*/:root{--jm-font-mono:serif}/*"],
                 status="ok",
             )
@@ -408,12 +408,12 @@ def test_build_theme_rejects_hand_built_brand_font_with_unsafe_family():
     # are already re-validated against above. This is that same
     # defense-in-depth for BrandFont.family.
     export = DesignExport(
-        tokens=[Token(name="--ct-font", value='"Finder", sans-serif', kind="font")],
+        tokens=[Token(name="--brand-font", value='"Helios", sans-serif', kind="font")],
         fonts=[],
         brand_fonts=[
             BrandFont(
                 family='"} body{display:none} .x{',
-                referencing_token_names=["--ct-font"],
+                referencing_token_names=["--brand-font"],
                 status="ok",
             )
         ],
@@ -443,7 +443,7 @@ def test_build_theme_normal_export_unaffected_by_font_family_revalidation():
     # The re-validation added above must be a no-op for input that already
     # passed the reader -- read_export's own output is unaffected.
     _, css = _theme()
-    assert '"Finder"' in css
+    assert '"Northwind Sans"' in css
     assert not theme_structure_errors(css)
 
 
@@ -547,11 +547,11 @@ def test_hostile_kind_defined_in_status_never_reach_output():
     hostile = "*/ } body { display:none } :root { --z: 1 /*"
     export = DesignExport(
         tokens=[
-            Token(name="--ct-black", value="#000000", kind=hostile, defined_in=hostile)
+            Token(name="--brand-black", value="#000000", kind=hostile, defined_in=hostile)
         ],
         fonts=[],
         brand_fonts=[
-            BrandFont(family="Legit", referencing_token_names=["--ct-black"], status=hostile)
+            BrandFont(family="Legit", referencing_token_names=["--brand-black"], status=hostile)
         ],
         namespace="",
     )
@@ -560,7 +560,7 @@ def test_hostile_kind_defined_in_status_never_reach_output():
     assert "body { display:none }" not in css
     assert theme_structure_errors(css) == []
     # the token itself is still re-declared verbatim (name+value validated)
-    assert "--ct-black: #000000;" in css
+    assert "--brand-black: #000000;" in css
 
 
 # -- header comment -----------------------------------------------------
@@ -571,5 +571,5 @@ def test_header_documents_mappings():
     header_end = css.index(":root")
     header = css[:header_end]
     assert "Auto-mapped roles" in header
-    assert "--ct-blue-core -> --jm-accent" in header
+    assert "--nw-blue-core -> --jm-accent" in header
     assert "Review / refine" in header

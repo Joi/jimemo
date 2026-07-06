@@ -1,43 +1,41 @@
 /* ============================================================
-   Chiba Tech — Spacing, grid & shape
-   The manual works on a strict page frame: a 50px outer margin,
-   a 278px description rail, then content in 741px columns with a
-   30px gutter. Corners are square — the identity is pixel/carpentry
-   based, so radii stay at 0. The "pixel grid" tokens describe the
-   Ichimatsu drawing system (2/3/4/8-pixel densities).
+   Northwind Field Kit — Spacing, grid & shape
+   The manual works on a page frame: a 40px outer margin, a 220px
+   caption rail, then content in 600px columns with a 24px gutter.
+   Corners carry a slight 6px radius (soft canvas edges, not sharp).
+   The "grid" tokens describe the gear-tag stitch pattern (2/3/4
+   densities).
    ============================================================ */
 :root {
   /* base spacing scale (px) */
-  --ct-space-1: 5px;
-  --ct-space-2: 10px;
-  --ct-space-3: 15px;
-  --ct-space-4: 20px;
-  --ct-space-5: 30px;
-  --ct-space-6: 50px;
-  --ct-space-7: 80px;
-  --ct-space-8: 120px;
+  --nw-space-1: 4px;
+  --nw-space-2: 8px;
+  --nw-space-3: 12px;
+  --nw-space-4: 16px;
+  --nw-space-5: 24px;
+  --nw-space-6: 40px;
+  --nw-space-7: 64px;
+  --nw-space-8: 96px;
 
-  /* page frame (1920-wide reference) */
-  --ct-margin: 50px;        /* outer page margin */
-  --ct-rail: 278px;         /* description / caption rail width */
-  --ct-gutter: 30px;        /* column gutter */
-  --ct-col: 741px;          /* content column width */
+  /* page frame (1440-wide reference) */
+  --nw-margin: 40px;        /* outer page margin */
+  --nw-rail: 220px;         /* description / caption rail width */
+  --nw-gutter: 24px;        /* column gutter */
+  --nw-col: 600px;          /* content column width */
 
-  /* shape — square by doctrine */
-  --ct-radius: 0px;
+  /* shape — soft canvas corners */
+  --nw-radius: 6px;
 
   /* rules & borders — pure black hairlines */
-  --ct-border: 2px;
-  --ct-border-thick: 4px;
-  --ct-rule: 2px solid var(--ct-black);
+  --nw-border: 1px;
+  --nw-border-thick: 3px;
+  --nw-rule: 1px solid var(--nw-black);
 
-  /* pixel / Ichimatsu drawing grid.
+  /* stitch / grid density scale.
      Layouts are built from these cell counts:
-     2px = bold marks & logos, 3px = signage,
-     4px = detailed compositions (web/print), 8px = fine imagery. */
-  --ct-pixel-2: 2; /* @kind other */
-  --ct-pixel-3: 3; /* @kind other */
-  --ct-pixel-4: 4; /* @kind other */
-  --ct-pixel-8: 8; /* @kind other */
-  --ct-pixel-cell: 37.5px;  /* logo/symbol native cell size */
+     2 = bold marks & logos, 3 = signage, 4 = detailed compositions. */
+  --nw-grid-2: 2; /* @kind other */
+  --nw-grid-3: 3; /* @kind other */
+  --nw-grid-4: 4; /* @kind other */
+  --nw-grid-cell: 32px;  /* logo/symbol native cell size */
 }
