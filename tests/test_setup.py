@@ -100,6 +100,27 @@ class BrokenKVWrangler(MockWrangler):
         return ""
 
 
+class AlreadyExistsOnCreateWrangler(MockWrangler):
+    """Simulates Cloudflare's create endpoint finding a project that the
+    list endpoint did not return."""
+
+    def pages_project_create(self, project, branch="main"):
+        self.calls.append(("pages_project_create", project, branch))
+        raise PublishError(
+            "wrangler pages project create failed (exit 1): "
+            "A project with this name already exists. Choose a different "
+            "project name. [code: 8000002]"
+        )
+
+
+class BrokenProjectCreateWrangler(MockWrangler):
+    def pages_project_create(self, project, branch="main"):
+        self.calls.append(("pages_project_create", project, branch))
+        raise PublishError(
+            "wrangler pages project create failed (exit 1): not authorized"
+        )
+
+
 def _patch_home(monkeypatch, home_dir: Path) -> None:
     """run_setup() derives its state directory from cloudflare_backend's
     _default_state_dir(), which is Path.home()-based -- patch it (the
@@ -194,6 +215,19 @@ def test_dry_run_prints_the_deploy_argv(tmp_path):
     assert f"pages deploy {CLOUDFLARE_ASSETS_DIR} " not in text
 
 
+def test_dry_run_prints_pages_project_create_plan(tmp_path):
+    io = FakeIO()
+
+    run_setup(True, MockWrangler(), tmp_path / "config.toml", io)
+
+    text = io.text()
+    assert "pages project list --json" in text
+    assert (
+        f"npx wrangler pages project create {DEFAULT_PROJECT_NAME} "
+        "--production-branch main"
+    ) in text
+
+
 def test_dry_run_prints_the_state_dir_asset_install_plan(tmp_path):
     io = FakeIO()
     state_dir = _default_state_dir(DEFAULT_PROJECT_NAME)
@@ -272,8 +306,62 @@ def test_real_run_creates_kv_and_deploys_in_expected_order(tmp_path, monkeypatch
     wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
 
     assert [c[0] for c in wrangler.calls] == [
-        "check_available", "pages_deploy", "kv_put", "kv_get",
+        "check_available", "pages_project_names", "pages_project_create",
+        "pages_deploy", "kv_put", "kv_get",
     ]
+
+
+def test_real_run_reuses_existing_pages_project(tmp_path, monkeypatch):
+    wrangler = MockWrangler(projects=["friend-notes"])
+
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch, wrangler=wrangler)
+
+    assert ("pages_project_names",) in wrangler.calls
+    assert not any(c[0] == "pages_project_create" for c in wrangler.calls)
+    assert "already exists" in io.text()
+
+
+def test_real_run_creates_missing_pages_project_before_deploy(tmp_path, monkeypatch):
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
+
+    create_index = next(
+        i for i, call in enumerate(wrangler.calls)
+        if call[0] == "pages_project_create"
+    )
+    deploy_index = next(
+        i for i, call in enumerate(wrangler.calls)
+        if call[0] == "pages_deploy"
+    )
+    assert create_index < deploy_index
+    assert ("pages_project_create", "friend-notes", "main") in wrangler.calls
+
+
+def test_real_run_continues_when_create_reports_existing_project(
+    tmp_path, monkeypatch
+):
+    wrangler, io, cfg_path = _run_real(
+        tmp_path, monkeypatch, wrangler=AlreadyExistsOnCreateWrangler()
+    )
+
+    assert ("pages_project_create", "friend-notes", "main") in wrangler.calls
+    assert any(c[0] == "pages_deploy" for c in wrangler.calls)
+    assert cfg_path.is_file()
+    assert "already exists; continuing" in io.text()
+
+
+def test_real_run_reraises_unexpected_project_create_error(tmp_path, monkeypatch):
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "fake-token")
+    wrangler = BrokenProjectCreateWrangler()
+    io = FakeIO(prompts=["friend-notes", "acct123", "ns123"])
+    cfg_path = tmp_path / "config.toml"
+
+    with pytest.raises(PublishError) as exc:
+        run_setup(False, wrangler, cfg_path, io)
+
+    assert "not authorized" in str(exc.value)
+    assert not any(c[0] == "pages_deploy" for c in wrangler.calls)
+    assert not cfg_path.exists()
 
 
 def test_real_run_deploys_an_allowlisted_copy_never_the_raw_state_dir_or_repo_template(
@@ -554,7 +642,11 @@ def test_existing_config_declining_overwrite_makes_no_side_effects(tmp_path, mon
     run_setup(False, wrangler, cfg_path, io)
 
     assert not any(
-        c[0] in ("pages_deploy", "kv_put", "kv_get") for c in wrangler.calls
+        c[0] in (
+            "pages_project_names", "pages_project_create",
+            "pages_deploy", "kv_put", "kv_get",
+        )
+        for c in wrangler.calls
     )
     state_dir = _default_state_dir("friend-notes")
     assert not state_dir.exists()
@@ -586,7 +678,11 @@ def test_real_run_rejects_invalid_project_name(tmp_path, monkeypatch, bad_name):
 
     assert "invalid Cloudflare Pages project name" in str(exc.value)
     assert not any(
-        c[0] in ("pages_deploy", "kv_put", "kv_get") for c in wrangler.calls
+        c[0] in (
+            "pages_project_names", "pages_project_create",
+            "pages_deploy", "kv_put", "kv_get",
+        )
+        for c in wrangler.calls
     )
     assert not cfg_path.exists()
 

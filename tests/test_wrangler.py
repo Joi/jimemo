@@ -60,6 +60,62 @@ def test_pages_deploy_accepts_a_different_branch(tmp_path):
     ]
 
 
+def test_pages_project_names_builds_expected_argv_and_parses_json():
+    runner = FakeRunner(
+        CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps([{"name": "one"}, {"name": "two"}]),
+            stderr="",
+        )
+    )
+    w = Wrangler(runner=runner)
+
+    names = w.pages_project_names()
+
+    assert runner.calls == [
+        ["npx", "wrangler", "pages", "project", "list", "--json"]
+    ]
+    assert names == ["one", "two"]
+
+
+def test_pages_project_names_accepts_wrapped_result_shape():
+    runner = FakeRunner(
+        CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"result": [{"name": "wrapped"}]}),
+            stderr="",
+        )
+    )
+    w = Wrangler(runner=runner)
+
+    assert w.pages_project_names() == ["wrapped"]
+
+
+def test_pages_project_names_malformed_json_raises_publish_error():
+    runner = FakeRunner(CompletedProcess([], 0, stdout="not json", stderr=""))
+    w = Wrangler(runner=runner)
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_names()
+    assert "pages project list" in str(exc.value)
+
+
+def test_pages_project_create_builds_expected_argv():
+    runner = FakeRunner(CompletedProcess([], 0, stdout="", stderr=""))
+    w = Wrangler(runner=runner)
+
+    w.pages_project_create("my-project")
+
+    assert runner.calls == [
+        [
+            "npx", "wrangler", "pages", "project", "create", "my-project",
+            "--production-branch", "main",
+        ]
+    ]
+
+
 def test_kv_put_builds_expected_argv():
     runner = FakeRunner(CompletedProcess([], 0, stdout="", stderr=""))
     w = Wrangler(runner=runner)
@@ -122,6 +178,8 @@ def test_missing_npx_raises_clear_error_from_every_method(tmp_path):
     w = Wrangler(runner=RaisingRunner())
 
     for call in (
+        lambda: w.pages_project_names(),
+        lambda: w.pages_project_create("p"),
         lambda: w.pages_deploy("p", tmp_path),
         lambda: w.kv_put("ns", "abc123", "ts"),
         lambda: w.kv_get("ns", "abc123"),
@@ -157,6 +215,9 @@ def test_default_runner_is_real_subprocess_argv_no_shell():
 def test_mock_wrangler_records_calls_and_round_trips_kv(tmp_path):
     mock = MockWrangler()
 
+    assert mock.pages_project_names() == []
+    mock.pages_project_create("proj")
+    assert mock.pages_project_names() == ["proj"]
     mock.pages_deploy("proj", tmp_path)
     mock.kv_put("ns", "abc123", "2026-07-05T00:00:00.000Z")
     value = mock.kv_get("ns", "abc123")
@@ -164,6 +225,8 @@ def test_mock_wrangler_records_calls_and_round_trips_kv(tmp_path):
 
     assert value == "2026-07-05T00:00:00.000Z"
     assert entries == [{"name": "abc123"}]
+    assert ("pages_project_names",) in mock.calls
+    assert ("pages_project_create", "proj", "main") in mock.calls
     assert ("pages_deploy", "proj", str(tmp_path), "main") in mock.calls
     assert ("kv_put", "ns", "abc123", "2026-07-05T00:00:00.000Z") in mock.calls
     assert mock.check_available() is True
