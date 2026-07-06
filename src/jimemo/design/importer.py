@@ -122,7 +122,7 @@ def resolve_from_name(name: str) -> Path:
     if not THEME_NAME_RE.match(name):
         raise DesignImportError(
             f"--from name {name!r} is not a valid slug (expected lowercase "
-            f"letters, digits, and single hyphens, e.g. 'chiba-tech') -- "
+            f"letters, digits, and single hyphens, e.g. 'northwind-tech') -- "
             f"refusing to resolve it against {design_systems_dir()}"
         )
     candidate = design_systems_dir() / name

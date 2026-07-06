@@ -748,12 +748,12 @@ def _seed_design_system(tmp_path: Path, name: str) -> Path:
 
 def test_resolve_from_name_finds_seeded_design_system(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    seeded = _seed_design_system(tmp_path, "chiba-tech")
+    seeded = _seed_design_system(tmp_path, "northwind-tech")
 
-    resolved = resolve_from_name("chiba-tech")
+    resolved = resolve_from_name("northwind-tech")
 
     assert resolved == seeded
-    assert resolved == tmp_path / ".jimemo" / "design-systems" / "chiba-tech"
+    assert resolved == tmp_path / ".jimemo" / "design-systems" / "northwind-tech"
 
 
 def test_resolve_from_name_missing_raises_clean_error_naming_path(tmp_path, monkeypatch):
@@ -776,14 +776,14 @@ def test_resolve_from_name_rejects_dotdot_traversal():
 
 def test_resolve_from_name_rejects_uppercase_and_underscore():
     with pytest.raises(DesignImportError, match="not a valid slug"):
-        resolve_from_name("Chiba_Tech")
+        resolve_from_name("Northwind_Tech")
 
 
 def test_cli_import_design_from_resolves_and_writes_theme(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
-    _seed_design_system(tmp_path, "chiba-tech")
+    _seed_design_system(tmp_path, "northwind-tech")
 
-    rc = main(["import-design", "--from", "chiba-tech", "--name", "viafrom"])
+    rc = main(["import-design", "--from", "northwind-tech", "--name", "viafrom"])
 
     assert rc == 0
     out = capsys.readouterr().out
@@ -804,9 +804,9 @@ def test_cli_import_design_from_nonexistent_returns_rc1_clean_error(tmp_path, mo
 
 def test_cli_import_design_from_and_positional_both_given_returns_rc2(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
-    _seed_design_system(tmp_path, "chiba-tech")
+    _seed_design_system(tmp_path, "northwind-tech")
 
-    rc = main(["import-design", str(FIXTURE_DIR), "--from", "chiba-tech"])
+    rc = main(["import-design", str(FIXTURE_DIR), "--from", "northwind-tech"])
 
     assert rc == 2
     err = capsys.readouterr().err

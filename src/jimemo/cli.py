@@ -523,7 +523,7 @@ def main(argv=None) -> int:
         dest="from_name",
         metavar="NAME",
         help="resolve NAME against ~/.jimemo/design-systems/NAME/ instead "
-        "of a positional export dir (e.g. --from chiba-tech); mutually "
+        "of a positional export dir (e.g. --from northwind-tech); mutually "
         "exclusive with the positional export dir",
     )
     import_design_p.add_argument(
