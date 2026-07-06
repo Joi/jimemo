@@ -115,9 +115,20 @@ def _resolve_font_file(export_dir: Path, rel_path: str) -> Path:
     `_FONT_EXT_INFO` -- this is the one place in the design import path
     that reads bytes rather than text, so it is the one place that
     needs a path-traversal check."""
-    export_root = export_dir.resolve()
-    candidate = export_root / rel_path
-    resolved = candidate.resolve()
+    try:
+        export_root = export_dir.resolve()
+        candidate = export_root / rel_path
+        resolved = candidate.resolve()
+    except (OSError, ValueError, RuntimeError) as e:
+        # A hostile export can make resolve() itself fail rather than
+        # just landing outside export_root -- e.g. a symlink LOOP
+        # (a -> b -> a) raises RuntimeError ("Symlink loop") on some
+        # platforms, not OSError, which would otherwise bypass this
+        # function's DesignImportError contract and surface as a raw
+        # traceback under --embed-fonts. Fail closed on any of these.
+        raise DesignImportError(
+            f"cannot resolve font path {rel_path!r}: {e}"
+        ) from e
     if not resolved.is_relative_to(export_root):
         raise DesignImportError(
             f"font file {rel_path!r} escapes the export directory "

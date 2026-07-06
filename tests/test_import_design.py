@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -433,6 +434,74 @@ def test_embed_fonts_rejects_non_font_extension(tmp_path, monkeypatch):
 
     with pytest.raises(DesignImportError, match="unrecognized extension"):
         import_design(export_dir, name="evil3", embed_fonts=True)
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "symlink"), reason="platform cannot create symlinks"
+)
+def test_embed_fonts_symlink_loop_raises_design_import_error(tmp_path, monkeypatch):
+    # A symlink LOOP in the font path (a -> b -> a) makes Path.resolve()
+    # itself raise on CPython <= 3.12 (RuntimeError; OSError on some
+    # platforms) rather than just landing outside export_root -- that
+    # used to bypass _resolve_font_file's DesignImportError contract and
+    # surface as a raw traceback under --embed-fonts. 3.13 rewrote
+    # pathlib.resolve() to give up silently on a loop instead of raising
+    # (verified: it returns the unresolved path, so the existing
+    # is_file() check below reports "not found" -- no traceback either
+    # way, just not this code path), so this test skips itself there
+    # rather than asserting a exception this runtime will never raise;
+    # see the deterministic monkeypatch-based test below for coverage
+    # that doesn't depend on the interpreter's resolve() behavior.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _manual_export(
+        tmp_path, font_rel_path="assets/fonts/loop-a.ttf", write_font=False
+    )
+    fonts_dir = export_dir / "assets" / "fonts"
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+    loop_a = fonts_dir / "loop-a.ttf"
+    loop_b = fonts_dir / "loop-b.ttf"
+    try:
+        os.symlink(loop_b, loop_a)
+        os.symlink(loop_a, loop_b)
+    except OSError:
+        pytest.skip("platform refused to create a symlink loop")
+
+    try:
+        loop_a.resolve()
+    except (OSError, ValueError, RuntimeError):
+        pass
+    else:
+        pytest.skip(
+            "this Python's Path.resolve() does not raise on a symlink "
+            "loop (non-strict resolution gives up silently instead)"
+        )
+
+    with pytest.raises(DesignImportError, match="cannot resolve font path"):
+        import_design(export_dir, name="loopy", embed_fonts=True)
+
+
+def test_resolve_font_file_wraps_runtime_error_as_design_import_error(
+    tmp_path, monkeypatch
+):
+    # Same contract as the symlink-loop test above, but deterministic
+    # across Python versions: force Path.resolve() to raise RuntimeError
+    # the way CPython <= 3.12's pathlib does for a symlink loop, and
+    # confirm _resolve_font_file wraps it as a DesignImportError instead
+    # of letting it escape as a raw RuntimeError/traceback.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _manual_export(tmp_path)
+
+    original_resolve = Path.resolve
+
+    def raising_resolve(self, *args, **kwargs):
+        if self.name == "Testy-Regular.ttf":
+            raise RuntimeError(f"Symlink loop from {self!r}")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", raising_resolve)
+
+    with pytest.raises(DesignImportError, match="cannot resolve font path"):
+        import_design(export_dir, name="loopy2", embed_fonts=True)
 
 
 # -- --embed-fonts: css-fallback path (no manifest) -----------------------
