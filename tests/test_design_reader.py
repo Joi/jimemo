@@ -219,10 +219,27 @@ def _manifest_with_token_value(
         "data:text/html;base64,PHNjcmlwdD4=",
         "url(data:text/html;base64,PHNjcmlwdD4=)",
         "data:image/png;base64,AAAA; color:red",
+        # comment delimiters: a token value drops verbatim into the theme's
+        # :root block, where a stray /* or */ would open/close a CSS comment
+        # and swallow or expose surrounding declarations.
+        "red /* hidden */",
+        "a*/b",
+        "/*x",
+        "x*/",
     ],
 )
 def test_unsafe_token_value_rejected(tmp_path, bad_value):
     export_dir = _manifest_with_token_value(tmp_path, bad_value)
+    with pytest.raises(DesignImportError, match="--evil-token"):
+        read_export(export_dir)
+
+
+def test_token_value_comment_delimiter_closes_expression_bypass(tmp_path):
+    # `expr/**/ession(...)` used to slip the bare-substring 'expression('
+    # check on the manifest path (JSON values aren't comment-stripped), but
+    # it necessarily contains '/*' and '*/', so the comment-delimiter
+    # rejection now fails it first -- closing that residual gap.
+    export_dir = _manifest_with_token_value(tmp_path, "expr/**/ession(alert(1))")
     with pytest.raises(DesignImportError, match="--evil-token"):
         read_export(export_dir)
 

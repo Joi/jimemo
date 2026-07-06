@@ -502,20 +502,30 @@ def validate_token_value(name: str, value: str) -> None:
     carved out of the blanket ';' check below rather than rejected --
     this is what lets `--icon: data:image/png;base64,...` (and, for a
     later font-embedding task, `url(data:font/ttf;base64,...)`) through.
-    Everything else keeps failing on '<', a brace, 'expression(', a
-    remote/protocol-relative/non-data url(), or any other ';'.
+    Everything else keeps failing on '<', a brace, a comment delimiter
+    ('/*' or '*/'), 'expression(', a remote/protocol-relative/non-data
+    url(), or any other ';'.
 
-    (Note: 'expression(' is matched as a bare substring, so a hostile
-    manifest could still spell it past this check with an interleaved
-    CSS comment on the regex-based CSS-fallback path, e.g.
-    `expr/**/ession(...)`. CSS `expression()` is an IE-only legacy
-    feature with no effect in any browser this pipeline targets, so
-    that gap is noted rather than closed.)"""
+    The '/*' / '*/' rejection is unconditional (checked before the data:
+    URI carve-out) because a well-formed allowlisted data: URI can never
+    contain either: its mime is `type/subtype` (no '*' either side of the
+    '/'), and its base64 payload is drawn from `[A-Za-z0-9+/=]`, which
+    has no '*'. Rejecting comment delimiters also closes the one gap the
+    substring 'expression(' check otherwise left open -- a value could
+    previously spell `expr/**/ession(...)` to slip an IE `expression()`
+    past the bare-substring match (the CSS-fallback path strips comments
+    before this check, but the manifest path does not), and that spelling
+    necessarily contains '/*' and '*/', so it now fails here first."""
     if "<" in value:
         raise DesignImportError(f"token {name!r} has unsafe value (contains '<'): {value!r}")
     if "{" in value or "}" in value:
         raise DesignImportError(
             f"token {name!r} has unsafe value (contains a brace): {value!r}"
+        )
+    if "/*" in value or "*/" in value:
+        raise DesignImportError(
+            f"token {name!r} has unsafe value (contains a comment delimiter "
+            f"'/*' or '*/'): {value!r}"
         )
     if "expression(" in value.lower():
         raise DesignImportError(

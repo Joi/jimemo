@@ -43,6 +43,7 @@ from typing import Dict, List, Optional, Tuple
 from ..errors import DesignImportError
 from ..lint import css_reference_errors
 from .reader import (
+    BrandFont,
     DesignExport,
     Token,
     validate_namespace,
@@ -149,13 +150,21 @@ def _generic_family_of(value: str) -> Optional[str]:
     return m.group(1).lower() if m else None
 
 
-def _pick_primary_font(export: DesignExport) -> Optional[str]:
-    """The brand font family to apply to both jimemo font voices: the
-    "ok" (actually used) brand font referenced by the most tokens, tied
-    first to whichever is referenced by a `--*-font` (undecorated)
-    token, then by family name for determinism. Families the export
-    marked unreferenced/unknown are never picked -- a brand font that
-    the export itself flagged as unused is not a confident signal."""
+def _pick_primary_font(export: DesignExport) -> Optional[BrandFont]:
+    """The brand font to apply to both jimemo font voices: the "ok"
+    (actually used) brand font referenced by the most tokens, tied first
+    to whichever is referenced by a `--*-font` (undecorated) token, then
+    by family name for determinism. Families the export marked
+    unreferenced/unknown are never picked -- a brand font that the export
+    itself flagged as unused is not a confident signal.
+
+    Returns the SELECTED BrandFont object (not just its family), so the
+    caller uses exactly the entry chosen here -- already guaranteed
+    status "ok" with a non-empty `referencing_token_names`. Returning the
+    family alone forced the caller to re-find "the first brand font with
+    this family", which, given duplicate brandFonts entries for one
+    family where the first has no tokens, mis-picked the token-less
+    duplicate and then IndexError'd on its empty referencing list."""
     candidates = [b for b in export.brand_fonts if b.status == "ok" and b.referencing_token_names]
     if not candidates:
         return None
@@ -166,7 +175,7 @@ def _pick_primary_font(export: DesignExport) -> Optional[str]:
         )
         return (not has_primary_token, -len(b.referencing_token_names), b.family)
 
-    return sorted(candidates, key=sort_key)[0].family
+    return sorted(candidates, key=sort_key)[0]
 
 
 def _font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
@@ -184,12 +193,16 @@ def _font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
     font at all. An unreferenced-only brand_fonts list is treated the
     same as an empty one; a brand font the export itself flagged as
     unused is not a reason to skip inference."""
-    family = _pick_primary_font(export)
-    if family:
-        brand = next(b for b in export.brand_fonts if b.family == family and b.status == "ok")
+    brand = _pick_primary_font(export)
+    if brand:
+        family = brand.family
         tokens_by_name = {t.name: t for t in export.tokens}
         generic = None
-        source_token = brand.referencing_token_names[0] if brand.referencing_token_names else None
+        # _pick_primary_font only returns a brand with a non-empty
+        # referencing_token_names, so [0] is always safe -- no re-find by
+        # family (which could land on a token-less duplicate) and no
+        # IndexError.
+        source_token = brand.referencing_token_names[0]
         for tn in brand.referencing_token_names:
             t = tokens_by_name.get(tn)
             if t is None:
@@ -200,7 +213,7 @@ def _font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
                 break
         stack = _FALLBACK_STACKS.get(generic or _DEFAULT_GENERIC, _FALLBACK_STACKS[_DEFAULT_GENERIC])
         value = '"{}", {}'.format(family, stack)
-        return value, family, (source_token or brand.referencing_token_names[0])
+        return value, family, source_token
 
     has_confident_brand_font = any(
         b.status == "ok" and b.referencing_token_names for b in export.brand_fonts
@@ -213,12 +226,24 @@ def _font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
 def _first_family_in_stack(value: str) -> Optional[str]:
     """The first font-family in a CSS font-stack VALUE (comma-separated),
     quotes stripped -- e.g. '"Finder", -apple-system, ...' -> "Finder",
-    or None if the stack's first entry is empty."""
+    or None if the stack's first entry is empty (empty stack, whitespace
+    only, or a leading comma) OR is an empty quoted family (`""` / `''`).
+
+    Unquoting requires a MATCHING pair (`"..."` or `'...'`, backreferenced)
+    so a mismatched-quote fragment like `"Finder'` is not silently treated
+    as a clean family -- it's returned as-is and left for the caller's
+    `validate_font_family` to reject. The extracted family is never trusted
+    on its own: `_infer_font_declaration` runs it through
+    `validate_font_family` (rejecting quotes, braces, ';', comment
+    delimiters, url()/js/expression) before interpolating it, so this
+    function only has to find the first entry, not sanitize it."""
     first = value.split(",", 1)[0].strip()
     if not first:
         return None
-    m = re.match(r"""^['"](.+)['"]$""", first)
-    return m.group(1) if m else first
+    m = re.match(r"""^(['"])(.*)\1$""", first)
+    if m:
+        return m.group(2).strip() or None
+    return first
 
 
 def _pick_font_name_token(export: DesignExport) -> Optional[Token]:

@@ -134,6 +134,47 @@ def test_font_inferred_when_brand_fonts_has_only_unreferenced_entries():
         assert "Unused" not in m.group(1)
 
 
+def test_duplicate_brand_fonts_same_family_no_indexerror():
+    # Two brandFonts entries for one family: the FIRST has no referencing
+    # tokens, the SECOND is referenced. _pick_primary_font picks the
+    # referenced one; the old code then re-found "the first brand font with
+    # this family" (the token-less duplicate) and indexed its empty
+    # referencing list -> raw IndexError. Returning the selected BrandFont
+    # object means the referenced entry is used directly -- no re-find, no
+    # crash.
+    export = DesignExport(
+        tokens=[Token(name="--ct-font", value='"Helios", sans-serif', kind="font")],
+        fonts=[],
+        brand_fonts=[
+            BrandFont(family="Helios", referencing_token_names=[], status="ok"),
+            BrandFont(family="Helios", referencing_token_names=["--ct-font"], status="ok"),
+        ],
+        namespace="",
+    )
+    css = build_theme(export, "dup")  # must not raise IndexError
+    for role in ("--jm-font-prose", "--jm-font-ui"):
+        m = re.search(re.escape(role) + r":\s*([^;]+);", css)
+        assert m and '"Helios"' in m.group(1)
+    # header records the referenced token as the source, not a crash
+    assert "--ct-font -> --jm-font-prose" in css
+    assert not theme_structure_errors(css)
+
+
+def test_empty_quoted_family_in_token_value_falls_through():
+    # A `--*-font` token whose stack's first entry is an EMPTY quoted family
+    # (`"", sans-serif`) yields no usable family: the hardened extractor
+    # returns None rather than the junk `""`, so inference falls through
+    # (here: to nothing) and the font roles are simply left unmapped --
+    # never emitted as a malformed `--jm-font-prose: "", ...`.
+    export = _export_with_tokens(
+        [Token(name="--x-font", value='"", sans-serif', kind="font")]
+    )
+    css = build_theme(export, "inferred")
+    assert not re.search(r"--jm-font-prose:\s*[^;]+;", css)
+    assert not re.search(r"--jm-font-ui:\s*[^;]+;", css)
+    assert not theme_structure_errors(css)
+
+
 def test_chiba_font_mapping_unchanged_when_brand_fonts_present():
     # Regression guard: brand_fonts stays the primary source when
     # present -- inference must not kick in and override it.
@@ -408,6 +449,69 @@ def test_build_theme_structural_gate_catches_unbalanced_brace(monkeypatch):
 def test_build_theme_structural_gate_catches_stray_comment_close(monkeypatch):
     with pytest.raises(DesignImportError, match="comment delimiter"):
         _bypassed_build_theme(monkeypatch, "red */ oops")
+
+
+def test_structural_gate_blocks_hostile_export_with_all_validators_off(monkeypatch):
+    # The definitive backstop: even with EVERY reader input validator forced
+    # to a no-op (validate_token_name/value/namespace/font_family), a hostile
+    # export whose token value breaks out of the :root block and injects a
+    # sibling `body { ... }` rule must still be blocked -- by the output-side
+    # structural gate alone. Brace counts balance in this payload and the
+    # lint sees no url()/@import, so nothing but theme_structure_errors
+    # catches the stray top-level rule. Fail closed.
+    from jimemo.design import mapping
+
+    monkeypatch.setattr(mapping, "validate_token_name", lambda name: None)
+    monkeypatch.setattr(mapping, "validate_token_value", lambda name, value: None)
+    monkeypatch.setattr(mapping, "validate_namespace", lambda ns: None)
+    monkeypatch.setattr(mapping, "validate_font_family", lambda fam: None)
+
+    # The injection rides in on the token VALUE -- the main channel, and one
+    # `_reject_comment_close` (build_theme's header-comment backstop) does NOT
+    # inspect, so the structural gate is genuinely the only thing left.
+    export = DesignExport(
+        tokens=[
+            Token(
+                name="--x",
+                value="red } body { display:none } :root { --y: 1",
+                kind="color",
+            )
+        ],
+        fonts=[],
+        brand_fonts=[],
+        namespace="",
+    )
+    with pytest.raises(DesignImportError, match="structural safety check"):
+        build_theme(export, "evil")
+
+
+# -- audit: export fields that never reach generated output ------------------
+#
+# token.kind, token.defined_in, and BrandFont.status are read from the
+# untrusted manifest but are used ONLY in comparisons (kind == "color",
+# status == "ok") or as metadata -- none is interpolated into the theme CSS,
+# header comment, or @font-face blocks. So even hostile values for them
+# produce a clean, inert theme; this guards that they stay non-emitted.
+
+
+def test_hostile_kind_defined_in_status_never_reach_output():
+    hostile = "*/ } body { display:none } :root { --z: 1 /*"
+    export = DesignExport(
+        tokens=[
+            Token(name="--ct-black", value="#000000", kind=hostile, defined_in=hostile)
+        ],
+        fonts=[],
+        brand_fonts=[
+            BrandFont(family="Legit", referencing_token_names=["--ct-black"], status=hostile)
+        ],
+        namespace="",
+    )
+    css = build_theme(export, "audit")
+    assert hostile not in css
+    assert "body { display:none }" not in css
+    assert theme_structure_errors(css) == []
+    # the token itself is still re-declared verbatim (name+value validated)
+    assert "--ct-black: #000000;" in css
 
 
 # -- header comment -----------------------------------------------------
