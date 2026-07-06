@@ -17,6 +17,7 @@ from jimemo.design.importer import (
     resolve_from_name,
     slugify_name,
 )
+from jimemo.design.reader import THEME_NAME_RE
 from jimemo.errors import DesignImportError
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "design-export"
@@ -107,17 +108,26 @@ def test_import_rejects_name_light(tmp_path, monkeypatch):
     assert not (tmp_path / ".jimemo" / "themes" / "light.css").exists()
 
 
-def test_import_rejects_name_dark_case_insensitive(tmp_path, monkeypatch):
+def test_import_rejects_uppercase_explicit_name_as_invalid_not_reserved(tmp_path, monkeypatch):
+    # An explicit --name is validated as-is (no more silent lowercasing --
+    # see test_import_rejects_name_MyBrand_style_case below), so "Dark"
+    # fails the slug-shape check before it would ever reach the reserved-
+    # name check -- still rejected, but for the right reason.
     monkeypatch.setenv("HOME", str(tmp_path))
-    with pytest.raises(DesignImportError, match="reserved"):
+    with pytest.raises(DesignImportError, match="not a valid theme name"):
         import_design(FIXTURE_DIR, name="Dark")
     assert not (tmp_path / ".jimemo" / "themes" / "dark.css").exists()
 
 
-def test_import_rejects_name_that_slugifies_to_dark(tmp_path, monkeypatch):
+def test_import_rejects_name_that_used_to_slugify_to_dark(tmp_path, monkeypatch):
+    # Previously an explicit --name was silently slugified before the
+    # reserved-name check ran, so "_DARK_" -> "dark" got caught there.
+    # Now an explicit --name is validated verbatim (no slugification),
+    # so "_DARK_" fails the slug-shape check first instead.
     monkeypatch.setenv("HOME", str(tmp_path))
-    with pytest.raises(DesignImportError, match="reserved"):
+    with pytest.raises(DesignImportError, match="not a valid theme name"):
         import_design(FIXTURE_DIR, name="_DARK_")
+    assert not (tmp_path / ".jimemo" / "themes" / "dark.css").exists()
 
 
 def test_import_rejects_default_name_derived_from_namespace(tmp_path, monkeypatch):
@@ -135,6 +145,86 @@ def test_import_accepts_normal_name(tmp_path, monkeypatch):
     result = import_design(FIXTURE_DIR, name="mybrand")
     assert result.name == "mybrand"
     assert (tmp_path / ".jimemo" / "themes" / "mybrand.css").is_file()
+
+
+# -- import/render name-rule consistency ---------------------------------
+#
+# The bug: `import-design --name TestMixed` used to succeed by silently
+# slugifying to `testmixed.css`, while `render --theme TestMixed` rejected
+# the same string outright -- the two commands disagreed about what a
+# valid theme name is. Fixed by having import-design validate an explicit
+# --name against the same shape (`invalid_theme_name_reason`) render
+# enforces, and reject it outright rather than transform it.
+
+
+def test_import_rejects_mixed_case_explicit_name_cleanly(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(DesignImportError, match="not a valid theme name") as exc_info:
+        import_design(FIXTURE_DIR, name="TestMixed")
+    # names the invalid name and shows the expected form, same as render's
+    # rejection of the same string (see test_render_rejects_same_invalid_name below)
+    assert "'TestMixed'" in str(exc_info.value)
+    assert "northwind-field-kit" in str(exc_info.value)
+    assert not (tmp_path / ".jimemo" / "themes").exists()
+
+
+def test_cli_import_design_rejects_mixed_case_name_rc1_writes_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    rc = main(["import-design", str(FIXTURE_DIR), "--name", "MyBrand"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "not a valid theme name" in err
+    assert "'MyBrand'" in err
+    assert "Traceback" not in err
+    assert not (tmp_path / ".jimemo" / "themes").exists()
+
+
+def test_import_accepts_valid_slug_explicit_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = import_design(FIXTURE_DIR, name="my-brand")
+    assert result.name == "my-brand"
+    assert (tmp_path / ".jimemo" / "themes" / "my-brand.css").is_file()
+
+
+def test_import_no_name_still_auto_derives_valid_slug(tmp_path, monkeypatch):
+    # Regression: omitting --name must still work, deriving+slugifying
+    # from the export's namespace (only the EXPLICIT --name path is now
+    # validated-and-rejected rather than transformed).
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = import_design(FIXTURE_DIR)
+    assert result.name == "northwindfieldkit-7b3f21"
+    assert THEME_NAME_RE.match(result.name)
+    assert (tmp_path / ".jimemo" / "themes" / f"{result.name}.css").is_file()
+
+
+def test_render_rejects_same_invalid_name_import_rejects(tmp_path, monkeypatch):
+    # Round-trip: a name import-design REJECTS, render --theme also
+    # rejects (with the same "not a valid theme name" wording) -- no
+    # theme file was ever written for it to resolve to anyway.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    out_path = tmp_path / "out.html"
+    for bad_name in ("TestMixed", "MyBrand"):
+        rc = main([
+            "render", "briefing", str(BRIEFING_SAMPLE),
+            "--theme", bad_name, "-o", str(out_path),
+        ])
+        assert rc == 1
+        assert not out_path.exists()
+
+
+def test_render_accepts_name_import_accepted(tmp_path, monkeypatch):
+    # Round-trip, the other direction: a name import-design ACCEPTS is
+    # always accepted by render --theme.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for good_name in ("my-brand", "northwind"):
+        import_design(FIXTURE_DIR, name=good_name)
+        out_path = tmp_path / f"out-{good_name}.html"
+        rc = main([
+            "render", "briefing", str(BRIEFING_SAMPLE),
+            "--theme", good_name, "-o", str(out_path),
+        ])
+        assert rc == 0
+        assert out_path.is_file()
 
 
 def test_cli_import_design_reserved_name_returns_rc1_writes_nothing(tmp_path, monkeypatch, capsys):

@@ -53,6 +53,7 @@ __all__ = [
     "validate_namespace",
     "validate_font_family",
     "THEME_NAME_RE",
+    "invalid_theme_name_reason",
 ]
 
 
@@ -602,6 +603,29 @@ _NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_-]*\Z")
 # constant from there back into jimemo.inline would be a load-time
 # import cycle.
 THEME_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+def invalid_theme_name_reason(name: str) -> Optional[str]:
+    """None if `name` matches THEME_NAME_RE, else the shared wording
+    naming why it doesn't -- one sentence fragment (no leading "theme
+    name"/"--name" framing, no exception type) that both call sites
+    that gate on this shape wrap in whatever context/exception fits:
+    `design.importer.import_design`'s explicit `--name` check (raises
+    DesignImportError) and `jimemo.inline._resolve_theme_path`'s
+    `--theme` resolution check (raises ManifestError). Sharing this
+    string is what guarantees a name accepted by one is always accepted
+    by the other -- before this helper existed, `import-design --name
+    TestMixed` silently lowercased to `testmixed.css` while `render
+    --theme TestMixed` rejected the same string outright, because the
+    two commands enforced the shape with independently-worded checks
+    that had drifted (one permissive-and-transforming, one strict)."""
+    if THEME_NAME_RE.match(name):
+        return None
+    return (
+        f"{name!r} is not a valid theme name (expected lowercase "
+        "letters/digits in hyphen-separated segments, e.g. "
+        "'northwind-field-kit')"
+    )
 
 # jimemo's own semantic role tokens (--jm-bg, --jm-accent, --jm-font-prose,
 # ...) all live under this prefix -- reserved for the toolkit, never for an

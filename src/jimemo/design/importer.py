@@ -32,7 +32,13 @@ from ..errors import DesignImportError
 from ..inline import personal_themes_dir
 from ..lint import css_reference_errors
 from .mapping import build_theme, theme_structure_errors
-from .reader import THEME_NAME_RE, DesignExport, FontFace, read_export
+from .reader import (
+    THEME_NAME_RE,
+    DesignExport,
+    FontFace,
+    invalid_theme_name_reason,
+    read_export,
+)
 
 __all__ = [
     "ImportResult",
@@ -58,10 +64,15 @@ def slugify_name(raw: str) -> str:
     """`raw` lowercased with every run of non-alphanumeric characters
     collapsed to a single hyphen, and leading/trailing hyphens trimmed —
     e.g. ``"NorthwindFieldKit_7b3f21"`` -> ``"northwindfieldkit-7b3f21"``.
-    Used for both an explicit ``--name`` and the default derived from the
-    export's namespace or directory name, so the installed theme file
-    name is always a well-formed CSS-file-safe, `--theme`-typeable
-    identifier regardless of what the export or the user supplied."""
+    Used only for the DEFAULT name derived from the export's namespace or
+    directory name (`_default_name`) when the caller passed no `--name`,
+    so that default is always a well-formed CSS-file-safe,
+    `--theme`-typeable identifier regardless of what the export
+    declared. An explicit, user-typed `--name` is deliberately NOT
+    slugified — `import_design` validates it as-is against the same
+    shape (`invalid_theme_name_reason`) `render --theme` enforces, and
+    rejects it outright rather than silently transforming it, so a name
+    import accepts is always a name render accepts too."""
     slug = _SLUG_COLLAPSE_RE.sub("-", raw.strip().lower()).strip("-")
     if not slug:
         raise DesignImportError(
@@ -290,13 +301,26 @@ def import_design(
     DesignImportError (from `read_export`, `build_theme`, or this
     module's own font handling) on anything that doesn't parse, fails
     value/path validation, or would fail the self-contained CSS check —
-    in every case, nothing is written."""
+    in every case, nothing is written.
+
+    An explicit `name` is validated as-is against the same slug shape
+    `render --theme` requires (`invalid_theme_name_reason`) and rejected
+    outright if it doesn't conform -- it is never silently lowercased or
+    otherwise transformed, so a name this call accepts is always a name
+    `render --theme` later accepts too. Omit `name` to derive one from
+    the export's own namespace or directory name instead (`_default_name`,
+    which slugifies since that input was never user-typed)."""
     export_dir = Path(export_dir)
     if not export_dir.is_dir():
         raise DesignImportError(f"export directory not found: {export_dir}")
 
+    if name:
+        reason = invalid_theme_name_reason(name)
+        if reason is not None:
+            raise DesignImportError(f"--name {reason} -- refusing to import it")
+
     export = read_export(export_dir)
-    theme_name = slugify_name(name) if name else _default_name(export, export_dir)
+    theme_name = name if name else _default_name(export, export_dir)
     if theme_name in RESERVED_THEME_NAMES:
         raise DesignImportError(
             f"theme name {theme_name!r} is reserved (it is one of the "

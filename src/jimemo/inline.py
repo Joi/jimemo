@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ._paths import REPO_ROOT
-from .design.reader import THEME_NAME_RE
+from .design.reader import invalid_theme_name_reason
 from .errors import ContentError, ManifestError
 from .sanitize import is_allowed_image_data_uri, parse_srcset
 
@@ -98,22 +98,21 @@ def _resolve_theme_path(theme: str) -> Optional[Path]:
     the one the user meant.
 
     `theme` is a CLI value, so -- for anything past the built-in check --
-    it is validated against `THEME_NAME_RE` -- the same
-    lowercase-alnum-and-hyphens shape `design.importer.slugify_name`
-    always produces -- before it ever touches a path: unvalidated, a
-    name like `../../etc/passwd` or an absolute path would let `--theme`
-    read an arbitrary local .css file and inline it into the page.
-    Belt-and-braces after that: the resolved candidate must still land
-    inside the search dir it came from, in case a future charset change
-    ever reintroduces a path separator."""
+    it is validated against `THEME_NAME_RE` via the shared
+    `invalid_theme_name_reason` (see design/reader.py), the same check
+    `design.importer.import_design` applies to an explicit `--name` at
+    import time, so a name either command accepts is always accepted by
+    the other. Unvalidated, a name like `../../etc/passwd` or an
+    absolute path would let `--theme` read an arbitrary local .css file
+    and inline it into the page. Belt-and-braces after that: the
+    resolved candidate must still land inside the search dir it came
+    from, in case a future charset change ever reintroduces a path
+    separator."""
     if theme in _BUILTIN_THEME_MODES:
         return None
-    if not THEME_NAME_RE.match(theme):
-        raise ManifestError(
-            f"theme name {theme!r} is not a valid theme name (expected "
-            "lowercase letters/digits in hyphen-separated segments, e.g. "
-            "'northwind-field-kit') -- refusing to resolve it to a file"
-        )
+    reason = invalid_theme_name_reason(theme)
+    if reason is not None:
+        raise ManifestError(f"theme name {reason} -- refusing to resolve it to a file")
     for base in _theme_search_dirs():
         base_resolved = base.resolve()
         candidate = (base_resolved / f"{theme}.css").resolve()
