@@ -1,0 +1,206 @@
+{#- jimemo toolkit macros — one macro per component.
+
+    Usage in a template:
+        {% import "macros.html.j2" as ui %}
+        {{ ui.page_header(title, kicker="Briefing", meta=[date, author]) }}
+
+    All macros accept plain data structures (dicts, lists, strings).
+    Autoescape applies to every value; markdown slots arrive as Markup
+    and pass through unescaped. Optional keys are always read with
+    |default() so StrictUndefined environments render cleanly.
+-#}
+
+{#- page-header: kicker, title, subtitle, meta (list of strings) -#}
+{% macro page_header(title, kicker=none, subtitle=none, meta=[]) -%}
+<header class="jm-page-header">
+  {% if kicker %}<p class="jm-page-header__kicker">{{ kicker }}</p>{% endif %}
+  <h1 class="jm-page-header__title">{{ title }}</h1>
+  {% if subtitle %}<p class="jm-page-header__subtitle">{{ subtitle }}</p>{% endif %}
+  {% if meta %}
+  <p class="jm-page-header__meta">
+    {%- for item in meta %}<span class="jm-page-header__meta-item">{{ item }}</span>{% endfor -%}
+  </p>
+  {% endif %}
+</header>
+{%- endmacro %}
+
+{#- badge: tone in none|"accent"|"positive"|"negative" -#}
+{% macro badge(label, tone=none) -%}
+<span class="jm-badge{% if tone %} jm-badge--{{ tone }}{% endif %}">{{ label }}</span>
+{%- endmacro %}
+
+{#- stat-tile: one tile. delta is pre-signed text ("+4", "-12%");
+    tone colors the delta: "positive" | "negative" -#}
+{% macro stat_tile(value, label, delta=none, tone=none) -%}
+<div class="jm-stat-tile">
+  <div class="jm-stat-tile__value">{{ value }}</div>
+  <div class="jm-stat-tile__label">{{ label }}</div>
+  {% if delta %}<div class="jm-stat-tile__delta{% if tone %} jm-stat-tile__delta--{{ tone }}{% endif %}">{{ delta }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- stat_row: list of {value, label, delta?, tone?} -#}
+{% macro stat_row(stats) -%}
+<div class="jm-stat-row">
+  {%- for s in stats %}
+  {{ stat_tile(s.value, s.label, delta=s.delta|default(none), tone=s.tone|default(none)) }}
+  {%- endfor %}
+</div>
+{%- endmacro %}
+
+{#- card-grid: list of {title, image?, image_alt?, text?, meta?, href?,
+    badge?, badge_tone?} -#}
+{% macro card_grid(cards) -%}
+<div class="jm-card-grid">
+  {%- for c in cards %}
+  <article class="jm-card-grid__item">
+    {% if c.image|default(none) %}<img class="jm-card-grid__media" src="{{ c.image }}" alt="{{ c.image_alt|default('') }}">{% endif %}
+    <div class="jm-card-grid__body">
+      <h3 class="jm-card-grid__title">
+        {%- if c.href|default(none) %}<a href="{{ c.href }}">{{ c.title }}</a>{% else %}{{ c.title }}{% endif -%}
+      </h3>
+      {% if c.badge|default(none) %}{{ badge(c.badge, tone=c.badge_tone|default(none)) }}{% endif %}
+      {% if c.text|default(none) %}<p class="jm-card-grid__text">{{ c.text }}</p>{% endif %}
+      {% if c.meta|default(none) %}<p class="jm-card-grid__meta">{{ c.meta }}</p>{% endif %}
+    </div>
+  </article>
+  {%- endfor %}
+</div>
+{%- endmacro %}
+
+{#- timeline: list of {date?, title, body?, image?, image_alt?,
+    badges?} where badges is a list of strings or {label, tone} -#}
+{% macro timeline(events) -%}
+<ol class="jm-timeline">
+  {%- for e in events %}
+  <li class="jm-timeline__item">
+    <span class="jm-timeline__marker" aria-hidden="true"></span>
+    {% if e.date|default(none) %}<p class="jm-timeline__date">{{ e.date }}</p>{% endif %}
+    <h3 class="jm-timeline__title">{{ e.title }}</h3>
+    {% if e.body|default(none) %}<div class="jm-timeline__body">{{ e.body }}</div>{% endif %}
+    {% if e.image|default(none) %}<img class="jm-timeline__media" src="{{ e.image }}" alt="{{ e.image_alt|default('') }}">{% endif %}
+    {% if e.badges|default(none) %}
+    <p class="jm-timeline__badges">
+      {%- for b in e.badges %}
+      {%- if b is mapping %}{{ badge(b.label, tone=b.tone|default(none)) }}{% else %}{{ badge(b) }}{% endif %}
+      {%- endfor %}
+    </p>
+    {% endif %}
+  </li>
+  {%- endfor %}
+</ol>
+{%- endmacro %}
+
+{#- data-table: columns is a list of strings, or dicts
+    {label, key?, num?}; rows is a list of dicts (looked up by key,
+    which defaults to the label) or a list of lists (positional).
+    num: true right-aligns with tabular figures. -#}
+{% macro data_table(columns, rows, caption=none) -%}
+<div class="jm-data-table__scroll">
+<table class="jm-data-table">
+  {% if caption %}<caption class="jm-data-table__caption">{{ caption }}</caption>{% endif %}
+  <thead>
+    <tr>
+      {%- for col in columns %}
+      {%- set is_num = (col.num|default(false)) if col is mapping else false %}
+      <th scope="col"{% if is_num %} class="jm-data-table__cell--num"{% endif %}>{{ col.label if col is mapping else col }}</th>
+      {%- endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {%- for row in rows %}
+    <tr>
+      {%- for col in columns %}
+      {%- set is_num = (col.num|default(false)) if col is mapping else false %}
+      {%- if row is mapping %}
+      {%- set cell = row[col.key|default(col.label) if col is mapping else col] %}
+      {%- else %}
+      {%- set cell = row[loop.index0] %}
+      {%- endif %}
+      <td{% if is_num %} class="jm-data-table__cell--num"{% endif %}>{{ cell }}</td>
+      {%- endfor %}
+    </tr>
+    {%- endfor %}
+  </tbody>
+</table>
+</div>
+{%- endmacro %}
+
+{#- figure-block: label is the plate number ("Fig. 1");
+    plain=true removes the frame -#}
+{% macro figure_block(src, alt="", caption=none, credit=none, label=none, plain=false) -%}
+<figure class="jm-figure-block{% if plain %} jm-figure-block--plain{% endif %}">
+  <img class="jm-figure-block__media" src="{{ src }}" alt="{{ alt }}">
+  {% if caption or label or credit %}
+  <figcaption class="jm-figure-block__caption">
+    {%- if label %}<span class="jm-figure-block__label">{{ label }}</span>{% endif -%}
+    {%- if caption %}{{ caption }}{% endif -%}
+    {%- if credit %}<span class="jm-figure-block__credit">{{ credit }}</span>{% endif -%}
+  </figcaption>
+  {% endif %}
+</figure>
+{%- endmacro %}
+
+{#- toc: items is a list of {label, href?, children?}, nested freely -#}
+{% macro toc(items, title="Contents") -%}
+<nav class="jm-toc" aria-label="{{ title }}">
+  <p class="jm-toc__title">{{ title }}</p>
+  {{ toc_list(items) }}
+</nav>
+{%- endmacro %}
+
+{% macro toc_list(items) -%}
+<ol class="jm-toc__list">
+  {%- for it in items %}
+  <li class="jm-toc__item">
+    <a class="jm-toc__link" href="{{ it.href|default('#') }}">{{ it.label }}</a>
+    {%- if it.children|default(none) %}{{ toc_list(it.children) }}{% endif %}
+  </li>
+  {%- endfor %}
+</ol>
+{%- endmacro %}
+
+{#- tree: a node {label (or name), meta?, note?, children?} or a list
+    of such nodes. Recurses to any depth. -#}
+{% macro tree(nodes) -%}
+<div class="jm-tree">
+  {%- if nodes is mapping %}{{ tree_list([nodes]) }}{% else %}{{ tree_list(nodes) }}{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro tree_list(nodes) -%}
+<ul class="jm-tree__list">
+  {%- for n in nodes %}
+  <li class="jm-tree__item">
+    <div class="jm-tree__node">
+      <span class="jm-tree__label">{{ n.label|default(n.name) }}</span>
+      {%- if n.meta|default(none) %} <span class="jm-tree__meta">{{ n.meta }}</span>{% endif %}
+      {%- if n.note|default(none) %}<span class="jm-tree__note">{{ n.note }}</span>{% endif %}
+    </div>
+    {%- if n.children|default(none) %}{{ tree_list(n.children) }}{% endif %}
+  </li>
+  {%- endfor %}
+</ul>
+{%- endmacro %}
+
+{#- chart: a canvas + its single inline init <script> — the ONLY macro
+    that may emit script, and only from the renderer's `charts` context
+    entries: {{ ui.chart(c.id, c.init_js) }}.
+
+    SECURITY (see charts.py and the Phase 4 plan, "The security crux"):
+    init_js MUST be the renderer-supplied value — the full script body
+    built by charts.chart_init_js around a serialize_chart_config
+    payload (every "<" is u003c-escaped inside the JSON, so the payload
+    cannot close this script element), Markup-wrapped by render.py so
+    autoescape emits it verbatim. lint.py accepts ONLY that byte shape
+    (plus the vendored library) inside <script> on a chart page, so a
+    template that feeds anything else into this macro fails the render.
+    Nothing in this macro is marked |safe: passed a plain string instead,
+    autoescape entity-encodes it, which lint then rejects as an
+    unexpected inline script — fail closed, never an injection. chart_id
+    is the manifest-validated chart id (\A[a-zA-Z][\w-]*\Z), safe as a
+    DOM id. No other content data may enter this macro. -#}
+{% macro chart(chart_id, init_js) -%}
+<canvas id="{{ chart_id }}"></canvas>
+<script>{{ init_js }}</script>
+{%- endmacro %}

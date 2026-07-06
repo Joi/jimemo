@@ -1,0 +1,45 @@
+{#- genealogy — a family tree: masthead, optional intro prose, and a
+    nested tree of ancestors and descendants. Extends the toolkit page
+    skeleton; components used: page-header, tree.
+
+    The `root` slot is a single-item list holding the top ancestor (the
+    "data" slot contract requires a top-level list); each person is
+    {name, years?, note?, children?} and `children` nests to any depth.
+    `person_list` is a self-recursive macro so depth is unbounded; a
+    leaf simply omits `children` (or leaves it empty), which ends the
+    recursion. -#}
+{% extends "page.html.j2" %}
+{% import "macros.html.j2" as ui %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% macro person_list(persons) %}
+<ul class="jm-tree__list">
+  {%- for p in persons %}
+  <li class="jm-tree__item">
+    <div class="jm-tree__node">
+      <span class="jm-tree__label">{{ p.name }}</span>
+      {%- if p.years|default(none) %} <span class="jm-tree__meta">{{ p.years }}</span>{% endif %}
+      {%- if p.note|default(none) %}<span class="jm-tree__note">{{ p.note }}</span>{% endif %}
+    </div>
+    {%- if p.children|default([]) %}{{ person_list(p.children) }}{% endif %}
+  </li>
+  {%- endfor %}
+</ul>
+{%- endmacro %}
+
+{% block content %}
+{{ ui.page_header(title, subtitle=subtitle|default(none)) }}
+
+{% if intro|default(none) %}
+<div class="jm-prose">
+{{ intro }}
+</div>
+{% endif %}
+
+<div class="jm-tree">
+{{ person_list(root) }}
+</div>
+{% endblock %}
+
+{% block footer %}Rendered with jimemo{% endblock %}

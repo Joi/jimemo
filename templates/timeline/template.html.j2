@@ -1,0 +1,34 @@
+{#- timeline — a vertical timeline of dated events: masthead, optional
+    intro prose, then a dated rail with optional per-event badge and
+    image. Extends the toolkit page skeleton; components used:
+    page-header, timeline, badge. -#}
+{% extends "page.html.j2" %}
+{% import "macros.html.j2" as ui %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{{ ui.page_header(title, subtitle=subtitle|default(none)) }}
+
+{% if intro|default(none) %}
+<div class="jm-prose">
+{{ intro }}
+</div>
+{% endif %}
+
+{% set timeline_events = [] %}
+{% for e in events -%}
+  {%- set item = {
+        "date": e.date|default(none),
+        "title": e.title|default(none),
+        "body": e.body|default(none),
+        "image": e.image|default(none),
+        "image_alt": e.title|default(''),
+      } -%}
+  {%- if e.badge|default(none) %}{% set _ = item.update({"badges": [e.badge]}) %}{% endif -%}
+  {%- set _ = timeline_events.append(item) -%}
+{%- endfor %}
+{{ ui.timeline(timeline_events) }}
+{% endblock %}
+
+{% block footer %}Rendered with jimemo{% endblock %}

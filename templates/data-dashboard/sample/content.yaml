@@ -1,0 +1,85 @@
+title: "Support Desk — Weekly Report"
+subtitle: "Ticket volume, resolution time, and satisfaction across all channels."
+period: "29 Jun – 5 Jul 2026"
+
+intro: |
+  Ticket volume held just under 400 for the third week running. Median
+  resolution time improved for the second consecutive week, driven by
+  the triage macros rolled out on 24 June. One P1 incident (a delayed
+  payment webhook) was opened and resolved inside SLA.
+
+stats:
+  - label: "Tickets closed"
+    value: "394"
+    delta: "+18 vs last week"
+  - label: "Median resolution"
+    value: "3.4h"
+    delta: "-0.6h vs last week"
+  - label: "CSAT"
+    value: "4.6 / 5"
+    delta: "+0.1 vs last week"
+  - label: "Open backlog"
+    value: "57"
+    delta: "-9 vs last week"
+
+tables:
+  - caption: "Tickets by channel, 29 June – 5 July."
+    columns:
+      - label: "Channel"
+        key: "channel"
+      - label: "Tickets"
+        key: "tickets"
+        num: true
+      - label: "Avg resolution (h)"
+        key: "avg_resolution"
+        num: true
+      - label: "Share of volume"
+        key: "share"
+        num: true
+    rows:
+      - channel: "Email"
+        tickets: "188"
+        avg_resolution: "4.1"
+        share: "48%"
+      - channel: "Chat"
+        tickets: "146"
+        avg_resolution: "2.2"
+        share: "37%"
+      - channel: "Phone"
+        tickets: "41"
+        avg_resolution: "6.8"
+        share: "10%"
+      - channel: "Community forum"
+        tickets: "19"
+        avg_resolution: "11.5"
+        share: "5%"
+  - caption: "Open and recently closed incidents, P1/P2 only."
+    columns:
+      - label: "Incident"
+        key: "incident"
+      - label: "Status"
+        key: "status"
+      - label: "Owner"
+        key: "owner"
+      - label: "Opened"
+        key: "opened"
+    rows:
+      - incident: "Payment webhook delay"
+        status: "Resolved"
+        owner: "R. Alvarez"
+        opened: "30 Jun"
+      - incident: "SSO login timeout (EU)"
+        status: "Monitoring"
+        owner: "K. Msimbi"
+        opened: "2 Jul"
+      - incident: "Attachment upload 500s"
+        status: "Open"
+        owner: "T. Haas"
+        opened: "4 Jul"
+
+notes: |
+  Backlog is trending down for the first time since May, and the triage
+  macros should keep shaving minutes off email resolution through July.
+  Phone remains the smallest channel by volume but has the longest
+  resolution time — worth a follow-up on IVR routing before the August
+  launch.

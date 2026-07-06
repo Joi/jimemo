@@ -1,0 +1,61 @@
+/* ============================================================
+   Northwind Field Kit — Color
+   Foundation: black & white are the primary colors. Northwind Blue
+   (the signal color) is reserved for primary actions & wayfinding.
+   A 21-swatch secondary palette (7 hues x light/medium/dark)
+   supports expressive layouts across the gear catalog.
+   ============================================================ */
+:root {
+  /* ---- Core ---- */
+  --nw-black: #000000;
+  --nw-white: #ffffff;
+  --nw-blue-core: #33418f; /* Northwind Blue — primary signal color */
+
+  /* neutral surface used across manual + web */
+  --nw-surface: #f3f1ea;
+  --nw-grey-58: #585858;
+  --nw-grey-8c: #8c8c8c;
+  --nw-grey-cf: #cfcfcf;
+
+  /* ---- Secondary palette — Red ---- */
+  --nw-red-light: #ffe1df;
+  --nw-red: #c31f1f;       /* Trail Red */
+  --nw-red-dark: #4a0605;
+
+  /* ---- Orange ---- */
+  --nw-orange-light: #ffe3c7;
+  --nw-orange: #e0691f;    /* Signal Orange */
+  --nw-orange-dark: #5c2200;
+
+  /* ---- Green ---- */
+  --nw-green-light: #d9f0c3;
+  --nw-green: #4c9a3b;     /* Ridge Green */
+  --nw-green-dark: #163a10;
+
+  /* ---- Yellow ---- */
+  --nw-yellow-light: #fff6c9;
+  --nw-yellow: #e8c91a;    /* Sun Yellow */
+  --nw-yellow-dark: #6b5a06;
+
+  /* ---- Turquoise ---- */
+  --nw-turquoise-light: #cdf7f0;
+  --nw-turquoise: #1fa89a; /* Tarn Teal */
+  --nw-turquoise-dark: #04463e;
+
+  /* ---- Blue ---- */
+  --nw-blue-light: #cfe3ff;
+  --nw-blue: #2054c9;      /* Dusk Blue */
+  --nw-blue-dark: #0a1f4d;
+
+  /* ---- Pink / Purple ---- */
+  --nw-pink-light: #f7dcf5;
+  --nw-pink: #b0359e;      /* Alpenglow */
+  --nw-purple-dark: #35123a;
+
+  /* ---- Semantic aliases ---- */
+  --nw-ink: var(--nw-black);          /* default text */
+  --nw-paper: var(--nw-white);        /* default background */
+  --nw-on-dark: var(--nw-white);      /* text on black / signal blue */
+  --nw-signal: var(--nw-blue-core);   /* wayfinding surface */
+  --nw-hairline: var(--nw-black);     /* rules & borders are pure black */
+}

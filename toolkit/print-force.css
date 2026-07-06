@@ -1,0 +1,72 @@
+/* jimemo print-force — verbatim duplicate of base.css's @media print
+ * block. jimemo.inline.assemble_css() always re-appends this file's
+ * content LAST, after components and after any theme file, so this is
+ * guaranteed to be the final source-order occurrence of these rules.
+ *
+ * Why a duplicate file instead of just relying on base.css: a theme
+ * file (toolkit/themes/<name>.css) is free to redefine `:root { ... }`
+ * with no @media guard, at the same specificity (0,1,0) as this
+ * block's plain `:root` selector. CSS breaks specificity ties by
+ * source order, and assembly order is tokens -> base -> components ->
+ * theme, so an unguarded theme :root rule would come after (and beat)
+ * base.css's print block, silently leaking screen colors/shadows into
+ * print output. Re-appending this file after the theme restores the
+ * intended source-order win for the print force.
+ *
+ * base.css keeps its own copy so it still prints correctly when used
+ * standalone (tokens.css + base.css + components, no assemble_css
+ * pipeline). Keep both copies in sync — same selectors, same values.
+ */
+
+@media print {
+  /* Paper decides the theme: force light tokens whatever the screen said.
+   * All three selectors must be listed explicitly: :root[data-theme="light"]
+   * and :root[data-theme="dark"] both carry higher specificity (0,2,0) than
+   * plain :root (0,1,0), so without listing them here too, tokens.css's own
+   * [data-theme] override rules would beat this block for a pinned page
+   * even though this rule comes later in source order — specificity wins
+   * ties before source order does. */
+  :root,
+  :root[data-theme="dark"],
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --jm-bg: #ffffff;
+    --jm-surface: #ffffff;
+    --jm-text: #1c1a17;
+    --jm-muted: #57524a;
+    --jm-accent: #17597a;
+    --jm-accent-contrast: #ffffff;
+    --jm-border: #c9c4bb;
+    --jm-positive: #2f6b46;
+    --jm-negative: #a63d33;
+
+    --jm-shadow-sm: none;
+    --jm-shadow-md: none;
+  }
+
+  @page {
+    margin: 18mm 16mm;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  .jm-container {
+    max-width: none;
+    padding: 0;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid;
+  }
+
+  .jm-prose pre {
+    white-space: pre-wrap;
+    overflow-x: visible;
+  }
+}

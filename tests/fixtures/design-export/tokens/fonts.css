@@ -1,0 +1,69 @@
+/* ============================================================
+   Northwind Field Kit — Webfonts
+   English display/text: Northwind Sans
+   Japanese: Northwind Gothic JP
+   Mono (code / labels, unreferenced by any token): Northwind Mono
+   ============================================================ */
+
+/* ---- Northwind Sans (primary typeface, all Latin text) ---- */
+@font-face {
+  font-family: "Northwind Sans";
+  src: url("../assets/fonts/NorthwindSans-Light.ttf") format("truetype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Northwind Sans";
+  src: url("../assets/fonts/NorthwindSans-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Northwind Sans";
+  src: url("../assets/fonts/NorthwindSans-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+/* Condensed alias for tight label contexts — reuses the Northwind Sans files */
+@font-face {
+  font-family: "Northwind Sans Cond";
+  src: url("../assets/fonts/NorthwindSans-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Northwind Sans Cond";
+  src: url("../assets/fonts/NorthwindSans-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---- Northwind Gothic JP (Japanese typeface) ---- */
+@font-face {
+  font-family: "Northwind Gothic JP";
+  src: url("../assets/fonts/NorthwindGothicJP-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Northwind Gothic JP";
+  src: url("../assets/fonts/NorthwindGothicJP-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---- Mono (unreferenced by any token in this export) ---- */
+@font-face {
+  font-family: "Northwind Mono";
+  src: url("../assets/fonts/NorthwindMono-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

@@ -1,0 +1,70 @@
+/* ============================================================
+   Northwind Field Kit — Typography
+   Primary typeface: Northwind Sans (all Latin). Japanese: Northwind
+   Gothic JP. Signature settings: letter-spacing -0.02em everywhere;
+   line-height 0.92 for display/headings, 1.05 for body/labels.
+   ============================================================ */
+:root {
+  /* families */
+  --nw-font: "Northwind Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --nw-font-display: var(--nw-font);
+  --nw-font-jp: "Northwind Gothic JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  --nw-font-label: "Northwind Sans", sans-serif;   /* condensed label use */
+
+  /* weights */
+  --nw-weight-light: 300;
+  --nw-weight-regular: 400;
+  --nw-weight-bold: 700;
+
+  /* shared metrics */
+  --nw-tracking: -0.02em;
+  --nw-leading-tight: 0.92;
+  --nw-leading-body: 1.05;
+
+  /* type scale (px) */
+  --nw-size-mega: 180px;    /* chapter dividers */
+  --nw-size-hero: 96px;     /* application headlines */
+  --nw-size-section: 54px; /* web section headers */
+  --nw-size-heading: 28px; /* page / spread headings */
+  --nw-size-body: 16px;    /* body copy & labels */
+  --nw-size-caption: 12px;
+}
+
+/* ---- Text-style utility classes ---- */
+.nw-mega,
+.nw-title,
+.nw-heading,
+.nw-body,
+.nw-caption {
+  font-family: var(--nw-font);
+  letter-spacing: var(--nw-tracking);
+  color: var(--nw-ink);
+  margin: 0;
+}
+
+.nw-mega {
+  font-weight: var(--nw-weight-bold);
+  font-size: var(--nw-size-mega);
+  line-height: var(--nw-leading-tight);
+}
+.nw-title {
+  font-weight: var(--nw-weight-bold);
+  font-size: var(--nw-size-hero);
+  line-height: var(--nw-leading-tight);
+}
+.nw-heading {
+  font-weight: var(--nw-weight-bold);
+  font-size: var(--nw-size-heading);
+  line-height: var(--nw-leading-tight);
+}
+.nw-body {
+  font-weight: var(--nw-weight-regular);
+  font-size: var(--nw-size-body);
+  line-height: var(--nw-leading-body);
+}
+.nw-caption {
+  font-weight: var(--nw-weight-regular);
+  font-size: var(--nw-size-caption);
+  line-height: var(--nw-leading-body);
+}
+.nw-jp { font-family: var(--nw-font-jp); letter-spacing: 0; }
