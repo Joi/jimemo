@@ -5,9 +5,9 @@ catalogs, timelines, dashboards — from a library of templates, with an
 optional private-link publishing setup. Stdlib + vendored dependencies only;
 nothing to `pip install`, no network access at render time.
 
-Design spec: `docs/superpowers/specs/2026-07-05-jimemo-design.md`. Module
-map and layout: `docs/architecture.md`. Setting this up for someone
-else? See [`docs/friends.md`](docs/friends.md) for the exact steps.
+Module map and layout: `docs/architecture.md`. Setting this up for
+someone else? See [`docs/friends.md`](docs/friends.md) for the exact
+steps.
 
 ## Install
 

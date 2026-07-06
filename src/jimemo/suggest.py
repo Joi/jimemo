@@ -5,9 +5,6 @@ ranks templates by how well their declared `suitability` (manifest.json)
 matches signals read straight off the content file's raw structure -- no
 rendering, no network, no model calls. Used by the `suggest` and
 `render auto` CLI commands.
-
-See docs/superpowers/plans/2026-07-05-jimemo-phase3-core.md, "Task 6", for
-the design this module implements.
 """
 import datetime
 import hashlib

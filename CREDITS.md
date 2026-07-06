@@ -9,7 +9,7 @@
 ## Design inspiration
 
 Ideas below informed jimemo's design but no code was copied from any
-source. Full context: `docs/research/sections/01-prior-art-and-single-file.md`.
+source.
 
 | Author | URL | Idea |
 | --- | --- | --- |
@@ -23,8 +23,7 @@ source. Full context: `docs/research/sections/01-prior-art-and-single-file.md`.
 Every jimemo dependency is vendored into the repo (`vendor/`,
 `charts/vendor/`) rather than fetched at install or run time; `jimemo
 doctor` checks each one against a checked-in SHA-256 sum before
-importing it. Authoritative version pins live in
-`docs/research/2026-07-05-phase1-research.md`'s `## Pinned shortlist`.
+importing it. Versions are pinned in the table below.
 
 | Name | Version | License | Source |
 | --- | --- | --- | --- |

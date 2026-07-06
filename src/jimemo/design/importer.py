@@ -1,8 +1,7 @@
-"""`jimemo import-design` orchestration (see docs/superpowers/plans/
-2026-07-05-jimemo-phase6-design-import.md, Task 3).
+"""`jimemo import-design` orchestration.
 
-Ties Task 1 (`reader.read_export`, parse-only) and Task 2
-(`mapping.build_theme`, deterministic token->role mapping) together into
+Ties `reader.read_export` (parse-only) and `mapping.build_theme`
+(deterministic token->role mapping) together into
 one call that installs the result as a jimemo theme under
 `~/.jimemo/themes/<name>.css` — the personal directory `inline.py`'s
 `assemble_css` already checks (ahead of the repo's toolkit/themes/) when

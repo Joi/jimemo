@@ -1,7 +1,6 @@
-"""Deterministic token -> jimemo theme mapping (see docs/superpowers/plans/
-2026-07-05-jimemo-phase6-design-import.md, Task 2).
+"""Deterministic token -> jimemo theme mapping.
 
-`build_theme` turns a `DesignExport` (Task 1's `reader.read_export`) into a
+`build_theme` turns a `DesignExport` (`reader.read_export`'s output) into a
 jimemo *theme*: a `:root { --jm-*: ...; }` CSS override file that
 `assemble_css` (src/jimemo/inline.py) layers on top of toolkit/tokens.css.
 It does two things:

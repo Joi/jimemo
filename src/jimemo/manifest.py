@@ -1,8 +1,4 @@
-"""Load and validate a template's manifest.json (Manifest v1).
-
-See docs/superpowers/plans/2026-07-05-jimemo-phase3-core.md, "Binding
-contracts", for the schema enforced here.
-"""
+"""Load and validate a template's manifest.json (Manifest v1)."""
 import json
 import re
 from pathlib import Path

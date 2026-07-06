@@ -1,7 +1,6 @@
 """Parse-only reader for a Claude-design export directory.
 
-A "Claude-design export" (see docs/superpowers/plans/
-2026-07-05-jimemo-phase6-design-import.md) is a folder of design tokens,
+A "Claude-design export" is a folder of design tokens,
 fonts, and React components produced by the design-system Skill. jimemo
 only ever wants the tokens and font metadata out of it; the rest
 (`_ds_bundle.js`, `*.jsx`, `*.ts`, `_adherence.oxlintrc.json`,

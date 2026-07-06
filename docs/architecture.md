@@ -1,8 +1,8 @@
 # Architecture
 
-Orientation for contributors. The authoritative design is the spec:
-`docs/superpowers/specs/2026-07-05-jimemo-design.md`; task-by-task
-contracts are in `docs/superpowers/plans/2026-07-05-jimemo-phase3-core.md`.
+Orientation for contributors. The module map and layout below is the
+authoritative reference; each module's docstring documents its own
+contract in detail.
 
 - `jimemo` (repo root) — CLI entry point; puts `src/` and `vendor/` on
   `sys.path`. Users never pip-install anything.
