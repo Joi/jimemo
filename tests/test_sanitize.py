@@ -6,6 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo.sanitize import (
+    is_allowed_data_uri,
     is_allowed_image_data_uri,
     is_protocol_relative,
     parse_srcset,
@@ -346,3 +347,65 @@ def test_legit_markdown_document_passes_through_unchanged():
     assert 'style="text-align: center;"' in rendered
     assert "<pre><code>" in rendered
     assert '<img alt="alt text" src="figures/plot.png" />' in rendered
+
+
+# --- is_allowed_data_uri: legacy application/font-* subtype allowlist ---
+#
+# Regression: `_is_font_data_uri` used to accept ANY subtype after the
+# "application/font-"/"application/x-font-" prefix (a bare
+# `mime.startswith(_LEGACY_FONT_MIME_PREFIXES)`), so e.g.
+# "application/font-evil" passed as a "font". Tightened to require the
+# subtype after the prefix be one of the real font formats.
+
+
+@pytest.mark.parametrize(
+    "mime",
+    [
+        "application/font-ttf",
+        "application/font-otf",
+        "application/font-woff",
+        "application/font-woff2",
+        "application/x-font-ttf",
+        "application/x-font-otf",
+        "application/x-font-woff",
+        "application/x-font-woff2",
+    ],
+)
+def test_legacy_font_mime_prefix_with_real_subtype_accepted(mime):
+    assert is_allowed_data_uri("data:{};base64,AAAA".format(mime)) is True
+
+
+@pytest.mark.parametrize(
+    "mime",
+    [
+        "application/font-evil",
+        "application/font-",
+        "application/x-font-evil",
+        "application/x-font-",
+        "application/font",
+        "application/x-font",
+    ],
+)
+def test_legacy_font_mime_prefix_with_bogus_subtype_rejected(mime):
+    assert is_allowed_data_uri("data:{};base64,AAAA".format(mime)) is False
+
+
+@pytest.mark.parametrize("mime", ["font/ttf", "font/otf", "font/woff", "font/woff2"])
+def test_modern_font_mime_still_accepted(mime):
+    assert is_allowed_data_uri("data:{};base64,AAAA".format(mime)) is True
+
+
+def test_image_data_uri_still_accepted_by_is_allowed_data_uri():
+    assert is_allowed_data_uri("data:image/png;base64,AAAA") is True
+
+
+def test_is_allowed_image_data_uri_unaffected_by_font_allowlist_tightening():
+    # is_allowed_image_data_uri must stay raster-only: neither the old
+    # nor the new font allowlist should leak into it.
+    assert is_allowed_image_data_uri("data:application/font-woff;base64,AAAA") is False
+    assert is_allowed_image_data_uri("data:font/woff;base64,AAAA") is False
+    assert is_allowed_image_data_uri("data:image/png;base64,AAAA") is True
+
+
+def test_non_font_non_image_mime_rejected_by_is_allowed_data_uri():
+    assert is_allowed_data_uri("data:application/octet-stream;base64,AAAA") is False

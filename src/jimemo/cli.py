@@ -412,6 +412,51 @@ def cmd_publish(args) -> int:
     return 0
 
 
+def cmd_import_design(args) -> int:
+    # Lazy, like render/content/suggest above: jimemo.design.importer
+    # itself imports no vendored python today, but the design package is
+    # a command-specific feature, not something doctor/list/--version
+    # need, so it follows the same "only the handler that needs it pays
+    # for it" convention rather than being imported at module scope.
+    from .design.importer import import_design
+    from .errors import DesignImportError
+
+    export_dir = Path(args.export_dir)
+    try:
+        result = import_design(export_dir, name=args.name, embed_fonts=args.embed_fonts)
+    except DesignImportError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    if result.header:
+        print(result.header)
+        print()
+
+    if result.embedded_font_families:
+        kb = result.embedded_bytes / 1024
+        families = ", ".join(sorted(set(result.embedded_font_families)))
+        print(f"embedded fonts: {families} (+{kb:.0f} KB of font data in the theme)")
+        print(
+            "LICENSING: only embed fonts you are licensed to redistribute -- "
+            "embedding publishes the font bytes in every page rendered with "
+            "this theme."
+        )
+    elif args.embed_fonts:
+        print("--embed-fonts requested, but the export lists no font files to embed.")
+    else:
+        print(
+            "fonts are referenced by family name only (no font files embedded); "
+            "they render correctly only where that family is installed on the "
+            "viewer's system. Re-run with --embed-fonts to inline the font "
+            "files instead (see the licensing note that prints with it)."
+        )
+
+    print()
+    print(f"wrote theme: {result.theme_path}")
+    print(f"use it with: jimemo render <template> <content> --theme {result.name}")
+    return 0
+
+
 def cmd_new_template(args) -> int:
     try:
         template_dir = create_template(args.name)
@@ -437,7 +482,11 @@ def main(argv=None) -> int:
     render_p.add_argument("template", help='template name, or "auto" to pick automatically')
     render_p.add_argument("content", help="content file (.md, .json, or .yaml)")
     render_p.add_argument("-o", "--out", help="output path (default: dist/<content-stem>.html)")
-    render_p.add_argument("--theme", help='pin "light" or "dark" (default: follow the OS)')
+    render_p.add_argument(
+        "--theme",
+        help="apply a theme override by name (repo toolkit/themes/, or "
+        "~/.jimemo/themes/ -- see 'jimemo import-design')",
+    )
     render_p.add_argument("--open", action="store_true", help="open the result in a browser")
 
     info_p = sub.add_parser("info", help="show a template's manifest and suitability")
@@ -446,6 +495,23 @@ def main(argv=None) -> int:
 
     new_template_p = sub.add_parser("new-template", help="scaffold a new personal template")
     new_template_p.add_argument("name", help="template name (lowercase letters, digits, hyphens)")
+
+    import_design_p = sub.add_parser(
+        "import-design",
+        help="import a Claude-design export as a jimemo theme (~/.jimemo/themes/)",
+    )
+    import_design_p.add_argument("export_dir", help="path to the design export directory")
+    import_design_p.add_argument(
+        "--name",
+        help="theme name (default: derived from the export's namespace, or "
+        "its directory name)",
+    )
+    import_design_p.add_argument(
+        "--embed-fonts",
+        action="store_true",
+        help="embed the export's font files as data: URIs in the theme "
+        "(opt-in: adds size, and you must be licensed to redistribute them)",
+    )
 
     suggest_p = sub.add_parser("suggest", help="rank templates by fit for a content file")
     suggest_p.add_argument("content", help="content file (.md, .json, or .yaml)")
@@ -479,6 +545,8 @@ def main(argv=None) -> int:
         return cmd_info(args)
     if args.command == "new-template":
         return cmd_new_template(args)
+    if args.command == "import-design":
+        return cmd_import_design(args)
     if args.command == "suggest":
         return cmd_suggest(args)
     if args.command == "publish":

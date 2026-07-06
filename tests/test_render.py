@@ -1,5 +1,6 @@
 import base64
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -54,6 +55,20 @@ SCRIPT_TEMPLATE = """\
 <script>alert("should never render");</script>
 {% endblock %}
 """
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch):
+    """Every test in this file runs with HOME pointed at an empty,
+    per-test directory. `assemble_css` (via `personal_themes_dir`)
+    checks `~/.jimemo/themes/<theme>.css` before any repo/fake toolkit
+    dir a test sets up, so leaving the real HOME in place would let a
+    theme file that happens to exist on the machine running the suite
+    shadow the fixture under test -- see
+    test_assemble_css_print_force_wins_over_theme_root_override, which
+    monkeypatches TOOLKIT_DIR but relies on this fixture for the
+    personal-dir side of theme resolution."""
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
 
 
 def make_template_dir(tmp_path: Path, name: str, template_source: str, manifest_source: str = BASIC_MANIFEST) -> Path:
@@ -365,6 +380,26 @@ def test_cli_render_writes_file(tmp_path, monkeypatch):
     assert "<strong>text</strong>" in html
 
 
+def test_cli_render_unknown_theme_exits_1_cleanly(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    make_template_dir(tmp_path / "templates", "test-tpl", BASIC_TEMPLATE)
+    monkeypatch.setattr(cli, "default_search_dirs", lambda: [tmp_path / "templates"])
+
+    content_file = tmp_path / "content.md"
+    content_file.write_text("---\ntitle: From CLI\n---\nBody text.\n")
+    out_path = tmp_path / "out.html"
+
+    rc = cli.main([
+        "render", "test-tpl", str(content_file), "-o", str(out_path),
+        "--theme", "no-such-theme",
+    ])
+    assert rc == 1
+    assert not out_path.exists()
+    err = capsys.readouterr().err
+    assert "unknown theme" in err
+    assert "Traceback" not in err
+
+
 def test_cli_render_lint_error_writes_no_file(tmp_path, monkeypatch, capsys):
     make_template_dir(
         tmp_path / "templates",
@@ -474,3 +509,149 @@ def test_assemble_css_unknown_component_raises_manifest_error():
 
     with pytest.raises(ManifestError, match="no-such-component"):
         assemble_css({"components": ["no-such-component"]})
+
+
+# -- theme name validation: --theme must not be a filesystem path -------
+#
+# `_resolve_theme_path` used to build `<themes_dir>/<theme>.css` from the
+# raw `--theme` value with no shape check at all. `Path.__truediv__`
+# discards the left side when the right side is absolute, so
+# `--theme /etc/passwd` (or, via `..`, any path reachable relative to a
+# themes dir) could resolve straight to an arbitrary local file and
+# inline its bytes into the page. These confirm every such value is
+# rejected -- and the file is never even opened -- before any filesystem
+# access, while a normal theme name is unaffected.
+
+
+def _spy_on_read_text(monkeypatch, forbidden: Path):
+    """Fail the test immediately if anything reads `forbidden` via
+    Path.read_text, proving a rejected --theme value never reaches the
+    file it points at (not just that the end result excludes its
+    content) -- same technique as
+    test_embed_fonts_rejects_traversal_even_when_target_exists."""
+    original_read_text = Path.read_text
+
+    def spying_read_text(self, *args, **kwargs):
+        assert self != forbidden, f"traversal theme name must never read {forbidden}"
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", spying_read_text)
+
+
+def test_assemble_css_rejects_dotdot_theme_name(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    outside = tmp_path / "secret.css"
+    outside.write_text(":root { --leaked: yes; }\n", encoding="utf-8")
+    _spy_on_read_text(monkeypatch, outside)
+
+    with pytest.raises(ManifestError, match=re.escape("../../secret")):
+        assemble_css({"components": []}, theme="../../secret")
+
+
+def test_assemble_css_rejects_absolute_path_theme_name(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    outside = tmp_path / "secret.css"
+    outside.write_text(":root { --leaked: yes; }\n", encoding="utf-8")
+    theme_value = str(outside.with_suffix(""))  # --theme <abs path, no .css>
+    _spy_on_read_text(monkeypatch, outside)
+
+    with pytest.raises(ManifestError, match=re.escape(theme_value)):
+        assemble_css({"components": []}, theme=theme_value)
+
+
+def test_assemble_css_rejects_theme_name_with_slash(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+    with pytest.raises(ManifestError, match="has/slash"):
+        assemble_css({"components": []}, theme="has/slash")
+
+
+def test_assemble_css_valid_theme_name_still_resolves(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    fake_toolkit = tmp_path / "toolkit"
+    shutil.copytree(inline.TOOLKIT_DIR, fake_toolkit)
+    (fake_toolkit / "themes").mkdir(exist_ok=True)
+    (fake_toolkit / "themes" / "chiba.css").write_text(
+        ":root { --jm-accent: #4c4499; }\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(inline, "TOOLKIT_DIR", fake_toolkit)
+
+    css = assemble_css({"components": []}, theme="chiba")
+    assert "#4c4499" in css
+
+
+# -- unknown --theme: error, not a silent unthemed render ----------------
+#
+# `_resolve_theme_path` returning None used to mean "skip the override
+# quietly" for every well-formed name, which is correct for "light"/"dark"
+# (no file by design) but wrong for a typo'd or never-imported theme: the
+# page rendered anyway, with a `data-theme` attribute matching nothing and
+# no error to explain why it looks unthemed.
+
+
+def test_assemble_css_unknown_theme_raises_manifest_error(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+    with pytest.raises(ManifestError, match=re.escape("unknown theme 'no-such-theme'")):
+        assemble_css({"components": []}, theme="no-such-theme")
+
+
+def test_assemble_css_builtin_light_mode_does_not_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+    css = assemble_css({"components": []}, theme="light")
+    assert isinstance(css, str) and css  # no exception; base CSS still assembled
+
+
+def test_assemble_css_builtin_dark_mode_does_not_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+    css = assemble_css({"components": []}, theme="dark")
+    assert isinstance(css, str) and css  # no exception; base CSS still assembled
+
+
+def test_assemble_css_builtin_light_mode_ignores_planted_theme_file(tmp_path, monkeypatch):
+    """A stray/legacy `light.css` sitting in the personal themes dir must
+    never be applied for `--theme light`: `light` is a built-in mode name,
+    and `_resolve_theme_path` short-circuits on `_BUILTIN_THEME_MODES`
+    before it ever looks at the filesystem. `design.importer` already
+    refuses to create a theme file under a reserved name, so this
+    exercises the defense-in-depth path, not the normal one."""
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    themes_dir = inline.personal_themes_dir()
+    themes_dir.mkdir(parents=True)
+    marker = "/* PLANTED-LIGHT-THEME-MARKER */"
+    (themes_dir / "light.css").write_text(marker, encoding="utf-8")
+
+    css = assemble_css({"components": []}, theme="light")
+    assert marker not in css
+
+
+def test_assemble_css_builtin_dark_mode_ignores_planted_theme_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    themes_dir = inline.personal_themes_dir()
+    themes_dir.mkdir(parents=True)
+    marker = "/* PLANTED-DARK-THEME-MARKER */"
+    (themes_dir / "dark.css").write_text(marker, encoding="utf-8")
+
+    css = assemble_css({"components": []}, theme="dark")
+    assert marker not in css
+
+
+def test_render_page_unknown_theme_raises_manifest_error(tmp_path, monkeypatch):
+    from jimemo.errors import ManifestError
+
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+    template_dir = make_template_dir(tmp_path, "test-tpl", BASIC_TEMPLATE)
+    content = {"title": "Hello", "body": Markup("<p>World</p>")}
+
+    with pytest.raises(ManifestError, match="unknown theme"):
+        render_page(template_dir, content, theme="no-such-theme")

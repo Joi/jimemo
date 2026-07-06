@@ -28,3 +28,9 @@ class ConfigError(Exception):
 class PublishError(Exception):
     """A publish backend name is unknown, not configured, or not
     available; or a publish/purge/list/gc operation failed."""
+
+
+class DesignImportError(Exception):
+    """A Claude-design export's manifest/token CSS is missing, malformed,
+    or contains a token value that isn't safe to drop into generated
+    theme CSS (see jimemo.design.reader)."""

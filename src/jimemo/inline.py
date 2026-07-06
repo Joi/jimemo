@@ -6,10 +6,21 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ._paths import REPO_ROOT
+from .design.reader import THEME_NAME_RE
 from .errors import ContentError, ManifestError
 from .sanitize import is_allowed_image_data_uri, parse_srcset
 
 TOOLKIT_DIR = REPO_ROOT / "toolkit"
+
+# Built-in mode names: `--theme light` / `--theme dark` pin the OS-following
+# `[data-theme]` CSS in tokens.css/base.css and never resolve to a file, so
+# `_resolve_theme_path` legitimately returns None for them -- that must not
+# be treated as an unknown theme (see `assemble_css`). Mirrors
+# `design.importer.RESERVED_THEME_NAMES`, which reserves the same two names
+# so an imported theme can never collide with them; duplicated rather than
+# imported to avoid a cycle (importer.py imports `personal_themes_dir` from
+# this module).
+_BUILTIN_THEME_MODES = {"light", "dark"}
 
 # Extensions inline_images will read and embed. Raster only, mirroring
 # is_allowed_image_data_uri: a local .svg could only ever produce a
@@ -56,10 +67,78 @@ _SRCSET_RES = (
 )
 
 
+def personal_themes_dir() -> Path:
+    """Where `jimemo import-design` installs a generated theme, and the
+    first place `assemble_css` looks when resolving `--theme NAME` (see
+    `_resolve_theme_path`). Mirrors discovery.py's `~/.jimemo/templates`
+    personal dir; respects a `HOME` override (Path.home() reads it),
+    which is what lets tests point this at a temp directory."""
+    return Path.home() / ".jimemo" / "themes"
+
+
+def _theme_search_dirs() -> List[Path]:
+    """Directories to look for `<theme>.css` in, in resolution order.
+    Personal comes first — unlike discovery.py's template search, where
+    the repo copy wins a name collision, a theme a user just imported
+    (jimemo.design.importer) should actually take effect even if it
+    happens to share a name with a repo theme, since applying the
+    import is the entire point of running the command."""
+    return [personal_themes_dir(), TOOLKIT_DIR / "themes"]
+
+
+def _resolve_theme_path(theme: str) -> Optional[Path]:
+    """The `<theme>.css` path a `--theme NAME` value resolves to, or None
+    if `theme` is a built-in mode name (`_BUILTIN_THEME_MODES`) or no
+    search dir has a file for it (see `assemble_css`). The built-in-mode
+    check runs first and unconditionally, before any filesystem lookup:
+    `light`/`dark` must never resolve to a file even if a stray or
+    legacy `light.css`/`dark.css` happens to sit in a search dir, since
+    `design.importer` already refuses to ever create one under those
+    names (`RESERVED_THEME_NAMES`) -- a file that exists anyway is not
+    the one the user meant.
+
+    `theme` is a CLI value, so -- for anything past the built-in check --
+    it is validated against `THEME_NAME_RE` -- the same
+    lowercase-alnum-and-hyphens shape `design.importer.slugify_name`
+    always produces -- before it ever touches a path: unvalidated, a
+    name like `../../etc/passwd` or an absolute path would let `--theme`
+    read an arbitrary local .css file and inline it into the page.
+    Belt-and-braces after that: the resolved candidate must still land
+    inside the search dir it came from, in case a future charset change
+    ever reintroduces a path separator."""
+    if theme in _BUILTIN_THEME_MODES:
+        return None
+    if not THEME_NAME_RE.match(theme):
+        raise ManifestError(
+            f"theme name {theme!r} is not a valid theme name (expected "
+            "lowercase letters/digits in hyphen-separated segments, e.g. "
+            "'chiba-tech') -- refusing to resolve it to a file"
+        )
+    for base in _theme_search_dirs():
+        base_resolved = base.resolve()
+        candidate = (base_resolved / f"{theme}.css").resolve()
+        if candidate.is_relative_to(base_resolved) and candidate.is_file():
+            return candidate
+    return None
+
+
+def _available_theme_names() -> List[str]:
+    """Every theme name currently resolvable via `_theme_search_dirs`,
+    sorted and de-duplicated, for the unknown-theme error message (see
+    `assemble_css`). Empty if neither search dir exists or has any
+    `*.css` file yet."""
+    names = set()
+    for base in _theme_search_dirs():
+        if base.is_dir():
+            names.update(css_path.stem for css_path in base.glob("*.css"))
+    return sorted(names)
+
+
 def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
     """tokens.css + base.css + only the components the manifest lists
-    (+ a toolkit/themes/<theme>.css override, if one exists) + print-force.css,
-    always last.
+    (+ a <theme>.css override, if one resolves — see `_resolve_theme_path`:
+    ~/.jimemo/themes/ is checked before the repo's toolkit/themes/) +
+    print-force.css, always last.
 
     print-force.css is re-appended unconditionally, after the theme, even
     though base.css already contains the same rules: a theme file is free
@@ -68,6 +147,12 @@ def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
     `:root` rule occurring after base.css in the assembly would otherwise
     win over the print force and leak screen colors into print output. See
     toolkit/print-force.css's own header comment for the full explanation.
+
+    Raises ManifestError if `theme` is neither a built-in mode name
+    (`_BUILTIN_THEME_MODES`, which never resolve to a file by design) nor
+    a name `_resolve_theme_path` can find a file for — otherwise a typo'd
+    or never-imported theme would render successfully but unthemed, with
+    a `data-theme` attribute matching nothing, and no error to say why.
     """
     parts = [
         (TOOLKIT_DIR / "tokens.css").read_text(encoding="utf-8"),
@@ -79,9 +164,17 @@ def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
             raise ManifestError(f"manifest lists unknown component {name!r} ({css_path})")
         parts.append(css_path.read_text(encoding="utf-8"))
     if theme:
-        theme_path = TOOLKIT_DIR / "themes" / f"{theme}.css"
-        if theme_path.is_file():
+        theme_path = _resolve_theme_path(theme)
+        if theme_path is not None:
             parts.append(theme_path.read_text(encoding="utf-8"))
+        elif theme not in _BUILTIN_THEME_MODES:
+            available = _available_theme_names()
+            hint = f" (available: {', '.join(available)})" if available else ""
+            raise ManifestError(
+                f"unknown theme {theme!r} (not found in repo themes/ or "
+                f"~/.jimemo/themes/; import one with `jimemo import-design`)"
+                f"{hint}"
+            )
     parts.append((TOOLKIT_DIR / "print-force.css").read_text(encoding="utf-8"))
     return "\n".join(parts)
 

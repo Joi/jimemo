@@ -715,6 +715,26 @@ def test_style_data_image_and_fragment_urls_are_fine():
     assert errors == []
 
 
+@pytest.mark.parametrize("mime", ["font/ttf", "font/otf", "font/woff", "font/woff2"])
+def test_style_font_face_data_uri_is_fine(mime):
+    # An embedded design-theme font (jimemo.design.importer's
+    # --embed-fonts) appends exactly this shape: @font-face { src:
+    # url(data:font/...;base64,...) }.
+    errors, _ = _lint(
+        "<style>@font-face{{font-family:\"X\";"
+        "src:url(data:{mime};base64,AAAA)}}</style>".format(mime=mime)
+    )
+    assert errors == []
+
+
+def test_style_non_font_non_image_data_uri_still_errors():
+    errors, _ = _lint(
+        '<style>@font-face{font-family:"X";'
+        'src:url(data:application/octet-stream;base64,AAAA)}</style>'
+    )
+    assert any("data: URI" in e for e in errors)
+
+
 def test_style_without_references_is_fine():
     # Shaped like the real toolkit CSS: comments, custom properties,
     # a content escape — and no url()/@import.
