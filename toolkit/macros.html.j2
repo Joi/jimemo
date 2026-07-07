@@ -204,3 +204,41 @@
 <canvas id="{{ chart_id }}"></canvas>
 <script>{{ init_js }}</script>
 {%- endmacro %}
+
+{#- meta-pills: a mono chip row for masthead facts (host, uptime,
+    version). items is a list of strings. -#}
+{% macro meta_pills(items) -%}
+<p class="jm-meta-pills">
+  {%- for item in items %}<span class="jm-meta-pill">{{ item }}</span>{% endfor -%}
+</p>
+{%- endmacro %}
+
+{#- entity-cards: an ops-board inventory grid. cards is a list of
+    {title, badge?, badge_tone?, variant?, tags? (list of strings),
+    fields? (list of {label, value}), text?}; variant in
+    "accent"|"positive"|"negative" colors the card's leading edge. -#}
+{% macro entity_cards(cards) -%}
+<div class="jm-entity-grid">
+  {%- for c in cards %}
+  <article class="jm-entity-card{% if c.variant|default(none) %} jm-entity-card--{{ c.variant }}{% endif %}">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">{{ c.title }}</h3>
+      {%- if c.badge|default(none) %} {{ badge(c.badge, tone=c.badge_tone|default(none)) }}{% endif %}
+    </div>
+    {%- if c.tags|default([]) %}
+    <div class="jm-entity-card__tags">
+      {%- for t in c.tags %}<span class="jm-entity-card__tag">{{ t }}</span>{% endfor -%}
+    </div>
+    {%- endif %}
+    {%- if c.fields|default([]) %}
+    <dl class="jm-entity-card__fields">
+      {%- for f in c.fields %}
+      <div class="jm-entity-card__field"><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd></div>
+      {%- endfor %}
+    </dl>
+    {%- endif %}
+    {%- if c.text|default(none) %}<p class="jm-entity-card__text">{{ c.text }}</p>{% endif %}
+  </article>
+  {%- endfor %}
+</div>
+{%- endmacro %}

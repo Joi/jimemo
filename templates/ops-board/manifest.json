@@ -1,0 +1,71 @@
+{
+  "name": "ops-board",
+  "version": 1,
+  "title": "Ops board",
+  "description": "An operational status board: masthead with meta pills, headline stat tiles, and sections of entity cards (services, channels, machines, people) or matrix tables.",
+  "slots": {
+    "title": {
+      "type": "text",
+      "required": true
+    },
+    "kicker": {
+      "type": "text"
+    },
+    "subtitle": {
+      "type": "text"
+    },
+    "meta": {
+      "type": "data"
+    },
+    "stats": {
+      "type": "data",
+      "items": {
+        "label": "text",
+        "value": "text",
+        "delta": "text",
+        "tone": "text"
+      }
+    },
+    "sections": {
+      "type": "data",
+      "required": true
+    },
+    "footer_left": {
+      "type": "text"
+    },
+    "footer_right": {
+      "type": "text"
+    }
+  },
+  "components": [
+    "page-header",
+    "meta-pills",
+    "stat-tile",
+    "badge",
+    "board-section",
+    "entity-card",
+    "data-table"
+  ],
+  "charts": [],
+  "suitability": {
+    "keywords": [
+      "ops",
+      "board",
+      "fleet",
+      "services",
+      "inventory",
+      "infrastructure",
+      "gateway",
+      "agents",
+      "uptime",
+      "containers",
+      "machines",
+      "relay"
+    ],
+    "content_kinds": [
+      "tabular-data"
+    ],
+    "good_for": "Operational status boards: an inventory of services, channels, machines, or people as cards with badges and key/value facts, plus supporting matrix tables.",
+    "labeled_hash": "3902654a25393bab64684e875c12563bd697e7ae450ba2761cfaa0133be9e456"
+  }
+}

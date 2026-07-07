@@ -1,0 +1,1228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<title>Relay gateway — status board</title>
+<style>
+/* jimemo design tokens
+ *
+ * The only file that defines color, type, and rhythm. Components and
+ * templates consume these custom properties and never hard-code values;
+ * a theme is a file that overrides them.
+ *
+ * Palette: unbleached paper and sumi ink, with a dyed-indigo (ai) accent.
+ * Dark is the same page after dark — ink-slate ground, paper-toned text.
+ *
+ * Three blocks below must stay in sync:
+ *   1. :root                              — light (default)
+ *   2. @media (prefers-color-scheme: dark) :root  — dark via OS
+ *   3. :root[data-theme="dark"] / [data-theme="light"] — explicit override,
+ *      wins over the media query in both directions by specificity.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- color roles ---- */
+  --jm-bg: #faf9f7;
+  --jm-surface: #ffffff;
+  --jm-text: #262521;
+  --jm-muted: #6b6459;
+  --jm-accent: #17597a;
+  --jm-accent-contrast: #ffffff;
+  --jm-border: #e4e0d8;
+  --jm-positive: #2f6b46;
+  --jm-negative: #a63d33;
+
+  /* ---- chart palette (categorical) ----
+   * Eight-hue dataviz palette in a fixed, CVD-optimized order — never
+   * reorder, never cycle past 8 (a 9th series folds into "Other" or
+   * small multiples, per the dataviz skill's non-negotiables). It is
+   * deliberately brand-neutral rather than derived from --jm-accent:
+   * chart series need an identity channel distinct from that
+   * editorial role. The chart library renders to a bitmap drawing
+   * surface it paints itself and cannot read custom properties from,
+   * so these tokens are CSS-only chrome/documentation — src/jimemo/
+   * charts.py DEFAULT_PALETTE is the source of truth for rendered
+   * chart colors and its light-mode values must match this block
+   * exactly (tests/test_charts.py checks the two stay in sync).
+   * Validated with dataviz/scripts/validate_palette.js against both
+   * --jm-bg and --jm-surface (the drawing surface has no fill of its
+   * own, so it shows whichever it's placed on), light and dark; see
+   * toolkit/README.md for the full report. */
+  --jm-chart-1: #2a78d6; /* blue */
+  --jm-chart-2: #1baf7a; /* aqua */
+  --jm-chart-3: #eda100; /* yellow */
+  --jm-chart-4: #008300; /* green */
+  --jm-chart-5: #4a3aa7; /* violet */
+  --jm-chart-6: #e34948; /* red */
+  --jm-chart-7: #e87ba4; /* magenta */
+  --jm-chart-8: #eb6834; /* orange */
+
+  /* ---- type: two voices ----
+   * prose — serif, carries content (body, titles, values)
+   * ui    — sans, carries apparatus (labels, captions, table headers) */
+  --jm-font-prose: "Iowan Old Style", Palatino, "Palatino Linotype",
+    "Book Antiqua", Georgia, "Hiragino Mincho ProN", "Yu Mincho",
+    "Noto Serif CJK JP", serif;
+  --jm-font-ui: system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic",
+    "Noto Sans CJK JP", sans-serif;
+  --jm-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo,
+    Consolas, "Liberation Mono", monospace;
+
+  /* 1.25-ratio modular scale anchored at a 17px (1.0625rem) body */
+  --jm-text-xs: 0.68rem;
+  --jm-text-sm: 0.85rem;
+  --jm-text-md: 1.0625rem;
+  --jm-text-lg: 1.3281rem;
+  --jm-text-xl: 1.6602rem;
+  --jm-text-2xl: 2.0752rem;
+  --jm-text-3xl: 2.594rem;
+
+  --jm-leading-tight: 1.12;
+  --jm-leading-snug: 1.4;
+  --jm-leading-body: 1.72;
+  --jm-tracking-caps: 0.14em; /* for uppercase apparatus text */
+
+  /* ---- spacing scale ---- */
+  --jm-space-1: 0.25rem;
+  --jm-space-2: 0.5rem;
+  --jm-space-3: 0.75rem;
+  --jm-space-4: 1rem;
+  --jm-space-5: 1.5rem;
+  --jm-space-6: 2.25rem;
+  --jm-space-7: 3.25rem;
+  --jm-space-8: 4.5rem;
+
+  /* ---- radius ---- */
+  --jm-radius-sm: 4px;
+  --jm-radius-md: 8px;
+  --jm-radius-lg: 14px;
+
+  /* ---- elevation: whispers, not drops ---- */
+  --jm-shadow-sm: 0 1px 2px rgba(31, 27, 20, 0.05);
+  --jm-shadow-md: 0 1px 2px rgba(31, 27, 20, 0.05),
+    0 6px 18px rgba(31, 27, 20, 0.06);
+
+  /* ---- layout ---- */
+  --jm-content-max: 46rem;  /* reading column, ~70ch of serif */
+  --jm-content-wide: 72rem; /* grids, dashboards, wide tables */
+}
+
+/* ---- dark via OS preference ---- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --jm-bg: #16181b;
+    --jm-surface: #1e2126;
+    --jm-text: #e9e5dc;
+    --jm-muted: #a29b8d;
+    --jm-accent: #85b8d3;
+    --jm-accent-contrast: #0e2431;
+    --jm-border: #34383f;
+    --jm-positive: #8ac29c;
+    --jm-negative: #dd9182;
+
+    /* Same eight hues, stepped for the dark surface (not a separate
+     * palette) — see the light-mode block above for the shared note. */
+    --jm-chart-1: #3987e5;
+    --jm-chart-2: #199e70;
+    --jm-chart-3: #c98500;
+    --jm-chart-4: #008300;
+    --jm-chart-5: #9085e9;
+    --jm-chart-6: #e66767;
+    --jm-chart-7: #d55181;
+    --jm-chart-8: #d95926;
+
+    --jm-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --jm-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.35),
+      0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* ---- explicit theme attribute: wins over the media query ---- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --jm-bg: #16181b;
+  --jm-surface: #1e2126;
+  --jm-text: #e9e5dc;
+  --jm-muted: #a29b8d;
+  --jm-accent: #85b8d3;
+  --jm-accent-contrast: #0e2431;
+  --jm-border: #34383f;
+  --jm-positive: #8ac29c;
+  --jm-negative: #dd9182;
+
+  --jm-chart-1: #3987e5;
+  --jm-chart-2: #199e70;
+  --jm-chart-3: #c98500;
+  --jm-chart-4: #008300;
+  --jm-chart-5: #9085e9;
+  --jm-chart-6: #e66767;
+  --jm-chart-7: #d55181;
+  --jm-chart-8: #d95926;
+
+  --jm-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --jm-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.35),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --jm-bg: #faf9f7;
+  --jm-surface: #ffffff;
+  --jm-text: #262521;
+  --jm-muted: #6b6459;
+  --jm-accent: #17597a;
+  --jm-accent-contrast: #ffffff;
+  --jm-border: #e4e0d8;
+  --jm-positive: #2f6b46;
+  --jm-negative: #a63d33;
+
+  --jm-chart-1: #2a78d6;
+  --jm-chart-2: #1baf7a;
+  --jm-chart-3: #eda100;
+  --jm-chart-4: #008300;
+  --jm-chart-5: #4a3aa7;
+  --jm-chart-6: #e34948;
+  --jm-chart-7: #e87ba4;
+  --jm-chart-8: #eb6834;
+
+  --jm-shadow-sm: 0 1px 2px rgba(31, 27, 20, 0.05);
+  --jm-shadow-md: 0 1px 2px rgba(31, 27, 20, 0.05),
+    0 6px 18px rgba(31, 27, 20, 0.06);
+}
+
+/* jimemo base
+ *
+ * Reset, document defaults, layout container, prose typography, focus,
+ * print. Everything reads from tokens.css.
+ *
+ * Convention: markdown-rendered slots go inside a `.jm-prose` wrapper;
+ * toolkit components are SIBLINGS of prose blocks, never children, so
+ * prose element selectors cannot leak into component internals.
+ */
+
+/* ---- reset ---- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+img,
+picture,
+svg,
+video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+/* ---- document ---- */
+
+body {
+  background: var(--jm-bg);
+  color: var(--jm-text);
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-md);
+  line-height: var(--jm-leading-body);
+  font-kerning: normal;
+  overflow-wrap: break-word;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--jm-accent) 22%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--jm-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ---- layout ---- */
+
+.jm-container {
+  max-width: var(--jm-content-max);
+  margin-inline: auto;
+  padding-inline: var(--jm-space-5);
+  padding-block: var(--jm-space-7) var(--jm-space-8);
+}
+
+.jm-container--wide {
+  max-width: var(--jm-content-wide);
+}
+
+.jm-footer {
+  max-width: var(--jm-content-max);
+  margin-inline: auto;
+  padding-inline: var(--jm-space-5);
+  padding-block-end: var(--jm-space-7);
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  letter-spacing: 0.04em;
+  color: var(--jm-muted);
+}
+
+.jm-footer:empty {
+  display: none;
+}
+
+/* ---- prose typography ---- */
+
+.jm-prose {
+  font-family: var(--jm-font-prose);
+}
+
+.jm-prose h1,
+.jm-prose h2,
+.jm-prose h3 {
+  font-weight: 400;
+  line-height: var(--jm-leading-tight);
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.jm-prose h1 {
+  font-size: var(--jm-text-2xl);
+  margin-block: var(--jm-space-7) var(--jm-space-4);
+}
+
+/* Hairline above each section: quiet structure between h2 blocks. */
+.jm-prose h2 {
+  font-size: var(--jm-text-xl);
+  margin-block: var(--jm-space-7) var(--jm-space-4);
+  padding-block-start: var(--jm-space-5);
+  border-block-start: 1px solid var(--jm-border);
+}
+
+.jm-prose > h1:first-child,
+.jm-prose > h2:first-child,
+.jm-prose > h3:first-child {
+  margin-block-start: 0;
+}
+
+.jm-prose > h2:first-child {
+  padding-block-start: 0;
+  border-block-start: 0;
+}
+
+.jm-prose h3 {
+  font-size: var(--jm-text-lg);
+  font-weight: 600;
+  margin-block: var(--jm-space-6) var(--jm-space-3);
+}
+
+/* At h4 the apparatus voice enters the prose. */
+.jm-prose h4 {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+  margin-block: var(--jm-space-5) var(--jm-space-2);
+}
+
+.jm-prose p {
+  margin-block: var(--jm-space-4);
+}
+
+.jm-prose a {
+  color: var(--jm-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, var(--jm-accent) 45%, transparent);
+  transition: text-decoration-color 0.15s ease;
+}
+
+.jm-prose a:hover {
+  text-decoration-color: currentColor;
+}
+
+.jm-prose ul,
+.jm-prose ol {
+  margin-block: var(--jm-space-4);
+  padding-inline-start: 1.4em;
+}
+
+.jm-prose li {
+  margin-block: var(--jm-space-1);
+}
+
+.jm-prose li::marker {
+  color: var(--jm-muted);
+}
+
+.jm-prose blockquote {
+  margin-block: var(--jm-space-5);
+  margin-inline: 0;
+  padding-inline-start: var(--jm-space-5);
+  border-inline-start: 2px solid var(--jm-accent);
+  font-style: italic;
+}
+
+.jm-prose blockquote cite {
+  display: block;
+  margin-block-start: var(--jm-space-2);
+  font-family: var(--jm-font-ui);
+  font-style: normal;
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+}
+
+.jm-prose code {
+  font-family: var(--jm-font-mono);
+  font-size: 0.875em;
+  background: rgba(127, 127, 127, 0.12);
+  background: color-mix(in srgb, var(--jm-text) 7%, transparent);
+  padding: 0.1em 0.35em;
+  border-radius: var(--jm-radius-sm);
+}
+
+.jm-prose pre {
+  margin-block: var(--jm-space-5);
+  padding: var(--jm-space-4) var(--jm-space-5);
+  background: var(--jm-surface);
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-md);
+  font-family: var(--jm-font-mono);
+  font-size: var(--jm-text-sm);
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.jm-prose pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* Booktable: heavy rule above, hairline rows — for raw markdown tables.
+ * (Structured data should use the data-table component instead.) */
+.jm-prose table {
+  width: 100%;
+  margin-block: var(--jm-space-5);
+  border-block-start: 2px solid var(--jm-text);
+  font-size: var(--jm-text-sm);
+}
+
+.jm-prose th {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+  text-align: start;
+  padding: var(--jm-space-2) var(--jm-space-3);
+  border-block-end: 1px solid var(--jm-text);
+}
+
+.jm-prose td {
+  padding: var(--jm-space-2) var(--jm-space-3);
+  border-block-end: 1px solid var(--jm-border);
+}
+
+.jm-prose th:first-child,
+.jm-prose td:first-child {
+  padding-inline-start: 0;
+}
+
+.jm-prose th:last-child,
+.jm-prose td:last-child {
+  padding-inline-end: 0;
+}
+
+/* Section break: a short rule, not a full-width divider. */
+.jm-prose hr {
+  border: 0;
+  width: 4rem;
+  height: 1px;
+  background: var(--jm-border);
+  margin-block: var(--jm-space-7);
+  margin-inline: auto;
+}
+
+.jm-prose img {
+  border-radius: var(--jm-radius-sm);
+  margin-block: var(--jm-space-5);
+}
+
+.jm-prose figure {
+  margin-block: var(--jm-space-5);
+}
+
+.jm-prose figcaption {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+  margin-block-start: var(--jm-space-2);
+}
+
+.jm-prose strong {
+  font-weight: 700;
+}
+
+/* ---- print ---- */
+
+@media print {
+  /* Paper decides the theme: force light tokens whatever the screen said.
+   * All three selectors must be listed explicitly: :root[data-theme="light"]
+   * and :root[data-theme="dark"] both carry higher specificity (0,2,0) than
+   * plain :root (0,1,0), so without listing them here too, tokens.css's own
+   * [data-theme] override rules would beat this block for a pinned page
+   * even though this rule comes later in source order — specificity wins
+   * ties before source order does. This block is duplicated verbatim in
+   * toolkit/print-force.css, which the renderer always re-appends last
+   * (after any theme file) so a theme's own :root rule can never win the
+   * print cascade either; keep both copies in sync. */
+  :root,
+  :root[data-theme="dark"],
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --jm-bg: #ffffff;
+    --jm-surface: #ffffff;
+    --jm-text: #1c1a17;
+    --jm-muted: #57524a;
+    --jm-accent: #17597a;
+    --jm-accent-contrast: #ffffff;
+    --jm-border: #c9c4bb;
+    --jm-positive: #2f6b46;
+    --jm-negative: #a63d33;
+
+    --jm-shadow-sm: none;
+    --jm-shadow-md: none;
+  }
+
+  @page {
+    margin: 18mm 16mm;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  .jm-container {
+    max-width: none;
+    padding: 0;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid;
+  }
+
+  .jm-prose pre {
+    white-space: pre-wrap;
+    overflow-x: visible;
+  }
+}
+
+/* page-header — the masthead of every jimemo page.
+ * Signature: a short indigo bar above the kicker, serif title,
+ * apparatus meta row, hairline rule below. */
+
+.jm-page-header {
+  margin-block-end: var(--jm-space-7);
+  padding-block-end: var(--jm-space-5);
+  border-block-end: 1px solid var(--jm-border);
+}
+
+.jm-page-header::before {
+  content: "";
+  display: block;
+  width: 2.75rem;
+  height: 3px;
+  border-radius: 1.5px;
+  background: var(--jm-accent);
+  margin-block-end: var(--jm-space-4);
+}
+
+.jm-page-header__kicker {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-accent);
+  margin-block-end: var(--jm-space-2);
+}
+
+.jm-page-header__title {
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-3xl);
+  font-weight: 400;
+  line-height: var(--jm-leading-tight);
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.jm-page-header__subtitle {
+  margin-block-start: var(--jm-space-3);
+  font-size: var(--jm-text-lg);
+  line-height: var(--jm-leading-snug);
+  font-style: italic;
+  color: var(--jm-muted);
+  text-wrap: balance;
+}
+
+.jm-page-header__meta {
+  margin-block-start: var(--jm-space-4);
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--jm-space-2);
+  row-gap: var(--jm-space-1);
+}
+
+.jm-page-header__meta-item + .jm-page-header__meta-item::before {
+  content: "\00B7"; /* interpunct */
+  margin-inline-end: var(--jm-space-2);
+  opacity: 0.55;
+}
+
+@media (max-width: 480px) {
+  .jm-page-header__title {
+    font-size: var(--jm-text-2xl);
+  }
+}
+
+/* meta-pills — a mono chip row for a masthead's operational facts
+ * (host, uptime, version, last deploy). Quieter than badges: muted
+ * text, one hairline border, no tone roles — these are facts, not
+ * judgments. */
+
+.jm-meta-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jm-space-2);
+  margin-block: var(--jm-space-3) 0;
+}
+
+.jm-meta-pill {
+  font-family: var(--jm-font-mono);
+  font-size: var(--jm-text-xs);
+  color: var(--jm-muted);
+  background: var(--jm-surface);
+  border: 1px solid var(--jm-border);
+  border-radius: 999px;
+  padding: var(--jm-space-1) var(--jm-space-3);
+  white-space: nowrap;
+}
+
+/* stat-tile — a quiet figure with an apparatus label.
+ * Serif value, tracked sans label; deltas use positive/negative roles.
+ * `.jm-stat-row` lays tiles out in a responsive grid. */
+
+.jm-stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: var(--jm-space-3);
+  margin-block: var(--jm-space-6);
+}
+
+.jm-stat-tile {
+  background: var(--jm-surface);
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-md);
+  box-shadow: var(--jm-shadow-sm);
+  padding: var(--jm-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--jm-space-1);
+  break-inside: avoid;
+}
+
+.jm-stat-tile__value {
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-xl);
+  line-height: var(--jm-leading-tight);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.jm-stat-tile__label {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+}
+
+.jm-stat-tile__delta {
+  margin-block-start: auto;
+  padding-block-start: var(--jm-space-1);
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--jm-muted);
+}
+
+.jm-stat-tile__delta--positive {
+  color: var(--jm-positive);
+}
+
+.jm-stat-tile__delta--negative {
+  color: var(--jm-negative);
+}
+
+/* badge — a small tracked label, outlined not filled. Square-ish
+ * corners; a pill would be a different product. */
+
+.jm-badge {
+  display: inline-block;
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  line-height: 1;
+  color: var(--jm-muted);
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-sm);
+  padding: 0.35em 0.55em 0.3em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.jm-badge--accent {
+  color: var(--jm-accent);
+  border-color: color-mix(in srgb, var(--jm-accent) 40%, transparent);
+}
+
+.jm-badge--positive {
+  color: var(--jm-positive);
+  border-color: color-mix(in srgb, var(--jm-positive) 40%, transparent);
+}
+
+.jm-badge--negative {
+  color: var(--jm-negative);
+  border-color: color-mix(in srgb, var(--jm-negative) 40%, transparent);
+}
+
+/* board-section — one titled region of an ops board: a hairline-ruled
+ * heading in the prose sections' apparatus voice (same treatment as
+ * .jm-prose h2, restated here because prose selectors are deliberately
+ * scoped and cannot leak into components), and an optional one-line
+ * note under it. */
+
+.jm-board-section__heading {
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-xl);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+  line-height: var(--jm-leading-tight);
+  margin-block: var(--jm-space-7) var(--jm-space-4);
+  padding-block-start: var(--jm-space-5);
+  border-block-start: 1px solid var(--jm-border);
+  break-after: avoid;
+}
+
+.jm-board-section:first-of-type .jm-board-section__heading {
+  margin-block-start: var(--jm-space-6);
+}
+
+.jm-board-section__note {
+  margin: 0;
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+  line-height: var(--jm-leading-snug);
+  max-width: 65ch;
+}
+
+/* entity-card — one inventory unit on an ops board: a name, a status
+ * badge, tag chips, and dotted label/value rows. `.jm-entity-grid`
+ * packs cards into a responsive grid. A variant class colors the
+ * card's leading edge with a token role (accent/positive/negative) so
+ * a scan of the board reads state at a glance; the default edge is the
+ * plain border color. */
+
+.jm-entity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--jm-space-3);
+  margin-block: var(--jm-space-4);
+}
+
+.jm-entity-card {
+  background: var(--jm-surface);
+  border: 1px solid var(--jm-border);
+  border-inline-start: 3px solid var(--jm-border);
+  border-radius: var(--jm-radius-md);
+  box-shadow: var(--jm-shadow-sm);
+  padding: var(--jm-space-3) var(--jm-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--jm-space-2);
+  break-inside: avoid;
+}
+
+.jm-entity-card--accent   { border-inline-start-color: var(--jm-accent); }
+.jm-entity-card--positive { border-inline-start-color: var(--jm-positive); }
+.jm-entity-card--negative { border-inline-start-color: var(--jm-negative); }
+
+.jm-entity-card__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--jm-space-2);
+}
+
+.jm-entity-card__title {
+  margin: 0;
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.jm-entity-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jm-space-1);
+}
+
+.jm-entity-card__tag {
+  font-family: var(--jm-font-mono);
+  font-size: var(--jm-text-xs);
+  color: var(--jm-muted);
+  background: var(--jm-bg);
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-sm);
+  padding: 0 var(--jm-space-2);
+  white-space: nowrap;
+}
+
+.jm-entity-card__fields {
+  margin: 0;
+}
+
+.jm-entity-card__field {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--jm-space-3);
+  padding-block: var(--jm-space-1);
+  border-block-end: 1px dotted var(--jm-border);
+  font-family: var(--jm-font-mono);
+  font-size: var(--jm-text-sm);
+}
+
+.jm-entity-card__field:last-child {
+  border-block-end: 0;
+}
+
+.jm-entity-card__field dt {
+  color: var(--jm-muted);
+}
+
+.jm-entity-card__field dd {
+  margin: 0;
+  text-align: end;
+  overflow-wrap: anywhere;
+}
+
+.jm-entity-card__text {
+  margin: 0;
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+  line-height: var(--jm-leading-snug);
+}
+
+/* data-table — a booktable: heavy rule above, hairline rows, no boxes,
+ * no zebra. Headers and cells speak in the apparatus voice; numeric
+ * columns align right with tabular figures. Wrap in __scroll so wide
+ * tables scroll inside their own container on narrow screens. */
+
+.jm-data-table__scroll {
+  margin-block: var(--jm-space-6);
+  overflow-x: auto;
+}
+
+.jm-data-table {
+  width: 100%;
+  border-block-start: 2px solid var(--jm-text);
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-sm);
+  line-height: 1.5;
+}
+
+.jm-data-table__caption {
+  caption-side: bottom;
+  text-align: start;
+  padding-block-start: var(--jm-space-3);
+  font-family: var(--jm-font-prose);
+  font-style: italic;
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+}
+
+.jm-data-table th {
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+  text-align: start;
+  padding: var(--jm-space-2) var(--jm-space-3);
+  border-block-end: 1px solid var(--jm-text);
+  white-space: nowrap;
+}
+
+.jm-data-table td {
+  padding: var(--jm-space-3);
+  border-block-end: 1px solid var(--jm-border);
+  vertical-align: top;
+}
+
+.jm-data-table th:first-child,
+.jm-data-table td:first-child {
+  padding-inline-start: 0;
+}
+
+.jm-data-table th:last-child,
+.jm-data-table td:last-child {
+  padding-inline-end: 0;
+}
+
+.jm-data-table__cell--num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+@media print {
+  .jm-data-table__scroll {
+    overflow-x: visible;
+  }
+
+  .jm-data-table tr {
+    break-inside: avoid;
+  }
+}
+
+/* jimemo print-force — verbatim duplicate of base.css's @media print
+ * block. jimemo.inline.assemble_css() always re-appends this file's
+ * content LAST, after components and after any theme file, so this is
+ * guaranteed to be the final source-order occurrence of these rules.
+ *
+ * Why a duplicate file instead of just relying on base.css: a theme
+ * file (toolkit/themes/<name>.css) is free to redefine `:root { ... }`
+ * with no @media guard, at the same specificity (0,1,0) as this
+ * block's plain `:root` selector. CSS breaks specificity ties by
+ * source order, and assembly order is tokens -> base -> components ->
+ * theme, so an unguarded theme :root rule would come after (and beat)
+ * base.css's print block, silently leaking screen colors/shadows into
+ * print output. Re-appending this file after the theme restores the
+ * intended source-order win for the print force.
+ *
+ * base.css keeps its own copy so it still prints correctly when used
+ * standalone (tokens.css + base.css + components, no assemble_css
+ * pipeline). Keep both copies in sync — same selectors, same values.
+ */
+
+@media print {
+  /* Paper decides the theme: force light tokens whatever the screen said.
+   * All three selectors must be listed explicitly: :root[data-theme="light"]
+   * and :root[data-theme="dark"] both carry higher specificity (0,2,0) than
+   * plain :root (0,1,0), so without listing them here too, tokens.css's own
+   * [data-theme] override rules would beat this block for a pinned page
+   * even though this rule comes later in source order — specificity wins
+   * ties before source order does. */
+  :root,
+  :root[data-theme="dark"],
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --jm-bg: #ffffff;
+    --jm-surface: #ffffff;
+    --jm-text: #1c1a17;
+    --jm-muted: #57524a;
+    --jm-accent: #17597a;
+    --jm-accent-contrast: #ffffff;
+    --jm-border: #c9c4bb;
+    --jm-positive: #2f6b46;
+    --jm-negative: #a63d33;
+
+    --jm-shadow-sm: none;
+    --jm-shadow-md: none;
+  }
+
+  @page {
+    margin: 18mm 16mm;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  .jm-container {
+    max-width: none;
+    padding: 0;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid;
+  }
+
+  .jm-prose pre {
+    white-space: pre-wrap;
+    overflow-x: visible;
+  }
+}
+
+</style>
+
+</head>
+<body>
+<main class="jm-container jm-container--wide">
+
+<header class="jm-page-header">
+  <p class="jm-page-header__kicker">OPS</p>
+  <h1 class="jm-page-header__title">Relay gateway — status board</h1>
+  <p class="jm-page-header__subtitle">One page for the whole relay: channels, containers, people, and the access matrix.</p>
+  
+</header>
+
+
+<p class="jm-meta-pills"><span class="jm-meta-pill">host: relay-01</span><span class="jm-meta-pill">uptime: 41 days</span><span class="jm-meta-pill">release: v2.3.1</span><span class="jm-meta-pill">last deploy: 2026-07-04 09:12 UTC</span></p>
+
+
+
+
+<div class="jm-stat-row">
+  <div class="jm-stat-tile">
+  <div class="jm-stat-tile__value">12</div>
+  <div class="jm-stat-tile__label">Channels</div>
+  
+</div>
+  <div class="jm-stat-tile">
+  <div class="jm-stat-tile__value">4</div>
+  <div class="jm-stat-tile__label">Containers</div>
+  <div class="jm-stat-tile__delta jm-stat-tile__delta--positive">+1 this week</div>
+</div>
+  <div class="jm-stat-tile">
+  <div class="jm-stat-tile__value">9</div>
+  <div class="jm-stat-tile__label">People</div>
+  
+</div>
+  <div class="jm-stat-tile">
+  <div class="jm-stat-tile__value">3</div>
+  <div class="jm-stat-tile__label">Platforms</div>
+  
+</div>
+  <div class="jm-stat-tile">
+  <div class="jm-stat-tile__value">218</div>
+  <div class="jm-stat-tile__label">Messages / day</div>
+  
+</div>
+  <div class="jm-stat-tile">
+  <div class="jm-stat-tile__value">1</div>
+  <div class="jm-stat-tile__label">Failing agent</div>
+  <div class="jm-stat-tile__delta jm-stat-tile__delta--negative">restart pending</div>
+</div>
+</div>
+
+
+
+<section class="jm-board-section">
+<h2 class="jm-board-section__heading">Channels</h2>
+<p class="jm-board-section__note">Every chat group the relay listens to, with its platform and routing.</p>
+
+<div class="jm-entity-grid">
+  <article class="jm-entity-card jm-entity-card--positive">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">family-core</h3> <span class="jm-badge jm-badge--positive">WhatsApp</span>
+    </div>
+    <div class="jm-entity-card__tags"><span class="jm-entity-card__tag">listen: all</span><span class="jm-entity-card__tag">reply: mention</span></div>
+    <dl class="jm-entity-card__fields">
+      <div class="jm-entity-card__field"><dt>group id</dt><dd>wa-8842…19</dd></div>
+      <div class="jm-entity-card__field"><dt>agent</dt><dd>concierge</dd></div>
+    </dl>
+  </article>
+  <article class="jm-entity-card jm-entity-card--accent">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">ops-alerts</h3> <span class="jm-badge jm-badge--accent">Signal</span>
+    </div>
+    <div class="jm-entity-card__tags"><span class="jm-entity-card__tag">listen: all</span><span class="jm-entity-card__tag">reply: always</span></div>
+    <dl class="jm-entity-card__fields">
+      <div class="jm-entity-card__field"><dt>group id</dt><dd>sg-77aa…04</dd></div>
+      <div class="jm-entity-card__field"><dt>agent</dt><dd>pager</dd></div>
+    </dl>
+  </article>
+  <article class="jm-entity-card">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">book-club</h3> <span class="jm-badge">Discord</span>
+    </div>
+    <div class="jm-entity-card__tags"><span class="jm-entity-card__tag">listen: mention</span></div>
+    <dl class="jm-entity-card__fields">
+      <div class="jm-entity-card__field"><dt>channel</dt><dd>#reading</dd></div>
+      <div class="jm-entity-card__field"><dt>agent</dt><dd>librarian</dd></div>
+    </dl>
+  </article>
+</div>
+
+</section>
+
+<section class="jm-board-section">
+<h2 class="jm-board-section__heading">Containers</h2>
+<p class="jm-board-section__note">Long-running agent containers and their health.</p>
+
+<div class="jm-entity-grid">
+  <article class="jm-entity-card jm-entity-card--positive">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">concierge</h3> <span class="jm-badge jm-badge--positive">running</span>
+    </div>
+    <dl class="jm-entity-card__fields">
+      <div class="jm-entity-card__field"><dt>uptime</dt><dd>41 d</dd></div>
+      <div class="jm-entity-card__field"><dt>memory</dt><dd>212 MB</dd></div>
+    </dl>
+  </article>
+  <article class="jm-entity-card jm-entity-card--positive">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">pager</h3> <span class="jm-badge jm-badge--positive">running</span>
+    </div>
+    <dl class="jm-entity-card__fields">
+      <div class="jm-entity-card__field"><dt>uptime</dt><dd>6 d</dd></div>
+      <div class="jm-entity-card__field"><dt>memory</dt><dd>148 MB</dd></div>
+    </dl>
+  </article>
+  <article class="jm-entity-card jm-entity-card--negative">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">librarian</h3> <span class="jm-badge jm-badge--negative">failing</span>
+    </div>
+    <dl class="jm-entity-card__fields">
+      <div class="jm-entity-card__field"><dt>last exit</dt><dd>code 137</dd></div>
+    </dl><p class="jm-entity-card__text">Crash-looping since the 04:00 deploy; restart scheduled.</p>
+  </article>
+</div>
+
+</section>
+
+<section class="jm-board-section">
+<h2 class="jm-board-section__heading">People</h2>
+
+
+<div class="jm-entity-grid">
+  <article class="jm-entity-card jm-entity-card--accent">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">Mika Tanaka</h3> <span class="jm-badge jm-badge--accent">owner</span>
+    </div>
+    <div class="jm-entity-card__tags"><span class="jm-entity-card__tag">family-core</span><span class="jm-entity-card__tag">ops-alerts</span></div>
+  </article>
+  <article class="jm-entity-card">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">Sam Ortiz</h3> <span class="jm-badge">staff</span>
+    </div>
+    <div class="jm-entity-card__tags"><span class="jm-entity-card__tag">ops-alerts</span><span class="jm-entity-card__tag">book-club</span></div>
+  </article>
+  <article class="jm-entity-card">
+    <div class="jm-entity-card__top">
+      <h3 class="jm-entity-card__title">Alex Chen</h3> <span class="jm-badge">guest</span>
+    </div>
+    <div class="jm-entity-card__tags"><span class="jm-entity-card__tag">book-club</span></div>
+  </article>
+</div>
+
+</section>
+
+<section class="jm-board-section">
+<h2 class="jm-board-section__heading">Access matrix</h2>
+<p class="jm-board-section__note">Who may do what, per tier. Owner approval promotes a tier.</p>
+
+<div class="jm-data-table__scroll">
+<table class="jm-data-table">
+  <caption class="jm-data-table__caption">Access by tier, release v2.3.1.</caption>
+  <thead>
+    <tr>
+      <th scope="col">Capability</th>
+      <th scope="col">Owner</th>
+      <th scope="col">Staff</th>
+      <th scope="col">Guest</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Send as relay</td>
+      <td>yes</td>
+      <td>yes</td>
+      <td>no</td>
+    </tr>
+    <tr>
+      <td>Register a channel</td>
+      <td>yes</td>
+      <td>no</td>
+      <td>no</td>
+    </tr>
+    <tr>
+      <td>Read message log</td>
+      <td>yes</td>
+      <td>yes</td>
+      <td>no</td>
+    </tr>
+    <tr>
+      <td>Trigger deploy</td>
+      <td>yes</td>
+      <td>no</td>
+      <td>no</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+</section>
+
+
+</main>
+<footer class="jm-footer">relay-01 · generated 2026-07-05 18:00 UTC · next audit: 2026-08-01</footer>
+</body>
+</html>

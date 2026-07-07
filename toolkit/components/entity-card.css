@@ -1,0 +1,97 @@
+/* entity-card — one inventory unit on an ops board: a name, a status
+ * badge, tag chips, and dotted label/value rows. `.jm-entity-grid`
+ * packs cards into a responsive grid. A variant class colors the
+ * card's leading edge with a token role (accent/positive/negative) so
+ * a scan of the board reads state at a glance; the default edge is the
+ * plain border color. */
+
+.jm-entity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--jm-space-3);
+  margin-block: var(--jm-space-4);
+}
+
+.jm-entity-card {
+  background: var(--jm-surface);
+  border: 1px solid var(--jm-border);
+  border-inline-start: 3px solid var(--jm-border);
+  border-radius: var(--jm-radius-md);
+  box-shadow: var(--jm-shadow-sm);
+  padding: var(--jm-space-3) var(--jm-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--jm-space-2);
+  break-inside: avoid;
+}
+
+.jm-entity-card--accent   { border-inline-start-color: var(--jm-accent); }
+.jm-entity-card--positive { border-inline-start-color: var(--jm-positive); }
+.jm-entity-card--negative { border-inline-start-color: var(--jm-negative); }
+
+.jm-entity-card__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--jm-space-2);
+}
+
+.jm-entity-card__title {
+  margin: 0;
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.jm-entity-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jm-space-1);
+}
+
+.jm-entity-card__tag {
+  font-family: var(--jm-font-mono);
+  font-size: var(--jm-text-xs);
+  color: var(--jm-muted);
+  background: var(--jm-bg);
+  border: 1px solid var(--jm-border);
+  border-radius: var(--jm-radius-sm);
+  padding: 0 var(--jm-space-2);
+  white-space: nowrap;
+}
+
+.jm-entity-card__fields {
+  margin: 0;
+}
+
+.jm-entity-card__field {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--jm-space-3);
+  padding-block: var(--jm-space-1);
+  border-block-end: 1px dotted var(--jm-border);
+  font-family: var(--jm-font-mono);
+  font-size: var(--jm-text-sm);
+}
+
+.jm-entity-card__field:last-child {
+  border-block-end: 0;
+}
+
+.jm-entity-card__field dt {
+  color: var(--jm-muted);
+}
+
+.jm-entity-card__field dd {
+  margin: 0;
+  text-align: end;
+  overflow-wrap: anywhere;
+}
+
+.jm-entity-card__text {
+  margin: 0;
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+  line-height: var(--jm-leading-snug);
+}

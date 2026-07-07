@@ -63,8 +63,8 @@ ln -s /path/to/jimemo/skill    ~/.amplifier/skills/jimemo # Amplifier
 
 ## Usage
 
-Six seed templates ship in `templates/`: `briefing`, `chart-dashboard`,
-`data-dashboard`, `genealogy`, `photo-catalog`, `timeline`.
+Seven seed templates ship in `templates/`: `briefing`, `chart-dashboard`,
+`data-dashboard`, `genealogy`, `ops-board`, `photo-catalog`, `timeline`.
 
 List what's available:
 
@@ -74,6 +74,7 @@ briefing	/path/to/jimemo/templates/briefing
 chart-dashboard	/path/to/jimemo/templates/chart-dashboard
 data-dashboard	/path/to/jimemo/templates/data-dashboard
 genealogy	/path/to/jimemo/templates/genealogy
+ops-board	/path/to/jimemo/templates/ops-board
 photo-catalog	/path/to/jimemo/templates/photo-catalog
 timeline	/path/to/jimemo/templates/timeline
 ```

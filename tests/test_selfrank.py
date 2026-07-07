@@ -25,12 +25,12 @@ REPO_TEMPLATES = find_templates([TEMPLATES_ROOT])
 SEED_NAMES = [name for name, _ in REPO_TEMPLATES]
 
 
-def test_five_seed_templates_present():
+def test_seed_templates_present():
     # Guards the parametrization below against silently collecting fewer
     # cases than intended (e.g. a template dir missing manifest.json).
     assert sorted(SEED_NAMES) == [
         "briefing", "chart-dashboard", "data-dashboard", "genealogy",
-        "photo-catalog", "timeline",
+        "ops-board", "photo-catalog", "timeline",
     ]
 
 

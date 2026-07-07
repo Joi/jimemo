@@ -1,0 +1,22 @@
+/* meta-pills — a mono chip row for a masthead's operational facts
+ * (host, uptime, version, last deploy). Quieter than badges: muted
+ * text, one hairline border, no tone roles — these are facts, not
+ * judgments. */
+
+.jm-meta-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jm-space-2);
+  margin-block: var(--jm-space-3) 0;
+}
+
+.jm-meta-pill {
+  font-family: var(--jm-font-mono);
+  font-size: var(--jm-text-xs);
+  color: var(--jm-muted);
+  background: var(--jm-surface);
+  border: 1px solid var(--jm-border);
+  border-radius: 999px;
+  padding: var(--jm-space-1) var(--jm-space-3);
+  white-space: nowrap;
+}
