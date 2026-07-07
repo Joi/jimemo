@@ -747,6 +747,34 @@ body {
   border-color: color-mix(in srgb, var(--jm-negative) 40%, transparent);
 }
 
+/* board-section — one titled region of an ops board: a hairline-ruled
+ * heading in the prose sections' apparatus voice (same treatment as
+ * .jm-prose h2, restated here because prose selectors are deliberately
+ * scoped and cannot leak into components), and an optional one-line
+ * note under it. */
+
+.jm-board-section__heading {
+  font-family: var(--jm-font-prose);
+  font-size: var(--jm-text-xl);
+  line-height: var(--jm-leading-tight);
+  margin-block: var(--jm-space-7) var(--jm-space-4);
+  padding-block-start: var(--jm-space-5);
+  border-block-start: 1px solid var(--jm-border);
+  break-after: avoid;
+}
+
+.jm-board-section:first-of-type .jm-board-section__heading {
+  margin-block-start: var(--jm-space-6);
+}
+
+.jm-board-section__note {
+  margin: 0;
+  font-size: var(--jm-text-sm);
+  color: var(--jm-muted);
+  line-height: var(--jm-leading-snug);
+  max-width: 65ch;
+}
+
 /* entity-card — one inventory unit on an ops board: a name, a status
  * badge, tag chips, and dotted label/value rows. `.jm-entity-grid`
  * packs cards into a responsive grid. A variant class colors the
@@ -1043,9 +1071,9 @@ body {
 
 
 
-<section>
-<h2>Channels</h2>
-<p class="jm-entity-card__text">Every chat group the relay listens to, with its platform and routing.</p>
+<section class="jm-board-section">
+<h2 class="jm-board-section__heading">Channels</h2>
+<p class="jm-board-section__note">Every chat group the relay listens to, with its platform and routing.</p>
 
 <div class="jm-entity-grid">
   <article class="jm-entity-card jm-entity-card--positive">
@@ -1082,9 +1110,9 @@ body {
 
 </section>
 
-<section>
-<h2>Containers</h2>
-<p class="jm-entity-card__text">Long-running agent containers and their health.</p>
+<section class="jm-board-section">
+<h2 class="jm-board-section__heading">Containers</h2>
+<p class="jm-board-section__note">Long-running agent containers and their health.</p>
 
 <div class="jm-entity-grid">
   <article class="jm-entity-card jm-entity-card--positive">
@@ -1117,8 +1145,8 @@ body {
 
 </section>
 
-<section>
-<h2>People</h2>
+<section class="jm-board-section">
+<h2 class="jm-board-section__heading">People</h2>
 
 
 <div class="jm-entity-grid">
@@ -1144,9 +1172,9 @@ body {
 
 </section>
 
-<section>
-<h2>Access matrix</h2>
-<p class="jm-entity-card__text">Who may do what, per tier. Owner approval promotes a tier.</p>
+<section class="jm-board-section">
+<h2 class="jm-board-section__heading">Access matrix</h2>
+<p class="jm-board-section__note">Who may do what, per tier. Owner approval promotes a tier.</p>
 
 <div class="jm-data-table__scroll">
 <table class="jm-data-table">

@@ -74,6 +74,7 @@ briefing	/path/to/jimemo/templates/briefing
 chart-dashboard	/path/to/jimemo/templates/chart-dashboard
 data-dashboard	/path/to/jimemo/templates/data-dashboard
 genealogy	/path/to/jimemo/templates/genealogy
+ops-board	/path/to/jimemo/templates/ops-board
 photo-catalog	/path/to/jimemo/templates/photo-catalog
 timeline	/path/to/jimemo/templates/timeline
 ```

@@ -69,8 +69,8 @@ contract in detail.
   `manifest.json`, `sample/` (real-feeling sample content the golden
   tests render). Seven seed templates ship in the repo: `briefing`,
   `chart-dashboard`, `data-dashboard`, `genealogy`, `ops-board`,
-  `photo-catalog`, `timeline`. Personal templates live in `~/.jimemo/templates/` and
-  are discovered alongside the repo's own.
+  `photo-catalog`, `timeline`. Personal templates live in
+  `~/.jimemo/templates/` and are discovered alongside the repo's own.
 - `tests/goldens/<name>.html` — one golden render per seed template's
   sample, compared byte-for-byte by `tests/test_golden.py`;
   `JIMEMO_UPDATE_GOLDENS=1 python3 -m pytest tests/test_golden.py`
