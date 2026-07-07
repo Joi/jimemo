@@ -195,14 +195,16 @@ created /Users/you/.jimemo/templates/zine
 ```
 
 Check the environment (vendor checksums, Python version, stale suitability
-labels):
+labels, PDF browser availability):
 
 ```
 $ jimemo doctor
 ok   python 3.14.6
 ok   vendor checksums (/path/to/jimemo/vendor)
-ok   vendored imports (jinja2, markdown)
+ok   charts vendored (chart.js 4.5.1)
+ok   vendored imports (jinja2, markdown, yaml, tomli)
 ok   suitability labels fresh (or none recorded)
+ok   pdf browser (/Applications/Google Chrome.app/Contents/MacOS/Google Chrome)
 ```
 
 ## Import a design

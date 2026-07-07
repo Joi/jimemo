@@ -64,9 +64,11 @@ keyed by slot name — then hand it to `jimemo render`.
 - **Self-contained output.** A rendered `out.html` inlines its CSS and
   images and fetches nothing at view time; open it directly in a
   browser or hand it to someone with no server involved.
-- **No network at render time.** Only `jimemo publish` (and
-  `import-design`'s use of local files) touches anything outside the
-  process; `jimemo render` never shells out or hits the network.
+- **No network at render time.** Plain `jimemo render` never shells out
+  or hits the network. The exceptions: `jimemo publish` (and
+  `import-design`'s use of local files) touch the network; the explicit
+  PDF modes (`--pdf`, `-o *.pdf`, `jimemo pdf`) shell out to launch the
+  locally installed browser -- and nothing else.
 - **Sanitized input.** Markdown-typed slot content is rendered through a
   stdlib allowlist sanitizer before it reaches the page.
 

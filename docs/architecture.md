@@ -181,10 +181,11 @@ contract in detail.
 **Publish subsystem boundary:** render (`render.py` and everything it
 calls) never shells out or touches the network — the `vendor/`
 constraint holds all the way through image inlining and lint. `publish/`
-is the one place jimemo executes an external process (`wrangler` for
-the `cloudflare` backend, the configured command for the `command`
-backend), and only when a user explicitly runs `jimemo publish` or
-`jimemo publish setup`; `jimemo render` never imports `publish/`.
+is one of two places jimemo executes an external process — see
+`pdf.py` for the other — running `wrangler` for the `cloudflare`
+backend, or the configured command for the `command` backend, and only
+when a user explicitly runs `jimemo publish` or `jimemo publish setup`;
+`jimemo render` never imports `publish/`.
 
 **Chart security model:** a template that declares `charts` in its
 manifest lets `lint.py` reopen exactly one door it otherwise keeps
