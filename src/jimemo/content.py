@@ -27,20 +27,29 @@ from .sanitize import sanitize_html
 add_vendor_to_path()
 import markdown  # noqa: E402
 import yaml  # noqa: E402
+from markdown.extensions.fenced_code import FencedCodeExtension  # noqa: E402
+from markdown.extensions.tables import TableExtension  # noqa: E402
 from markupsafe import Markup  # noqa: E402
 
-# Fully-qualified dotted paths, not the short names ("tables"): Markdown's
-# extension loader resolves short names via installed-package entry-point
-# metadata, which a vendored (not pip-installed) copy never has. The dotted
-# path is Markdown's own documented fallback and works either way.
-MARKDOWN_EXTENSIONS = ["markdown.extensions.tables", "markdown.extensions.fenced_code"]
+
+def markdown_extensions() -> list:
+    """Extension OBJECTS, never name strings. For any string -- even a
+    fully qualified dotted path -- Markdown's build_extension scans
+    installed entry points BEFORE trying the dotted import
+    (vendor/markdown/core.py), and on Python < 3.10 that scan imports
+    the importlib_metadata backport, which jimemo does not vendor.
+    Stock macOS Python 3.9.6 (the documented floor) crashed on first
+    render exactly there. Objects skip name resolution entirely.
+    Fresh instances per call: Extension objects carry per-run config
+    and are not documented as reuse-safe across Markdown instances."""
+    return [TableExtension(), FencedCodeExtension()]
 
 
 def _render_markdown(text: str) -> Markup:
     # Sole markdown->HTML path (top-level markdown slots AND markdown
     # items in data slots), so sanitizing here covers both. Runs before
     # inline_images, so authored img src are still paths/URLs.
-    return Markup(sanitize_html(markdown.markdown(text, extensions=MARKDOWN_EXTENSIONS)))
+    return Markup(sanitize_html(markdown.markdown(text, extensions=markdown_extensions())))
 
 
 def _coerce_text(path: Path, slot_name: str, value: Any) -> str:

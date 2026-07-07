@@ -313,7 +313,7 @@ def test_legit_markdown_document_passes_through_unchanged():
     add_vendor_to_path()
     import markdown
 
-    from jimemo.content import MARKDOWN_EXTENSIONS
+    from jimemo.content import markdown_extensions
 
     doc = (
         "# Title\n"
@@ -341,7 +341,7 @@ def test_legit_markdown_document_passes_through_unchanged():
         "code & <stuff>\n"
         "```\n"
     )
-    rendered = markdown.markdown(doc, extensions=MARKDOWN_EXTENSIONS)
+    rendered = markdown.markdown(doc, extensions=markdown_extensions())
     assert sanitize_html(rendered) == rendered
     # sanity: the interesting constructs really are present
     assert 'style="text-align: center;"' in rendered
