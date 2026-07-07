@@ -5,7 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jimemo.config import CloudflareConfig, Config, PublishConfig, config_path, load_config
+from jimemo.config import CloudflareConfig, Config, PdfConfig, PublishConfig, config_path, load_config
 from jimemo.errors import ConfigError
 
 
@@ -254,3 +254,42 @@ def test_non_url_base_url_raises_at_load(tmp_path):
     with pytest.raises(ConfigError) as exc:
         load_config(cfg_file)
     assert "base_url" in str(exc.value)
+
+
+def test_pdf_table_parses_browser(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[pdf]\nbrowser = "/usr/bin/chromium"\n')
+    cfg = load_config(cfg_file)
+    assert cfg.pdf is not None
+    assert cfg.pdf.browser == "/usr/bin/chromium"
+
+
+def test_pdf_table_absent_means_none(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('[publish]\nbackend = "command"\ncommand = "notes-publish"\n')
+    cfg = load_config(cfg_file)
+    assert cfg.pdf is None
+
+
+def test_pdf_table_without_browser_key_is_valid(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[pdf]\n")
+    cfg = load_config(cfg_file)
+    assert cfg.pdf is not None
+    assert cfg.pdf.browser is None
+
+
+def test_pdf_not_a_table_errors(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text('pdf = "yes"\n')
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(cfg_file)
+    assert "[pdf]" in str(exc_info.value)
+
+
+def test_pdf_browser_not_a_string_errors(tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text("[pdf]\nbrowser = 3\n")
+    with pytest.raises(ConfigError) as exc_info:
+        load_config(cfg_file)
+    assert "browser" in str(exc_info.value)

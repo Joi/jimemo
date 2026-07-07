@@ -21,7 +21,14 @@ contract in detail.
     `<img src>` references into data URIs.
   - `lint.py` — `lint_html`: post-render static checks (no remote
     fetches, no scripts unless the template declares charts, output
-    size).
+    size). `lint_standalone` re-checks a file with no render context
+    (the gate behind `check`, `pdf`, and `publish`).
+  - `pdf.py` — `find_browser`/`render_pdf`: converts a rendered page to
+    PDF by running a locally installed Chromium-family browser headless
+    (Chart.js needs a real JS engine), through the same injectable-launcher
+    containment as the Wrangler seam; the browser is not trusted to exit,
+    so the output file is polled until it stabilizes and any lingering
+    process is killed; `PdfError` on any failure.
   - `sanitize.py` — `sanitize_html`: stdlib allowlist sanitizer for
     markdown-rendered slot content (untrusted input may carry raw HTML).
   - `charts.py` — `build_chart_config`/`serialize_chart_config`: builds
@@ -174,10 +181,11 @@ contract in detail.
 **Publish subsystem boundary:** render (`render.py` and everything it
 calls) never shells out or touches the network — the `vendor/`
 constraint holds all the way through image inlining and lint. `publish/`
-is the one place jimemo executes an external process (`wrangler` for
-the `cloudflare` backend, the configured command for the `command`
-backend), and only when a user explicitly runs `jimemo publish` or
-`jimemo publish setup`; `jimemo render` never imports `publish/`.
+is one of two places jimemo executes an external process — see
+`pdf.py` for the other — running `wrangler` for the `cloudflare`
+backend, or the configured command for the `command` backend, and only
+when a user explicitly runs `jimemo publish` or `jimemo publish setup`;
+`jimemo render` never imports `publish/`.
 
 **Chart security model:** a template that declares `charts` in its
 manifest lets `lint.py` reopen exactly one door it otherwise keeps

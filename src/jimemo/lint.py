@@ -396,9 +396,13 @@ class _Linter(HTMLParser):
     def __init__(
         self,
         charts_declared: bool,
-        chart_ids: FrozenSet[str] = frozenset(),
+        chart_ids: Optional[FrozenSet[str]] = frozenset(),
         allowed_scripts: Optional[List[str]] = None,
     ) -> None:
+        # chart_ids=None means "no declared-id constraint -- accept any
+        # well-formed init id" and is only meaningful in structural mode
+        # (lint_standalone is the one caller); lint_html always passes a
+        # real frozenset.
         super().__init__(convert_charrefs=True)
         self.charts_declared = charts_declared
         self.chart_ids = chart_ids
@@ -627,7 +631,7 @@ class _Linter(HTMLParser):
             )
             return
         chart_id, config_json = parsed
-        if chart_id not in self.chart_ids:
+        if self.chart_ids is not None and chart_id not in self.chart_ids:
             self.errors.append(
                 f"chart init <script> references chart id {chart_id!r}, "
                 "which the manifest does not declare"
@@ -923,4 +927,35 @@ def lint_html(
     if size > MAX_OUTPUT_BYTES:
         warnings.append(f"output is {size} bytes, over the {MAX_OUTPUT_BYTES}-byte guideline")
 
+    return errors, warnings
+
+
+def lint_standalone(html: str) -> Tuple[List[str], List[str]]:
+    """Lint `html` with no render context -- no manifest, no
+    renderer-emitted script list; ``(errors, warnings)``.
+
+    The self-containment gate for files jimemo did not just render: a
+    hand-tweaked draft handed to `jimemo check`, `jimemo pdf`, or
+    `jimemo publish`. Resource references are held to the same
+    allowlist as lint_html. Inline scripts are judged structurally with
+    chart_ids=None (any well-formed init id): each body must be the
+    vendored Chart.js library byte-for-byte, or a chart_init_js-shaped
+    init whose config argument parses as pure JSON data. What this
+    cannot check without a manifest: that the scripts are the ones a
+    particular template would have emitted, or that every chart has a
+    matching <canvas> -- the standalone mode's accepted limit.
+    """
+    linter = _Linter(
+        charts_declared=True, chart_ids=None, allowed_scripts=None
+    )
+    linter.feed(html)
+    linter.close()
+
+    errors, warnings = linter.errors, linter.warnings
+
+    size = len(html.encode("utf-8"))
+    if size > MAX_OUTPUT_BYTES:
+        warnings.append(
+            f"output is {size} bytes, over the {MAX_OUTPUT_BYTES}-byte guideline"
+        )
     return errors, warnings

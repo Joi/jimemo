@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo._paths import CHARTJS_BUNDLE
 from jimemo.charts import chart_lib_inline_text
-from jimemo.lint import MAX_OUTPUT_BYTES, lint_html
+from jimemo.lint import MAX_OUTPUT_BYTES, lint_html, lint_standalone
 
 
 def test_clean_html_has_no_errors_or_warnings():
@@ -1173,3 +1173,67 @@ def test_realistic_chart_page_lib_first_bare_scripts_canvas_per_chart_passes():
         html, manifest, allowed_scripts=[lib, INIT_SALES, INIT_TREND]
     )
     assert errors == []
+
+
+def test_standalone_clean_chartless_page_passes():
+    html = "<!doctype html><html><body><p>hello</p></body></html>"
+    errors, warnings = lint_standalone(html)
+    assert errors == []
+    assert warnings == []
+
+
+def test_standalone_remote_image_fails():
+    html = '<html><body><img src="https://cdn.example/x.png"></body></html>'
+    errors, warnings = lint_standalone(html)
+    assert any("https://cdn.example/x.png" in e for e in errors)
+
+
+def test_standalone_script_src_fails():
+    html = '<html><body><script src="https://evil.example/x.js"></script></body></html>'
+    errors, warnings = lint_standalone(html)
+    assert any("script" in e for e in errors)
+
+
+def test_standalone_arbitrary_inline_script_fails():
+    html = "<html><body><script>alert(1)</script></body></html>"
+    errors, warnings = lint_standalone(html)
+    assert any("unexpected inline" in e for e in errors)
+
+
+def test_standalone_genuine_chart_page_passes():
+    # The exact two script shapes the renderer emits: the vendored
+    # library and a chart_init_js-shaped init. Standalone mode has no
+    # manifest, so ANY well-formed init id must be accepted.
+    lib = chart_lib_inline_text(CHARTJS_BUNDLE)
+    html = (
+        "<html><body>"
+        f"<script>{lib}</script>"
+        '<canvas id="tweaked-chart"></canvas>'
+        '<script>new Chart(document.getElementById("tweaked-chart"), '
+        '{"type": "bar"});</script>'
+        "</body></html>"
+    )
+    errors, warnings = lint_standalone(html)
+    assert errors == []
+
+
+def test_standalone_init_with_non_json_config_fails():
+    html = (
+        "<html><body>"
+        '<script>new Chart(document.getElementById("x"), fetch("/steal"));'
+        "</script></body></html>"
+    )
+    errors, warnings = lint_standalone(html)
+    assert errors != []
+
+
+def test_lint_html_still_rejects_undeclared_chart_id():
+    # Regression pin: the manifest-backed path keeps its declared-id
+    # check even though standalone mode relaxes it.
+    html = (
+        "<html><body>"
+        '<script>new Chart(document.getElementById("rogue"), {});</script>'
+        "</body></html>"
+    )
+    errors, warnings = lint_html(html, {"charts": ["bar-chart"]})
+    assert any("does not declare" in e for e in errors)
