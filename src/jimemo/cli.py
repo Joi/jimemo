@@ -98,6 +98,34 @@ def cmd_doctor(args) -> int:
     else:
         print("ok   suitability labels fresh (or none recorded)")
 
+    # PDF browser is optional, like publish: report, never FAIL. Reading
+    # config.toml needs vendored tomli, so with failed checksums only
+    # auto-detection runs (same gate as the vendored-imports step above).
+    # jimemo.errors and jimemo.pdf are stdlib-only, safe pre-checksum-gate.
+    from .errors import ConfigError, PdfError
+    from .pdf import find_browser
+
+    if problems:
+        configured = None
+    else:
+        try:
+            configured = _configured_browser()
+        except ConfigError as e:
+            print(f"WARNING pdf config: {e}")
+            configured = None
+    try:
+        browser = find_browser(configured)
+    except PdfError as e:
+        print(f"WARNING pdf: {e}")
+        browser = None
+    if browser:
+        print(f"ok   pdf browser ({browser})")
+    else:
+        print(
+            "info pdf browser not found (jimemo pdf unavailable; install "
+            "Chrome/Chromium or set [pdf] browser in ~/.jimemo/config.toml)"
+        )
+
     return 0 if ok else 1
 
 

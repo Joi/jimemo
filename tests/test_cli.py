@@ -591,3 +591,25 @@ def test_publish_non_html_passes_through_unverified(tmp_path, monkeypatch, capsy
 
     assert main(["publish", str(f)]) == 0
     assert fake.published == [f]
+
+
+def test_doctor_reports_pdf_browser_found(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.setattr(
+        "jimemo.pdf.find_browser", lambda configured=None, **kw: "/usr/bin/chromium"
+    )
+    assert main(["doctor"]) == 0
+    assert "ok   pdf browser (/usr/bin/chromium)" in capsys.readouterr().out
+
+
+def test_doctor_reports_pdf_browser_missing_without_failing(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.setattr(
+        "jimemo.pdf.find_browser", lambda configured=None, **kw: None
+    )
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "info pdf browser not found" in out
+    assert "jimemo pdf unavailable" in out
