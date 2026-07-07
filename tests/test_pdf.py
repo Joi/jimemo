@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from subprocess import CompletedProcess, TimeoutExpired
 
 import pytest
 
@@ -63,116 +62,190 @@ def test_no_browser_message_names_the_config_key():
 from jimemo.pdf import TIMEOUT_SECONDS, render_pdf
 
 
-class FakeRunner:
-    """Records every argv. Unless told otherwise, writes fake bytes to
-    the --print-to-pdf target so render_pdf's output-exists check
-    passes -- the same observable a real browser run produces."""
+class FakeProcess:
+    """Scripted stand-in for subprocess.Popen: `poll_returns` yields per
+    poll() call (None = still running); kill() is recorded."""
 
-    def __init__(self, result, write_pdf=True):
+    def __init__(self, poll_returns):
+        self._poll_returns = list(poll_returns)
+        self.killed = False
+
+    def poll(self):
+        if len(self._poll_returns) == 1:
+            return self._poll_returns[0]
+        return self._poll_returns.pop(0)
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+class FakeLauncher:
+    """Records argv and the print copy's content at launch time, writes
+    scripted bytes to the --print-to-pdf target, and returns a scripted
+    FakeProcess."""
+
+    def __init__(self, process, pdf_bytes=b"%PDF-1.4 fake"):
         self.calls = []
-        self._result = result
-        self._write_pdf = write_pdf
+        self.copy_contents = []
+        self._process = process
+        self._pdf_bytes = pdf_bytes
+        self.log_handle = None
 
-    def __call__(self, argv):
+    def __call__(self, argv, log_handle):
         self.calls.append(argv)
-        if self._write_pdf:
-            for arg in argv:
-                if arg.startswith("--print-to-pdf="):
-                    Path(arg.split("=", 1)[1]).write_bytes(b"%PDF-1.4 fake")
-        return self._result
+        self.log_handle = log_handle
+        target = next(a for a in argv if a.startswith("file://"))
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
 
-
-def _ok_result():
-    return CompletedProcess([], 0, stdout="", stderr="")
+        copy_path = Path(url2pathname(urlparse(target).path))
+        self.copy_contents.append(copy_path.read_text(encoding="utf-8"))
+        if self._pdf_bytes is not None:
+            for a in argv:
+                if a.startswith("--print-to-pdf="):
+                    Path(a.split("=", 1)[1]).write_bytes(self._pdf_bytes)
+        return self._process
 
 
 def test_render_pdf_builds_expected_argv(tmp_path):
     html = tmp_path / "page.html"
     html.write_text("<html></html>")
     pdf = tmp_path / "page.pdf"
-    runner = FakeRunner(_ok_result())
+    launcher = FakeLauncher(FakeProcess([0]))
 
-    render_pdf(html, pdf, "/usr/bin/chromium", runner=runner)
+    render_pdf(html, pdf, "/usr/bin/chromium", launcher=launcher)
 
-    (argv,) = runner.calls
+    (argv,) = launcher.calls
     assert argv[0] == "/usr/bin/chromium"
     assert "--headless" in argv
     assert "--disable-gpu" in argv
     assert "--no-first-run" in argv
     assert "--no-default-browser-check" in argv
+    assert "--disable-background-networking" in argv
+    assert "--disable-component-update" in argv
     assert "--virtual-time-budget=10000" in argv
     assert "--no-pdf-header-footer" in argv
     assert f"--print-to-pdf={pdf.resolve()}" in argv
-    assert argv[-1] == html.resolve().as_uri()
     assert any(a.startswith("--user-data-dir=") for a in argv)
+    assert argv[-1].startswith("file://")
+    assert Path(argv[-1][len("file://") :]).name != html.name
 
 
-def test_render_pdf_uses_throwaway_profile_and_cleans_it_up(tmp_path):
+def test_render_pdf_prints_a_no_animation_copy_not_the_original(tmp_path):
     html = tmp_path / "page.html"
-    html.write_text("<html></html>")
-    runner = FakeRunner(_ok_result())
-
-    render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", runner=runner)
-
-    (argv,) = runner.calls
-    profile = next(a for a in argv if a.startswith("--user-data-dir="))
-    profile_dir = Path(profile.split("=", 1)[1])
-    assert not profile_dir.exists()
-
-
-def test_render_pdf_creates_output_parent_dir(tmp_path):
-    html = tmp_path / "page.html"
-    html.write_text("<html></html>")
-    pdf = tmp_path / "sub" / "dir" / "page.pdf"
-
-    render_pdf(html, pdf, "/usr/bin/chromium", runner=FakeRunner(_ok_result()))
-
-    assert pdf.is_file()
-
-
-def test_render_pdf_nonzero_exit_raises(tmp_path):
-    html = tmp_path / "page.html"
-    html.write_text("<html></html>")
-    runner = FakeRunner(
-        CompletedProcess([], 21, stdout="", stderr="something broke\n"),
-        write_pdf=False,
+    original = (
+        "<html><body><script>LIB</script><canvas id=\"x\"></canvas></body></html>"
     )
+    html.write_text(original)
+    launcher = FakeLauncher(FakeProcess([0]))
+
+    render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", launcher=launcher)
+
+    (copy_content,) = launcher.copy_contents
+    assert (
+        copy_content.count(
+            "window.Chart && (Chart.defaults.animation = false)"
+        )
+        == 1
+    )
+    assert html.read_text() == original
+
+
+def test_render_pdf_scriptless_page_prints_unmodified_copy(tmp_path):
+    html = tmp_path / "page.html"
+    original = "<html><body><p>no scripts here</p></body></html>"
+    html.write_text(original)
+    launcher = FakeLauncher(FakeProcess([0]))
+
+    render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", launcher=launcher)
+
+    (copy_content,) = launcher.copy_contents
+    assert copy_content == original
+
+
+def test_render_pdf_cleans_up_print_copy(tmp_path):
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    launcher = FakeLauncher(FakeProcess([0]))
+
+    render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", launcher=launcher)
+
+    assert list(tmp_path.glob(".jimemo-pdf-*")) == []
+
+
+def test_render_pdf_kills_lingering_browser_once_pdf_is_stable(tmp_path):
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    process = FakeProcess([None] * 50)
+    launcher = FakeLauncher(process)
+
+    render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", launcher=launcher)
+
+    assert process.killed is True
+
+
+def test_render_pdf_timeout_with_no_pdf_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr("jimemo.pdf.TIMEOUT_SECONDS", 0.6)
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    process = FakeProcess([None] * 50)
+    launcher = FakeLauncher(process, pdf_bytes=None)
 
     with pytest.raises(PdfError) as exc_info:
-        render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", runner=runner)
+        render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", launcher=launcher)
+    assert "no PDF within" in str(exc_info.value)
+    assert process.killed is True
+
+
+def test_render_pdf_nonzero_exit_raises_with_log_tail(tmp_path):
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+
+    class LoggingLauncher(FakeLauncher):
+        def __call__(self, argv, log_handle):
+            log_handle.write("something broke\n")
+            return super().__call__(argv, log_handle)
+
+    launcher = LoggingLauncher(FakeProcess([21]), pdf_bytes=None)
+
+    with pytest.raises(PdfError) as exc_info:
+        render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", launcher=launcher)
     assert "21" in str(exc_info.value)
     assert "something broke" in str(exc_info.value)
 
 
-def test_render_pdf_missing_output_raises(tmp_path):
+def test_render_pdf_exit_zero_but_no_pdf_raises(tmp_path):
     html = tmp_path / "page.html"
     html.write_text("<html></html>")
-    runner = FakeRunner(_ok_result(), write_pdf=False)
+    launcher = FakeLauncher(FakeProcess([0]), pdf_bytes=None)
 
     with pytest.raises(PdfError) as exc_info:
-        render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", runner=runner)
+        render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", launcher=launcher)
     assert "no PDF" in str(exc_info.value)
-
-
-def test_render_pdf_timeout_raises(tmp_path):
-    html = tmp_path / "page.html"
-    html.write_text("<html></html>")
-
-    def timeout_runner(argv):
-        raise TimeoutExpired(argv, TIMEOUT_SECONDS)
-
-    with pytest.raises(PdfError) as exc_info:
-        render_pdf(html, tmp_path / "page.pdf", "/usr/bin/chromium", runner=timeout_runner)
-    assert str(TIMEOUT_SECONDS) in str(exc_info.value)
 
 
 def test_render_pdf_unrunnable_browser_raises(tmp_path):
     html = tmp_path / "page.html"
     html.write_text("<html></html>")
 
-    def missing_runner(argv):
+    def missing_launcher(argv, log_handle):
         raise FileNotFoundError("no such file")
 
     with pytest.raises(PdfError) as exc_info:
-        render_pdf(html, tmp_path / "page.pdf", "/gone/chrome", runner=missing_runner)
+        render_pdf(html, tmp_path / "page.pdf", "/gone/chrome", launcher=missing_launcher)
     assert "/gone/chrome" in str(exc_info.value)
+    assert list(tmp_path.glob(".jimemo-pdf-*")) == []
+
+
+def test_render_pdf_creates_output_parent_dir(tmp_path):
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    pdf = tmp_path / "sub" / "dir" / "page.pdf"
+    launcher = FakeLauncher(FakeProcess([0]))
+
+    render_pdf(html, pdf, "/usr/bin/chromium", launcher=launcher)
+
+    assert pdf.is_file()

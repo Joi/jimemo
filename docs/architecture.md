@@ -25,8 +25,10 @@ contract in detail.
     (the gate behind `check`, `pdf`, and `publish`).
   - `pdf.py` — `find_browser`/`render_pdf`: converts a rendered page to
     PDF by running a locally installed Chromium-family browser headless
-    (Chart.js needs a real JS engine), through the same injectable-runner
-    containment as the Wrangler seam; `PdfError` on any failure.
+    (Chart.js needs a real JS engine), through the same injectable-launcher
+    containment as the Wrangler seam; the browser is not trusted to exit,
+    so the output file is polled until it stabilizes and any lingering
+    process is killed; `PdfError` on any failure.
   - `sanitize.py` — `sanitize_html`: stdlib allowlist sanitizer for
     markdown-rendered slot content (untrusted input may carry raw HTML).
   - `charts.py` — `build_chart_config`/`serialize_chart_config`: builds
