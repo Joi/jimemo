@@ -544,6 +544,45 @@ def test_render_without_pdf_never_touches_the_browser_seam(tmp_path, monkeypatch
     assert out.is_file()
 
 
+def test_render_pdf_flag_value_must_end_in_dot_pdf(tmp_path, monkeypatch, capsys):
+    """argparse's nargs='?' --pdf silently swallows the next positional
+    as its value when --pdf appears before the positionals: `jimemo
+    render --pdf briefing content.md` parses as --pdf=briefing and then
+    dies with a baffling "content" required-argument error. A value
+    that doesn't end in .pdf is never a real intended path, so reject
+    it with a clear, actionable message instead."""
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    _fake_pdf_seam(monkeypatch)
+    out = tmp_path / "x.html"
+
+    assert main([
+        "render", "briefing", str(BRIEFING_SAMPLE),
+        "-o", str(out), "--pdf", "notapdf.txt",
+    ]) == 2
+
+    err = capsys.readouterr().err
+    assert "--pdf" in err
+    assert ".pdf" in err
+
+
+def test_render_pdf_flag_before_positionals_with_real_path_works(tmp_path, monkeypatch, capsys):
+    """Pins the fix's other side: --pdf PATH.pdf placed BEFORE the
+    positionals (a real, well-formed path) must still work -- the new
+    validation only rejects values that don't end in .pdf, not every
+    --pdf-before-positionals invocation."""
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    out = tmp_path / "out.pdf"
+    html_out = tmp_path / "x.html"
+
+    assert main([
+        "render", "--pdf", str(out),
+        "briefing", str(BRIEFING_SAMPLE), "-o", str(html_out),
+    ]) == 0
+
+    assert calls == [(html_out, out, "/usr/bin/chromium")]
+
+
 def test_render_pdf_flag_refuses_content_file_as_pdf_target(tmp_path, monkeypatch, capsys):
     """--pdf can point anywhere, including (by accident) at the content
     file being rendered. That must be refused before any conversion --

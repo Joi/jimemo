@@ -145,6 +145,23 @@ def _do_render(template_dir: Path, content_path: Path, args) -> int:
     from .render import render_page, write_output
 
     out_path = Path(args.out) if args.out else Path("dist") / f"{content_path.stem}.html"
+
+    # --pdf has nargs='?': when it appears BEFORE the positionals, argparse
+    # greedily consumes the very next token as its value unless that token
+    # looks like another option string. `jimemo render --pdf briefing
+    # content.md` therefore parses as --pdf=briefing, swallowing the
+    # template positional, and dies with a baffling "content is required"
+    # error instead of a message about --pdf. A real --pdf path always ends
+    # in .pdf, so reject anything that doesn't -- this also gives a clear
+    # error for every other swallowed-positional shape, not just this one.
+    if isinstance(args.pdf, str) and not args.pdf.lower().endswith(".pdf"):
+        print(
+            f"--pdf got {args.pdf!r}, which does not end in .pdf -- for a "
+            "bare --pdf place it after the positionals (or write --pdf=PATH)",
+            file=sys.stderr,
+        )
+        return 2
+
     pdf_only = out_path.suffix.lower() == ".pdf"
     if pdf_only and args.pdf is not None:
         print(
@@ -715,8 +732,8 @@ def main(argv=None) -> int:
     render_p.add_argument(
         "--pdf", nargs="?", const=True, default=None, metavar="PATH",
         help="also write a PDF (default: the HTML output path with .pdf); "
-        "needs a local Chromium-family browser. To write ONLY a PDF, use "
-        "-o with a .pdf extension instead",
+        "needs a local Chromium-family browser. PATH must end in .pdf. To "
+        "write ONLY a PDF, use -o with a .pdf extension instead",
     )
 
     info_p = sub.add_parser("info", help="show a template's manifest and suitability")
