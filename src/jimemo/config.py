@@ -13,6 +13,9 @@ Schema::
     kv_namespace_id = "..."
     base_url = "https://<project>.pages.dev"
 
+    [pdf]                             # optional; all keys optional
+    browser = "/path/to/chromium"     # else jimemo pdf auto-detects
+
 Parsed with the vendored ``tomli`` reader (see ``_vendor.py``): jimemo's
 Python floor is 3.9, and the stdlib ``tomllib`` module only ships from
 3.11 onward.
@@ -71,8 +74,14 @@ class PublishConfig:
 
 
 @dataclass
+class PdfConfig:
+    browser: Optional[str] = None
+
+
+@dataclass
 class Config:
     publish: Optional[PublishConfig] = None
+    pdf: Optional[PdfConfig] = None
 
 
 def config_path() -> Path:
@@ -114,7 +123,16 @@ def load_config(path: Optional[Path] = None) -> Config:
             f'followed by "backend = ..."), got {type(publish_data).__name__}'
         )
     publish = _parse_publish(publish_data, cfg_path) if publish_data is not None else None
-    return Config(publish=publish)
+
+    pdf_data = data.get("pdf")
+    if pdf_data is not None and not isinstance(pdf_data, dict):
+        raise ConfigError(
+            f'{cfg_path}: [pdf] must be a table (e.g. "[pdf]" followed by '
+            f'"browser = ..."), got {type(pdf_data).__name__}'
+        )
+    pdf = _parse_pdf(pdf_data, cfg_path) if pdf_data is not None else None
+
+    return Config(publish=publish, pdf=pdf)
 
 
 def _parse_publish(data: Dict[str, Any], cfg_path: Path) -> PublishConfig:
@@ -190,3 +208,13 @@ def _parse_publish(data: Dict[str, Any], cfg_path: Path) -> PublishConfig:
         backend=backend,
         cloudflare=CloudflareConfig(**{field: cf[field] for field in _CLOUDFLARE_FIELDS}),
     )
+
+
+def _parse_pdf(data: Dict[str, Any], cfg_path: Path) -> PdfConfig:
+    browser = data.get("browser")
+    if browser is not None and (not isinstance(browser, str) or not browser):
+        raise ConfigError(
+            f'{cfg_path}: [pdf].browser must be a non-empty string path '
+            f'(e.g. "/usr/bin/chromium"), got {browser!r}'
+        )
+    return PdfConfig(browser=browser)
