@@ -440,3 +440,87 @@ def test_pdf_missing_input_file(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
     assert main(["pdf", str(tmp_path / "nope.html")]) == 1
     assert "not found" in capsys.readouterr().err
+
+
+REPO = Path(__file__).resolve().parents[1]
+BRIEFING_SAMPLE = REPO / "templates" / "briefing" / "sample" / "content.md"
+
+
+def test_render_pdf_flag_writes_both(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    out = tmp_path / "brief.html"
+
+    assert main(["render", "briefing", str(BRIEFING_SAMPLE), "-o", str(out), "--pdf"]) == 0
+
+    assert out.is_file()
+    assert calls == [(out, tmp_path / "brief.pdf", "/usr/bin/chromium")]
+    stdout = capsys.readouterr().out
+    assert f"wrote {out}" in stdout
+    assert f"wrote {tmp_path / 'brief.pdf'}" in stdout
+
+
+def test_render_pdf_flag_with_explicit_path(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    out = tmp_path / "brief.html"
+    pdf_out = tmp_path / "elsewhere" / "final.pdf"
+
+    assert main([
+        "render", "briefing", str(BRIEFING_SAMPLE),
+        "-o", str(out), "--pdf", str(pdf_out),
+    ]) == 0
+    assert calls[0][1] == pdf_out
+
+
+def test_render_pdf_only_via_out_extension(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    out = tmp_path / "brief.pdf"
+
+    assert main(["render", "briefing", str(BRIEFING_SAMPLE), "-o", str(out)]) == 0
+
+    assert out.is_file()
+    assert not (tmp_path / "brief.html").exists()
+    # The intermediate HTML lived in a temp dir, not next to the PDF.
+    intermediate_html = calls[0][0]
+    assert intermediate_html.parent != tmp_path
+    assert not intermediate_html.exists()
+
+
+def test_render_pdf_only_conflicts_with_pdf_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    _fake_pdf_seam(monkeypatch)
+    out = tmp_path / "brief.pdf"
+
+    assert main([
+        "render", "briefing", str(BRIEFING_SAMPLE), "-o", str(out), "--pdf",
+    ]) == 2
+    assert "--pdf" in capsys.readouterr().err
+
+
+def test_render_pdf_fails_closed_before_rendering_without_browser(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.setattr(
+        "jimemo.pdf.find_browser", lambda configured=None, **kw: None
+    )
+    out = tmp_path / "brief.html"
+
+    assert main(["render", "briefing", str(BRIEFING_SAMPLE), "-o", str(out), "--pdf"]) == 1
+
+    assert not out.exists()  # refused whole invocation, wrote nothing
+    assert "[pdf]" in capsys.readouterr().err
+
+
+def test_render_without_pdf_never_touches_the_browser_seam(tmp_path, monkeypatch):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+
+    def boom(*a, **kw):
+        raise AssertionError("find_browser must not be called")
+
+    monkeypatch.setattr("jimemo.pdf.find_browser", boom)
+    out = tmp_path / "brief.html"
+    assert main(["render", "briefing", str(BRIEFING_SAMPLE), "-o", str(out)]) == 0
+    assert out.is_file()

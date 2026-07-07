@@ -117,6 +117,36 @@ def _do_render(template_dir: Path, content_path: Path, args) -> int:
     from .render import render_page, write_output
 
     out_path = Path(args.out) if args.out else Path("dist") / f"{content_path.stem}.html"
+    pdf_only = out_path.suffix.lower() == ".pdf"
+    if pdf_only and args.pdf is not None:
+        print(
+            "-o already ends in .pdf (PDF-only mode); --pdf conflicts with it",
+            file=sys.stderr,
+        )
+        return 2
+
+    pdf_path = None
+    if pdf_only:
+        pdf_path = out_path
+    elif args.pdf is not None:
+        pdf_path = out_path.with_suffix(".pdf") if args.pdf is True else Path(args.pdf)
+
+    browser = None
+    if pdf_path is not None:
+        # Resolve the browser BEFORE rendering: a missing browser must
+        # refuse the whole invocation, not print half a success.
+        from .errors import ConfigError, PdfError
+        from .pdf import NO_BROWSER_MESSAGE, find_browser
+
+        try:
+            browser = find_browser(_configured_browser())
+        except (ConfigError, PdfError) as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        if browser is None:
+            print(NO_BROWSER_MESSAGE, file=sys.stderr)
+            return 1
+
     try:
         manifest = load_manifest(template_dir)
         content = load_content(content_path, manifest)
@@ -126,15 +156,48 @@ def _do_render(template_dir: Path, content_path: Path, args) -> int:
             args.theme,
             base_dir=content_path.resolve().parent,
         )
-        write_output(html, out_path)
     except (ManifestError, ContentError) as e:
         print(str(e), file=sys.stderr)
         return 1
 
-    print(f"wrote {out_path}")
+    if pdf_only:
+        import tempfile
+
+        from .errors import PdfError
+        from .pdf import render_pdf
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="jimemo-render-pdf-") as tmp:
+                tmp_html = Path(tmp) / (out_path.stem + ".html")
+                write_output(html, tmp_html)
+                render_pdf(tmp_html, out_path, browser)
+        except (ContentError, PdfError) as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print(f"wrote {out_path}")
+        final_path = out_path
+    else:
+        try:
+            write_output(html, out_path)
+        except ContentError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print(f"wrote {out_path}")
+        final_path = out_path
+        if pdf_path is not None:
+            from .errors import PdfError
+            from .pdf import render_pdf
+
+            try:
+                render_pdf(out_path, pdf_path, browser)
+            except PdfError as e:
+                print(str(e), file=sys.stderr)
+                return 1
+            print(f"wrote {pdf_path}")
+            final_path = pdf_path
 
     if args.open:
-        webbrowser.open(out_path.resolve().as_uri())
+        webbrowser.open(final_path.resolve().as_uri())
 
     return 0
 
@@ -597,6 +660,12 @@ def main(argv=None) -> int:
         "~/.jimemo/themes/ -- see 'jimemo import-design')",
     )
     render_p.add_argument("--open", action="store_true", help="open the result in a browser")
+    render_p.add_argument(
+        "--pdf", nargs="?", const=True, default=None, metavar="PATH",
+        help="also write a PDF (default: the HTML output path with .pdf); "
+        "needs a local Chromium-family browser. To write ONLY a PDF, use "
+        "-o with a .pdf extension instead",
+    )
 
     info_p = sub.add_parser("info", help="show a template's manifest and suitability")
     info_p.add_argument("template", help="template name")
