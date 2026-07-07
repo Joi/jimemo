@@ -82,6 +82,20 @@ skipped and why) to stderr — read that if the result looks wrong. The
 output is always one self-contained HTML file: CSS and images inlined,
 nothing fetched at view time. Nothing further needs bundling to share it.
 
+### 4b. Iterate locally (draft mode)
+
+The rendered file is the draft: open it, tweak the HTML directly, or
+edit the content file and re-render (re-rendering overwrites hand
+tweaks). Before finishing, re-verify a hand-tweaked file:
+
+```
+jimemo check out.html
+```
+
+It re-runs the self-containment lint without needing the template.
+`jimemo pdf` and `jimemo publish` run the same check themselves and
+refuse on violations (`--no-verify` skips).
+
 ### 5. Optionally publish
 
 ```
@@ -93,6 +107,11 @@ Prints an unlisted URL. Requires a backend configured in
 `--dry-run` to preview without writing anything) if none is configured
 yet. `jimemo publish purge <hash-or-url>` revokes a link;
 `jimemo publish list` / `jimemo publish gc` manage what's published.
+
+For a PDF instead of or alongside the page: `jimemo pdf out.html`
+(after the fact), `jimemo render ... --pdf` (both), or
+`jimemo render ... -o out.pdf` (PDF only). Requires a locally installed
+Chromium-family browser; `jimemo doctor` reports whether one was found.
 
 ## Brand themes (optional)
 

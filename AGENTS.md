@@ -40,10 +40,12 @@ Every subcommand has its own `--help`; this is the map, not the manual.
 | `jimemo list` | lists installed templates (repo `templates/` + `~/.jimemo/templates/`) |
 | `jimemo suggest <content> [--json]` | ranks templates by fit for a content file, with reasons |
 | `jimemo info <template> [--json]` | shows a template's slot schema, components, charts, and suitability metadata |
-| `jimemo render <template\|auto> <content> [-o OUT] [--theme NAME] [--open]` | renders a template + content file to one HTML file; `auto` uses the same scorer as `suggest` and falls through to the next-best template if the top pick's manifest rejects the content |
+| `jimemo render <template\|auto> <content> [-o OUT] [--theme NAME] [--open] [--pdf [PATH]]` | renders a template + content file to one HTML file; `auto` uses the same scorer as `suggest` and falls through to the next-best template if the top pick's manifest rejects the content; `-o` ending in `.pdf` writes only a PDF |
+| `jimemo check <file.html>` | verifies a rendered (possibly hand-tweaked) HTML file still meets the self-contained guarantee |
+| `jimemo pdf <file.html> [-o OUT] [--no-verify]` | converts a rendered HTML file to PDF via a locally installed Chromium-family browser (Chrome, Chromium, Edge, Brave; override with `[pdf] browser` in `~/.jimemo/config.toml`) |
 | `jimemo new-template <name>` | scaffolds a personal template under `~/.jimemo/templates/<name>/` |
 | `jimemo import-design <export-dir>\|--from NAME [--name NAME] [--embed-fonts]` | parses a Claude-design export into a jimemo theme at `~/.jimemo/themes/<name>.css`; `--from NAME` resolves `~/.jimemo/design-systems/NAME/` instead of a positional path |
-| `jimemo publish <file>` / `purge <hash-or-url>` / `list` / `gc` / `setup [--dry-run]` | publishes a rendered file to an unlisted link and manages it; `setup` provisions a backend in `~/.jimemo/config.toml` |
+| `jimemo publish <file>` / `purge <hash-or-url>` / `list` / `gc` / `setup [--dry-run]` | publishes a rendered file to an unlisted link and manages it; HTML files are re-verified for self-containment first (`--no-verify` skips); `setup` provisions a backend in `~/.jimemo/config.toml` |
 
 ## The content contract
 
@@ -67,6 +69,23 @@ keyed by slot name — then hand it to `jimemo render`.
   process; `jimemo render` never shells out or hits the network.
 - **Sanitized input.** Markdown-typed slot content is rendered through a
   stdlib allowlist sanitizer before it reaches the page.
+
+## The draft loop
+
+A rendered page is an ordinary HTML file: tweak it directly (or edit the
+content file and re-render — that overwrites hand-tweaks), then finish:
+
+```
+jimemo render auto brief.md -o draft.html --open
+jimemo check draft.html          # verify self-containment mid-iteration
+jimemo pdf draft.html            # -> draft.pdf (verifies first)
+jimemo publish draft.html        # verifies, then posts the unlisted URL
+```
+
+`pdf` and `publish` re-run the same self-containment check on HTML input
+and refuse on violations; `--no-verify` skips it. PDF conversion runs a
+local headless Chromium-family browser because charts are Chart.js —
+JavaScript a PDF library cannot execute.
 
 ## Design systems are bring-your-own
 

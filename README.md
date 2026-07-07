@@ -136,6 +136,37 @@ object keyed by slot name — see any `templates/<name>/sample/` for a real
 example. `out.html` is a single file: CSS and images inlined, nothing
 fetched at view time; open it directly in a browser.
 
+Add `--pdf [PATH]` to also write a PDF (default: the HTML path with
+`.pdf` swapped in), or give `-o` a `.pdf` extension instead for PDF
+only — no HTML file gets written. Both need a locally installed
+Chromium-family browser; see "The draft loop" below.
+
+### The draft loop
+
+`out.html` is an ordinary file: open it, tweak it directly, or edit the
+content file and re-render (re-rendering overwrites hand tweaks).
+Before finishing, re-verify a hand-tweaked file, convert it, and
+publish it:
+
+```
+$ jimemo check out.html
+ok out.html
+
+$ jimemo pdf out.html
+wrote out.pdf
+
+$ jimemo publish out.html
+https://notes.example.com/3f9a1c.../
+```
+
+`check` re-runs the self-containment lint with no template involved.
+`pdf` and `publish` run the same check on HTML input first and refuse
+on violations (`--no-verify` skips it); `pdf` then converts through a
+locally installed Chromium-family browser (Chrome, Chromium, Edge, or
+Brave) since charts are Chart.js — JavaScript a PDF library can't run.
+`jimemo doctor` reports whether one was found. See "Publish" below for
+backend setup.
+
 ### Charts
 
 `chart-dashboard` renders headline stat tiles plus a line and a bar
@@ -264,7 +295,9 @@ link, mirroring notes.ito.com's model: a 24-hex-char hash path is the
 access control (`secrets.token_hex(12)`, ~96 bits, unguessable), reading
 and purging use the same URL, and purging tombstones a hash rather than
 deleting it outright. Configure exactly one backend in
-`~/.jimemo/config.toml`.
+`~/.jimemo/config.toml`. The same file takes an optional `[pdf] browser`
+key naming a specific Chromium-family binary, for when `jimemo pdf` /
+`--pdf` can't auto-detect one already on the machine.
 
 ### `command` backend — you already run a publish site
 

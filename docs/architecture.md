@@ -21,7 +21,12 @@ contract in detail.
     `<img src>` references into data URIs.
   - `lint.py` — `lint_html`: post-render static checks (no remote
     fetches, no scripts unless the template declares charts, output
-    size).
+    size). `lint_standalone` re-checks a file with no render context
+    (the gate behind `check`, `pdf`, and `publish`).
+  - `pdf.py` — `find_browser`/`render_pdf`: converts a rendered page to
+    PDF by running a locally installed Chromium-family browser headless
+    (Chart.js needs a real JS engine), through the same injectable-runner
+    containment as the Wrangler seam; `PdfError` on any failure.
   - `sanitize.py` — `sanitize_html`: stdlib allowlist sanitizer for
     markdown-rendered slot content (untrusted input may carry raw HTML).
   - `charts.py` — `build_chart_config`/`serialize_chart_config`: builds
