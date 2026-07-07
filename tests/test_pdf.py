@@ -54,6 +54,27 @@ def test_find_browser_returns_none_when_nothing_found():
     assert find_browser(None, which=no_which, exists=no_exists) is None
 
 
+def test_find_browser_finds_edge_by_linux_path_name():
+    """NO_BROWSER_MESSAGE and the docs promise Edge as a supported
+    browser, but _PATH_NAMES only listed chromium/chrome names -- an
+    Edge install on Linux (microsoft-edge / microsoft-edge-stable on
+    PATH) was invisible to auto-detection."""
+    hits = {"microsoft-edge": "/usr/bin/microsoft-edge"}
+    assert (
+        find_browser(None, which=hits.get, exists=no_exists)
+        == "/usr/bin/microsoft-edge"
+    )
+
+
+def test_find_browser_finds_brave_by_linux_path_name():
+    """Same gap for Brave (brave-browser on PATH on Linux)."""
+    hits = {"brave-browser": "/usr/bin/brave-browser"}
+    assert (
+        find_browser(None, which=hits.get, exists=no_exists)
+        == "/usr/bin/brave-browser"
+    )
+
+
 def test_no_browser_message_names_the_config_key():
     assert "[pdf]" in NO_BROWSER_MESSAGE
     assert "config.toml" in NO_BROWSER_MESSAGE

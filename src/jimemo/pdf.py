@@ -85,6 +85,10 @@ _PATH_NAMES = (
     "google-chrome",
     "google-chrome-stable",
     "chrome",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "brave-browser",
+    "brave",
 )
 
 _MACOS_BUNDLES = (
