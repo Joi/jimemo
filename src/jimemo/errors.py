@@ -34,3 +34,9 @@ class DesignImportError(Exception):
     """A Claude-design export's manifest/token CSS is missing, malformed,
     or contains a token value that isn't safe to drop into generated
     theme CSS (see jimemo.design.reader)."""
+
+
+class PdfError(Exception):
+    """A configured pdf browser path does not exist; or a headless
+    browser invocation failed, timed out, or produced no PDF (see
+    jimemo.pdf)."""
