@@ -139,6 +139,46 @@ def _do_render(template_dir: Path, content_path: Path, args) -> int:
     return 0
 
 
+def _configured_browser():
+    """The [pdf] browser value from config.toml, or None when no config
+    file exists (auto-detect). A present-but-invalid config raises
+    ConfigError -- a typo'd config must fail loudly, not silently fall
+    back to auto-detection."""
+    from .config import config_path, load_config
+
+    path = config_path()
+    if not path.is_file():
+        return None
+    cfg = load_config(path)
+    return cfg.pdf.browser if cfg.pdf else None
+
+
+def _verify_html(html_path: Path, action: str) -> bool:
+    """lint_standalone gate for the finishing commands (pdf, publish):
+    prints warnings either way; on errors lists them plus the
+    --no-verify escape and returns False."""
+    from .lint import lint_standalone
+
+    try:
+        html = html_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"cannot read {html_path}: {e}", file=sys.stderr)
+        return False
+    errors, warnings = lint_standalone(html)
+    for w in warnings:
+        print(f"warning: {w}", file=sys.stderr)
+    if errors:
+        for e in errors:
+            print(f"error: {e}", file=sys.stderr)
+        print(
+            f"refusing to {action}: the file no longer meets jimemo's "
+            "self-contained guarantee (--no-verify skips this check)",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def cmd_render(args) -> int:
     content_path = Path(args.content)
     templates = find_templates(default_search_dirs())
@@ -281,6 +321,37 @@ def cmd_check(args) -> int:
             print(f"error: {e}", file=sys.stderr)
         return 1
     print(f"ok {path}")
+    return 0
+
+
+def cmd_pdf(args) -> int:
+    from .errors import ConfigError, PdfError
+    from .pdf import NO_BROWSER_MESSAGE, find_browser, render_pdf
+
+    html_path = Path(args.file)
+    if not html_path.is_file():
+        print(f"file not found: {html_path}", file=sys.stderr)
+        return 1
+    out_path = Path(args.out) if args.out else html_path.with_suffix(".pdf")
+
+    if not args.no_verify and not _verify_html(html_path, "convert"):
+        return 1
+
+    try:
+        browser = find_browser(_configured_browser())
+    except (ConfigError, PdfError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    if browser is None:
+        print(NO_BROWSER_MESSAGE, file=sys.stderr)
+        return 1
+
+    try:
+        render_pdf(html_path, out_path, browser)
+    except PdfError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(f"wrote {out_path}")
     return 0
 
 
@@ -573,6 +644,20 @@ def main(argv=None) -> int:
     )
     check_p.add_argument("file", help="HTML file to verify")
 
+    pdf_p = sub.add_parser(
+        "pdf",
+        help="convert a rendered HTML file to PDF (needs a local "
+        "Chromium-family browser)",
+    )
+    pdf_p.add_argument("file", help="HTML file to convert")
+    pdf_p.add_argument(
+        "-o", "--out", help="output path (default: the input path with .pdf)"
+    )
+    pdf_p.add_argument(
+        "--no-verify", action="store_true",
+        help="skip the self-containment check before converting",
+    )
+
     publish_p = sub.add_parser(
         "publish", help="publish a rendered HTML file to an unlisted link"
     )
@@ -607,6 +692,8 @@ def main(argv=None) -> int:
         return cmd_suggest(args)
     if args.command == "check":
         return cmd_check(args)
+    if args.command == "pdf":
+        return cmd_pdf(args)
     if args.command == "publish":
         return cmd_publish(args)
 

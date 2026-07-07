@@ -357,3 +357,86 @@ def test_check_fails_file_with_remote_reference(tmp_path, capsys):
 def test_check_missing_file(tmp_path, capsys):
     assert main(["check", str(tmp_path / "nope.html")]) == 1
     assert "not found" in capsys.readouterr().err
+
+
+def _fake_pdf_seam(monkeypatch, browser="/usr/bin/chromium"):
+    """Stub jimemo.pdf's two entry points (cli imports them lazily
+    inside each handler, so patching the module attributes works) and
+    record render_pdf calls. No test launches a real browser."""
+    calls = []
+    monkeypatch.setattr(
+        "jimemo.pdf.find_browser", lambda configured=None, **kw: browser
+    )
+
+    def fake_render_pdf(html_path, pdf_path, browser_, runner=None):
+        calls.append((Path(html_path), Path(pdf_path), browser_))
+        Path(pdf_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(pdf_path).write_bytes(b"%PDF-1.4 fake")
+
+    monkeypatch.setattr("jimemo.pdf.render_pdf", fake_render_pdf)
+    return calls
+
+
+def test_pdf_default_output_path(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    f = tmp_path / "draft.html"
+    f.write_text(GOOD_PAGE)
+
+    assert main(["pdf", str(f)]) == 0
+
+    assert calls == [(f, tmp_path / "draft.pdf", "/usr/bin/chromium")]
+    assert f"wrote {tmp_path / 'draft.pdf'}" in capsys.readouterr().out
+
+
+def test_pdf_explicit_output_path(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    f = tmp_path / "draft.html"
+    f.write_text(GOOD_PAGE)
+    out = tmp_path / "final" / "brief.pdf"
+
+    assert main(["pdf", str(f), "-o", str(out)]) == 0
+    assert calls[0][1] == out
+
+
+def test_pdf_refuses_unverified_file(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    f = tmp_path / "draft.html"
+    f.write_text(BAD_PAGE)
+
+    assert main(["pdf", str(f)]) == 1
+
+    err = capsys.readouterr().err
+    assert "cdn.example" in err
+    assert "--no-verify" in err
+    assert calls == []
+
+
+def test_pdf_no_verify_skips_the_check(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    f = tmp_path / "draft.html"
+    f.write_text(BAD_PAGE)
+
+    assert main(["pdf", str(f), "--no-verify"]) == 0
+    assert len(calls) == 1
+
+
+def test_pdf_without_browser_fails_with_remedy(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.setattr(
+        "jimemo.pdf.find_browser", lambda configured=None, **kw: None
+    )
+    f = tmp_path / "draft.html"
+    f.write_text(GOOD_PAGE)
+
+    assert main(["pdf", str(f)]) == 1
+    assert "[pdf]" in capsys.readouterr().err
+
+
+def test_pdf_missing_input_file(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    assert main(["pdf", str(tmp_path / "nope.html")]) == 1
+    assert "not found" in capsys.readouterr().err
