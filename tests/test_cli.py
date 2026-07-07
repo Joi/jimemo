@@ -329,3 +329,31 @@ def test_publish_setup_without_dry_run_flag_defaults_false(monkeypatch):
 
     assert main(["publish", "setup"]) == 0
     assert seen_dry_run is False
+
+
+# A minimal page that satisfies lint_standalone, and one that violates
+# it (remote image). Reused by the pdf/publish gate tests below.
+GOOD_PAGE = (
+    "<!doctype html><html><head><style>body{color:#111}</style></head>"
+    "<body><p>hi</p></body></html>"
+)
+BAD_PAGE = '<html><body><img src="https://cdn.example/x.png"></body></html>'
+
+
+def test_check_passes_clean_file(tmp_path, capsys):
+    f = tmp_path / "draft.html"
+    f.write_text(GOOD_PAGE)
+    assert main(["check", str(f)]) == 0
+    assert "ok" in capsys.readouterr().out
+
+
+def test_check_fails_file_with_remote_reference(tmp_path, capsys):
+    f = tmp_path / "draft.html"
+    f.write_text(BAD_PAGE)
+    assert main(["check", str(f)]) == 1
+    assert "cdn.example" in capsys.readouterr().err
+
+
+def test_check_missing_file(tmp_path, capsys):
+    assert main(["check", str(tmp_path / "nope.html")]) == 1
+    assert "not found" in capsys.readouterr().err

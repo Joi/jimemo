@@ -260,6 +260,30 @@ def cmd_suggest(args) -> int:
     return 0
 
 
+def cmd_check(args) -> int:
+    from .lint import lint_standalone
+
+    path = Path(args.file)
+    if not path.is_file():
+        print(f"file not found: {path}", file=sys.stderr)
+        return 1
+    try:
+        html = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"cannot read {path}: {e}", file=sys.stderr)
+        return 1
+
+    errors, warnings = lint_standalone(html)
+    for w in warnings:
+        print(f"warning: {w}", file=sys.stderr)
+    if errors:
+        for e in errors:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"ok {path}")
+    return 0
+
+
 def _sample_files(template_dir: Path) -> list:
     sample_dir = template_dir / "sample"
     if not sample_dir.is_dir():
@@ -542,6 +566,13 @@ def main(argv=None) -> int:
     suggest_p.add_argument("content", help="content file (.md, .json, or .yaml)")
     suggest_p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
+    check_p = sub.add_parser(
+        "check",
+        help="verify a rendered (possibly hand-tweaked) HTML file still "
+        "meets the self-contained guarantee",
+    )
+    check_p.add_argument("file", help="HTML file to verify")
+
     publish_p = sub.add_parser(
         "publish", help="publish a rendered HTML file to an unlisted link"
     )
@@ -574,6 +605,8 @@ def main(argv=None) -> int:
         return cmd_import_design(args)
     if args.command == "suggest":
         return cmd_suggest(args)
+    if args.command == "check":
+        return cmd_check(args)
     if args.command == "publish":
         return cmd_publish(args)
 
