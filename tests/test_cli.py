@@ -368,7 +368,7 @@ def _fake_pdf_seam(monkeypatch, browser="/usr/bin/chromium"):
         "jimemo.pdf.find_browser", lambda configured=None, **kw: browser
     )
 
-    def fake_render_pdf(html_path, pdf_path, browser_, runner=None):
+    def fake_render_pdf(html_path, pdf_path, browser_, launcher=None):
         calls.append((Path(html_path), Path(pdf_path), browser_))
         Path(pdf_path).parent.mkdir(parents=True, exist_ok=True)
         Path(pdf_path).write_bytes(b"%PDF-1.4 fake")

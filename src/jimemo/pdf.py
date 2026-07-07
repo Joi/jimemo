@@ -22,7 +22,12 @@ the browser process is not trusted to exit on its own. Instead the
 output file is the contract: the process is launched detached from our
 pipes (its own log file), then polled until ``--print-to-pdf``'s target
 exists with a stable non-zero size (or the process exits by itself),
-at which point anything still running is killed. ``--virtual-time-budget``,
+at which point anything still running is killed. That target is a
+pid-unique temp name next to the real output, not the output path
+itself -- a stale file already at the output path (a previous run's
+PDF) cannot be mistaken mid-poll for this run's -- and it is atomically
+moved into place only once polling and the exit-0 check both confirm
+success. ``--virtual-time-budget``,
 ``--no-pdf-header-footer`` (no URL/date chrome), a throwaway
 ``--user-data-dir`` (never touches the real browser profile or its
 process singleton), and ``--disable-background-networking``
@@ -143,6 +148,12 @@ def render_pdf(
     Raises PdfError on a non-runnable browser, a nonzero exit, a timeout
     with no PDF, or an exit-0 run that left no PDF behind.
 
+    `--print-to-pdf` targets a pid-unique temp file next to `pdf_path`,
+    never `pdf_path` itself -- a stale file already there (a previous
+    run's output) cannot be mistaken for this run's mid-poll. The temp
+    file is atomically `os.replace`d into `pdf_path` only after both the
+    poll loop and the exit-0 check confirm success.
+
     Printing uses a temp copy of the page, written next to the original
     (so any relative references resolve identically), with Chart.js
     animation disabled via a constant injected snippet -- see
@@ -163,15 +174,24 @@ def render_pdf(
         raise PdfError(f"cannot read {html_path}: {e}") from e
 
     print_copy = html_path.parent / f".jimemo-pdf-{os.getpid()}-{html_path.name}"
+    # --print-to-pdf never targets pdf_path directly: a stale file left
+    # over from a previous run at that same path (the draft loop's
+    # second `jimemo pdf draft.html` hits this deterministically) would
+    # already have a stable non-zero size on the very first poll below,
+    # so the browser would be killed -- and the old bytes reported as
+    # success -- before this run ever printed. A pid-unique temp name
+    # cannot pre-exist; os.replace moves it into pdf_path only once the
+    # poll loop and the exit-0 check both confirm it is this run's PDF.
+    temp_target = pdf_path.parent / f".jimemo-pdf-out-{os.getpid()}-{pdf_path.name}"
     try:
-        print_copy.write_text(
-            html.replace("</script>", _NO_ANIMATION_SNIPPET, 1),
-            encoding="utf-8",
-        )
-    except OSError as e:
-        raise PdfError(f"cannot write print copy {print_copy}: {e}") from e
+        try:
+            print_copy.write_text(
+                html.replace("</script>", _NO_ANIMATION_SNIPPET, 1),
+                encoding="utf-8",
+            )
+        except OSError as e:
+            raise PdfError(f"cannot write print copy {print_copy}: {e}") from e
 
-    try:
         with tempfile.TemporaryDirectory(prefix="jimemo-pdf-profile-") as profile_dir:
             argv = [
                 browser,
@@ -184,14 +204,14 @@ def render_pdf(
                 f"--user-data-dir={profile_dir}",
                 "--virtual-time-budget=10000",
                 "--no-pdf-header-footer",
-                f"--print-to-pdf={pdf_path}",
+                f"--print-to-pdf={temp_target}",
                 print_copy.as_uri(),
             ]
             log_path = Path(profile_dir) / "browser.log"
             with open(log_path, "w+", encoding="utf-8", errors="replace") as log_handle:
                 try:
                     proc = launcher(argv, log_handle)
-                except FileNotFoundError as e:
+                except OSError as e:
                     raise PdfError(f"browser is not runnable: {browser}: {e}") from e
 
                 deadline = time.monotonic() + TIMEOUT_SECONDS
@@ -201,8 +221,8 @@ def render_pdf(
                     returncode = proc.poll()
                     if returncode is not None:
                         break
-                    if pdf_path.is_file():
-                        size = pdf_path.stat().st_size
+                    if temp_target.is_file():
+                        size = temp_target.stat().st_size
                         if size > 0 and size == last_size:
                             # PDF complete and stable while the browser
                             # still runs: this build never exits after
@@ -231,15 +251,18 @@ def render_pdf(
                         f"browser exited {returncode} converting "
                         f"{html_path.name}{detail}"
                     )
-    finally:
-        try:
-            print_copy.unlink()
-        except OSError:
-            pass
 
-    if not pdf_path.is_file() or pdf_path.stat().st_size == 0:
-        raise PdfError(
-            f"browser exited 0 but wrote no PDF at {pdf_path} -- the "
-            "binary may not support --print-to-pdf; set [pdf] browser in "
-            "~/.jimemo/config.toml to a Chromium-family browser"
-        )
+        if not temp_target.is_file() or temp_target.stat().st_size == 0:
+            raise PdfError(
+                f"browser exited 0 but wrote no PDF at {pdf_path} -- the "
+                "binary may not support --print-to-pdf; set [pdf] browser in "
+                "~/.jimemo/config.toml to a Chromium-family browser"
+            )
+
+        os.replace(temp_target, pdf_path)
+    finally:
+        for stray in (print_copy, temp_target):
+            try:
+                stray.unlink()
+            except OSError:
+                pass
