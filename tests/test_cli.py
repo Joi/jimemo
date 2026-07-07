@@ -442,6 +442,24 @@ def test_pdf_missing_input_file(tmp_path, monkeypatch, capsys):
     assert "not found" in capsys.readouterr().err
 
 
+def test_pdf_refuses_output_path_equal_to_input(tmp_path, monkeypatch, capsys):
+    """`jimemo pdf draft.html -o draft.html` must refuse before doing
+    anything -- see render_pdf's own backstop in test_pdf.py. This must
+    fire before the verify gate too: no point linting a file we're about
+    to refuse to overwrite."""
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    f = tmp_path / "draft.html"
+    original = GOOD_PAGE
+    f.write_text(original)
+
+    assert main(["pdf", str(f), "-o", str(f)]) == 1
+
+    assert f.read_text() == original
+    assert calls == []
+    assert str(f) in capsys.readouterr().err
+
+
 REPO = Path(__file__).resolve().parents[1]
 BRIEFING_SAMPLE = REPO / "templates" / "briefing" / "sample" / "content.md"
 
@@ -524,6 +542,27 @@ def test_render_without_pdf_never_touches_the_browser_seam(tmp_path, monkeypatch
     out = tmp_path / "brief.html"
     assert main(["render", "briefing", str(BRIEFING_SAMPLE), "-o", str(out)]) == 0
     assert out.is_file()
+
+
+def test_render_pdf_flag_refuses_content_file_as_pdf_target(tmp_path, monkeypatch, capsys):
+    """--pdf can point anywhere, including (by accident) at the content
+    file being rendered. That must be refused before any conversion --
+    BRIEFING_SAMPLE is a real repo file, so the guard must fire before
+    render_pdf ever runs (and with _fake_pdf_seam installed nothing real
+    would run anyway); assert the sample is untouched either way."""
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    original = BRIEFING_SAMPLE.read_bytes()
+    out = tmp_path / "x.html"
+
+    assert main([
+        "render", "briefing", str(BRIEFING_SAMPLE),
+        "-o", str(out), "--pdf", str(BRIEFING_SAMPLE),
+    ]) == 2
+
+    assert BRIEFING_SAMPLE.read_bytes() == original
+    assert calls == []
+    assert str(BRIEFING_SAMPLE) in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

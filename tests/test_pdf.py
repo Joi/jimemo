@@ -330,3 +330,23 @@ def test_render_pdf_creates_output_parent_dir(tmp_path):
     render_pdf(html, pdf, "/usr/bin/chromium", launcher=launcher)
 
     assert pdf.is_file()
+
+
+def test_render_pdf_refuses_when_output_equals_input(tmp_path):
+    """`jimemo pdf draft.html -o draft.html` must never be allowed to
+    reach the browser: Chrome reads the original file before the final
+    os.replace lands the PDF bytes on that same path, so a same-path
+    invocation would destroy the editable HTML input. This is the hard
+    backstop -- callers (cmd_pdf, _do_render) also guard earlier, but
+    render_pdf itself must refuse regardless of what calls it."""
+    html = tmp_path / "draft.html"
+    original = "<html><body>original</body></html>"
+    html.write_text(original)
+    launcher = FakeLauncher(FakeProcess([0]))
+
+    with pytest.raises(PdfError) as exc_info:
+        render_pdf(html, html, "/usr/bin/chromium", launcher=launcher)
+
+    assert str(html) in str(exc_info.value)
+    assert html.read_text() == original
+    assert launcher.calls == []

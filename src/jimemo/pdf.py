@@ -161,6 +161,15 @@ def render_pdf(
     """
     html_path = Path(html_path).resolve()
     pdf_path = Path(pdf_path).resolve()
+    if html_path == pdf_path:
+        # Chrome reads html_path before the final os.replace lands the
+        # PDF bytes on pdf_path -- a same-path invocation would destroy
+        # the editable HTML input out from under the browser's own read.
+        # This is the hard backstop: callers (cmd_pdf, _do_render) also
+        # guard earlier, but render_pdf must refuse regardless of caller.
+        raise PdfError(
+            f"refusing to write the PDF over its own HTML input: {pdf_path}"
+        )
     try:
         pdf_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as e:

@@ -159,6 +159,13 @@ def _do_render(template_dir: Path, content_path: Path, args) -> int:
     elif args.pdf is not None:
         pdf_path = out_path.with_suffix(".pdf") if args.pdf is True else Path(args.pdf)
 
+    if pdf_path is not None and pdf_path.resolve() == content_path.resolve():
+        print(
+            f"--pdf {pdf_path} is the content file; refusing to overwrite it",
+            file=sys.stderr,
+        )
+        return 2
+
     browser = None
     if pdf_path is not None:
         # Resolve the browser BEFORE rendering: a missing browser must
@@ -424,6 +431,13 @@ def cmd_pdf(args) -> int:
         print(f"file not found: {html_path}", file=sys.stderr)
         return 1
     out_path = Path(args.out) if args.out else html_path.with_suffix(".pdf")
+
+    if out_path.resolve() == html_path.resolve():
+        print(
+            f"refusing to write the PDF over its own HTML input: {out_path}",
+            file=sys.stderr,
+        )
+        return 1
 
     if not args.no_verify and not _verify_html(html_path, "convert"):
         return 1
