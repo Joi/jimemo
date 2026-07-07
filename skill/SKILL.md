@@ -54,6 +54,16 @@ the shape.
 
 ### 3. Generate content matching the schema
 
+Start from a skeleton instead of copying the sample:
+
+```
+jimemo scaffold <template> -o content.md
+```
+
+Every slot appears with an empty value and a required/optional + type
+annotation; data slots carry the shape from the manifest or the
+template's sample. Fill it in (or write the file from scratch):
+
 Write a content file as either:
 - **Markdown** (`.md`): YAML frontmatter with one key per slot, except
   `body` — that slot is everything after the closing `---`.

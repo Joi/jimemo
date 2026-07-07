@@ -717,6 +717,44 @@ def cmd_import_design(args) -> int:
     return 0
 
 
+def cmd_scaffold(args) -> int:
+    from .scaffold import scaffold_content
+
+    templates = dict(find_templates(default_search_dirs()))
+    template_dir = templates.get(args.template)
+    if template_dir is None:
+        available = ", ".join(sorted(templates)) if templates else "none"
+        print(
+            f"unknown template: {args.template!r} (available: {available})",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        manifest = load_manifest(template_dir)
+    except ManifestError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    text, kind = scaffold_content(manifest, template_dir)
+    if args.out:
+        out_path = Path(args.out)
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(text, encoding="utf-8")
+        except OSError as e:
+            print(f"cannot write {out_path}: {e}", file=sys.stderr)
+            return 1
+        print(f"wrote {out_path}")
+    else:
+        print(text, end="")
+    print(
+        f"# fill the slots, then: jimemo render {args.template} "
+        f"<content-file>.{kind}",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def cmd_new_template(args) -> int:
     try:
         template_dir = create_template(args.name)
@@ -758,6 +796,14 @@ def main(argv=None) -> int:
     info_p = sub.add_parser("info", help="show a template's manifest and suitability")
     info_p.add_argument("template", help="template name")
     info_p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+    scaffold_p = sub.add_parser(
+        "scaffold",
+        help="emit a fill-in content skeleton for a template "
+        "(.md frontmatter or .yaml, matching the template's slots)",
+    )
+    scaffold_p.add_argument("template", help="template name")
+    scaffold_p.add_argument("-o", "--out", help="write to a file instead of stdout")
 
     new_template_p = sub.add_parser("new-template", help="scaffold a new personal template")
     new_template_p.add_argument("name", help="template name (lowercase letters, digits, hyphens)")
@@ -845,6 +891,8 @@ def main(argv=None) -> int:
         return cmd_render(args)
     if args.command == "info":
         return cmd_info(args)
+    if args.command == "scaffold":
+        return cmd_scaffold(args)
     if args.command == "new-template":
         return cmd_new_template(args)
     if args.command == "import-design":

@@ -89,3 +89,95 @@ def create_template(name: str, dest_root: Optional[Path] = None) -> Path:
     )
 
     return template_dir
+
+
+# ---------------------------------------------------------------------------
+# scaffold (content skeletons) -- `jimemo scaffold <template>`
+# ---------------------------------------------------------------------------
+
+def _blank(value):
+    """The same shape as `value`, values emptied: strings -> "", numbers
+    -> 0, bools -> False, lists -> one blanked exemplar element, dicts ->
+    every key blanked. Used to turn a template's real sample data into a
+    fill-in skeleton without inventing a second schema language."""
+    if isinstance(value, str):
+        return ""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return 0
+    if isinstance(value, list):
+        return [_blank(value[0])] if value else []
+    if isinstance(value, dict):
+        return {k: _blank(v) for k, v in value.items()}
+    return None
+
+
+def _sample_shape(template_dir: Path, slot_name: str):
+    """Blanked shape of `slot_name` taken from the template's first
+    sample content file that provides it, or None. The sample is the
+    template's own worked example, so its shape is authoritative for
+    schema-free data slots."""
+    sample_dir = Path(template_dir) / "sample"
+    if not sample_dir.is_dir():
+        return None
+    from .content import _load_raw
+
+    for p in sorted(sample_dir.iterdir()):
+        if p.suffix.lower() not in (".md", ".json", ".yaml", ".yml"):
+            continue
+        try:
+            raw = _load_raw(p)
+        except Exception:
+            continue
+        if isinstance(raw, dict) and slot_name in raw:
+            return _blank(raw[slot_name])
+    return None
+
+
+def scaffold_content(manifest: dict, template_dir) -> "tuple[str, str]":
+    """A fill-in content skeleton for `manifest`'s slots; returns
+    ``(text, kind)`` where kind is ``"md"`` (frontmatter + body
+    placeholder, for templates with a ``body`` slot) or ``"yaml"``.
+
+    Every slot appears with an emptied value and a ``required``/
+    ``optional`` + type annotation. Data slots use their manifest
+    ``items`` spec when declared, else a blanked copy of the template's
+    sample data; the skeleton always parses through load_content as-is.
+    """
+    import textwrap
+
+    from ._vendor import add_vendor_to_path
+
+    add_vendor_to_path()
+    import yaml
+
+    slots = manifest["slots"]
+    has_body = "body" in slots
+    lines = []
+    for name, spec in slots.items():
+        if name == "body":
+            continue
+        req = "required" if spec.get("required") else "optional"
+        stype = spec["type"]
+        comment = f"# {req} · {stype}"
+        if stype in ("text", "markdown"):
+            lines.append(f'{name}: ""  {comment}')
+            continue
+        items = spec.get("items")
+        shape = [{k: "" for k in items}] if items else _sample_shape(template_dir, name)
+        if shape is None:
+            lines.append(f"{name}: []  {comment} -- see the template's sample/ for the shape")
+            continue
+        lines.append(f"{name}:  {comment}")
+        dumped = yaml.safe_dump(shape, default_flow_style=False, sort_keys=False)
+        lines.append(textwrap.indent(dumped.rstrip("\n"), "  "))
+    yaml_block = "\n".join(lines) + "\n"
+
+    if has_body:
+        req = "required" if slots["body"].get("required") else "optional"
+        return (
+            f"---\n{yaml_block}---\n\n(body markdown goes here -- {req})\n",
+            "md",
+        )
+    return yaml_block, "yaml"

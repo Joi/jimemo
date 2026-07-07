@@ -128,3 +128,54 @@ def test_cli_new_template_then_render_its_sample_succeeds(tmp_path, monkeypatch)
     rc = cli.main(["render", "zine", str(sample), "-o", str(out_path)])
     assert rc == 0
     assert out_path.is_file()
+
+
+# ---------------------------------------------------------------------------
+# scaffold (content skeletons)
+# ---------------------------------------------------------------------------
+
+def test_scaffold_briefing_is_md_with_frontmatter():
+    from jimemo.discovery import default_search_dirs, find_templates
+    from jimemo.manifest import load_manifest
+    from jimemo.scaffold import scaffold_content
+
+    templates = dict(find_templates(default_search_dirs()))
+    text, kind = scaffold_content(load_manifest(templates["briefing"]), templates["briefing"])
+    assert kind == "md"
+    assert text.startswith("---\n")
+    assert 'title: ""' in text
+    assert "required" in text  # required slots are annotated
+    assert text.rstrip().endswith("-- required)") or "body markdown goes here" in text
+
+
+def test_scaffold_bodyless_template_is_yaml():
+    from jimemo.discovery import default_search_dirs, find_templates
+    from jimemo.manifest import load_manifest
+    from jimemo.scaffold import scaffold_content
+
+    templates = dict(find_templates(default_search_dirs()))
+    text, kind = scaffold_content(load_manifest(templates["ops-board"]), templates["ops-board"])
+    assert kind == "yaml"
+    assert not text.startswith("---")
+    assert "sections:" in text
+
+
+def test_scaffold_output_parses_for_every_seed_template(tmp_path):
+    # The whole point: nobody should reverse-engineer samples again.
+    # Every skeleton must round-trip through load_content unchanged --
+    # correct slot names, required slots present, data shapes accepted.
+    from jimemo._paths import REPO_ROOT
+    from jimemo.content import load_content
+    from jimemo.discovery import find_templates
+    from jimemo.manifest import load_manifest
+    from jimemo.scaffold import scaffold_content
+
+    for name, template_dir in find_templates([REPO_ROOT / "templates"]):
+        manifest = load_manifest(template_dir)
+        text, kind = scaffold_content(manifest, template_dir)
+        out = tmp_path / f"{name}-skeleton.{kind}"
+        out.write_text(text)
+        content = load_content(out, manifest)  # must not raise
+        for slot_name, spec in manifest["slots"].items():
+            if spec.get("required"):
+                assert slot_name in content, f"{name}: required {slot_name!r} missing"
