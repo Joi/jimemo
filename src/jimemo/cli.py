@@ -562,6 +562,16 @@ def cmd_publish(args) -> int:
             if not html_path.is_file():
                 print(f"file not found: {html_path}", file=sys.stderr)
                 return 1
+            # A published page carries jimemo's self-contained guarantee,
+            # so an HTML file -- possibly hand-tweaked since render --
+            # must re-pass the standalone check before it ships. Other
+            # file types (e.g. a finished PDF) pass through unchanged.
+            if (
+                html_path.suffix.lower() in (".html", ".htm")
+                and not args.no_verify
+                and not _verify_html(html_path, "publish")
+            ):
+                return 1
             print(publisher.publish(html_path, args.title))
     except PublishError as e:
         print(str(e), file=sys.stderr)
@@ -741,6 +751,10 @@ def main(argv=None) -> int:
     publish_p.add_argument(
         "--dry-run", action="store_true",
         help='with "setup": print the plan without executing or writing anything',
+    )
+    publish_p.add_argument(
+        "--no-verify", action="store_true",
+        help="skip the self-containment check before publishing an HTML file",
     )
 
     args = parser.parse_args(argv)

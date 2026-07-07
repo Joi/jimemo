@@ -524,3 +524,70 @@ def test_render_without_pdf_never_touches_the_browser_seam(tmp_path, monkeypatch
     out = tmp_path / "brief.html"
     assert main(["render", "briefing", str(BRIEFING_SAMPLE), "-o", str(out)]) == 0
     assert out.is_file()
+
+
+# ---------------------------------------------------------------------------
+# publish verify gate (Phase 5 Task 8): a fake publisher + _publish_env helper
+# stand in for a real jimemo.publish backend. The monkeypatch of
+# jimemo.publish.get_publisher mirrors what actually happens end to end --
+# the CLI's own lazy import of get_publisher at call time sees the monkeypatched
+# version.
+# ---------------------------------------------------------------------------
+
+class FakePublisher:
+    def __init__(self):
+        self.published = []
+
+    def publish(self, path, title=None):
+        self.published.append(Path(path))
+        return "https://pages.example/abc123/"
+
+
+def _publish_env(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[publish]\nbackend = "command"\ncommand = "true"\n')
+    monkeypatch.setenv("JIMEMO_CONFIG", str(cfg))
+    fake = FakePublisher()
+    monkeypatch.setattr("jimemo.publish.get_publisher", lambda cfg: fake)
+    return fake
+
+
+def test_publish_refuses_unverified_html(tmp_path, monkeypatch, capsys):
+    fake = _publish_env(tmp_path, monkeypatch)
+    f = tmp_path / "draft.html"
+    f.write_text(BAD_PAGE)
+
+    assert main(["publish", str(f)]) == 1
+
+    err = capsys.readouterr().err
+    assert "cdn.example" in err
+    assert "--no-verify" in err
+    assert fake.published == []
+
+
+def test_publish_verifies_then_publishes_clean_html(tmp_path, monkeypatch, capsys):
+    fake = _publish_env(tmp_path, monkeypatch)
+    f = tmp_path / "draft.html"
+    f.write_text(GOOD_PAGE)
+
+    assert main(["publish", str(f)]) == 0
+    assert fake.published == [f]
+    assert "https://pages.example/abc123/" in capsys.readouterr().out
+
+
+def test_publish_no_verify_skips_the_check(tmp_path, monkeypatch, capsys):
+    fake = _publish_env(tmp_path, monkeypatch)
+    f = tmp_path / "draft.html"
+    f.write_text(BAD_PAGE)
+
+    assert main(["publish", str(f), "--no-verify"]) == 0
+    assert fake.published == [f]
+
+
+def test_publish_non_html_passes_through_unverified(tmp_path, monkeypatch, capsys):
+    fake = _publish_env(tmp_path, monkeypatch)
+    f = tmp_path / "brief.pdf"
+    f.write_bytes(b"%PDF-1.4 fake")
+
+    assert main(["publish", str(f)]) == 0
+    assert fake.published == [f]
