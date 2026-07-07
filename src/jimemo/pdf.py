@@ -100,3 +100,59 @@ def find_browser(
         if exists(path):
             return path
     return None
+
+
+def render_pdf(
+    html_path: Path,
+    pdf_path: Path,
+    browser: str,
+    runner: Runner = _run,
+) -> None:
+    """Convert `html_path` to `pdf_path` with one headless `browser`
+    run. Raises PdfError on a non-runnable browser, timeout, nonzero
+    exit, or an exit-0 run that left no PDF behind (some non-Chromium
+    binaries do exactly that)."""
+    html_path = Path(html_path).resolve()
+    pdf_path = Path(pdf_path).resolve()
+    try:
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise PdfError(
+            f"cannot create output directory {pdf_path.parent}: {e}"
+        ) from e
+
+    with tempfile.TemporaryDirectory(prefix="jimemo-pdf-profile-") as profile_dir:
+        argv = [
+            browser,
+            "--headless",
+            "--disable-gpu",
+            "--no-first-run",
+            "--no-default-browser-check",
+            f"--user-data-dir={profile_dir}",
+            "--virtual-time-budget=10000",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf_path}",
+            html_path.as_uri(),
+        ]
+        try:
+            proc = runner(argv)
+        except FileNotFoundError as e:
+            raise PdfError(f"browser is not runnable: {browser}: {e}") from e
+        except subprocess.TimeoutExpired as e:
+            raise PdfError(
+                f"browser timed out after {TIMEOUT_SECONDS}s converting "
+                f"{html_path.name}"
+            ) from e
+
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()[-3:]
+        detail = ": " + " / ".join(tail) if tail else ""
+        raise PdfError(
+            f"browser exited {proc.returncode} converting {html_path.name}{detail}"
+        )
+    if not pdf_path.is_file() or pdf_path.stat().st_size == 0:
+        raise PdfError(
+            f"browser exited 0 but wrote no PDF at {pdf_path} -- the "
+            "binary may not support --print-to-pdf; set [pdf] browser in "
+            "~/.jimemo/config.toml to a Chromium-family browser"
+        )
