@@ -1,0 +1,41 @@
+{#- ops-board — an operational status board: masthead with meta pills,
+    headline stat tiles, then sections that are each a grid of entity
+    cards or a matrix table. Distilled from a hand-built ops dashboard;
+    deliberately static — a document, not an app: no filters, no
+    scripts, and it themes and prints like every other template.
+    Components: page-header, meta-pills, stat-tile, badge, entity-card,
+    data-table. -#}
+{% extends "page.html.j2" %}
+{% import "macros.html.j2" as ui %}
+{% set wide = true %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{{ ui.page_header(title,
+     kicker=kicker|default("Status board"),
+     subtitle=subtitle|default(none)) }}
+
+{% if meta|default([]) %}
+{{ ui.meta_pills(meta) }}
+{% endif %}
+
+{% set headline_stats = stats|default([]) %}
+{% if headline_stats %}
+{{ ui.stat_row(headline_stats) }}
+{% endif %}
+
+{% for s in sections %}
+<section>
+{% if s.heading|default(none) %}<h2>{{ s.heading }}</h2>{% endif %}
+{% if s.note|default(none) %}<p class="jm-entity-card__text">{{ s.note }}</p>{% endif %}
+{% if s.kind|default("cards") == "table" %}
+{{ ui.data_table(s.table.columns, s.table.rows, caption=s.table.caption|default(none)) }}
+{% else %}
+{{ ui.entity_cards(s.cards|default([])) }}
+{% endif %}
+</section>
+{% endfor %}
+{% endblock %}
+
+{% block footer %}{{ footer_left|default("") }}{% if footer_left|default(none) and footer_right|default(none) %} · {% endif %}{{ footer_right|default("") }}{% endblock %}

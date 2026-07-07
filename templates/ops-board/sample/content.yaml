@@ -1,0 +1,115 @@
+title: "Relay gateway — status board"
+kicker: "OPS"
+subtitle: "One page for the whole relay: channels, containers, people, and the access matrix."
+meta:
+  - "host: relay-01"
+  - "uptime: 41 days"
+  - "release: v2.3.1"
+  - "last deploy: 2026-07-04 09:12 UTC"
+stats:
+  - value: "12"
+    label: "Channels"
+  - value: "4"
+    label: "Containers"
+    delta: "+1 this week"
+    tone: "positive"
+  - value: "9"
+    label: "People"
+  - value: "3"
+    label: "Platforms"
+  - value: "218"
+    label: "Messages / day"
+  - value: "1"
+    label: "Failing agent"
+    delta: "restart pending"
+    tone: "negative"
+sections:
+  - heading: "Channels"
+    note: "Every chat group the relay listens to, with its platform and routing."
+    kind: "cards"
+    cards:
+      - title: "family-core"
+        badge: "WhatsApp"
+        badge_tone: "positive"
+        variant: "positive"
+        tags: ["listen: all", "reply: mention"]
+        fields:
+          - label: "group id"
+            value: "wa-8842…19"
+          - label: "agent"
+            value: "concierge"
+      - title: "ops-alerts"
+        badge: "Signal"
+        badge_tone: "accent"
+        variant: "accent"
+        tags: ["listen: all", "reply: always"]
+        fields:
+          - label: "group id"
+            value: "sg-77aa…04"
+          - label: "agent"
+            value: "pager"
+      - title: "book-club"
+        badge: "Discord"
+        tags: ["listen: mention"]
+        fields:
+          - label: "channel"
+            value: "#reading"
+          - label: "agent"
+            value: "librarian"
+  - heading: "Containers"
+    note: "Long-running agent containers and their health."
+    kind: "cards"
+    cards:
+      - title: "concierge"
+        badge: "running"
+        badge_tone: "positive"
+        variant: "positive"
+        fields:
+          - label: "uptime"
+            value: "41 d"
+          - label: "memory"
+            value: "212 MB"
+      - title: "pager"
+        badge: "running"
+        badge_tone: "positive"
+        variant: "positive"
+        fields:
+          - label: "uptime"
+            value: "6 d"
+          - label: "memory"
+            value: "148 MB"
+      - title: "librarian"
+        badge: "failing"
+        badge_tone: "negative"
+        variant: "negative"
+        text: "Crash-looping since the 04:00 deploy; restart scheduled."
+        fields:
+          - label: "last exit"
+            value: "code 137"
+  - heading: "People"
+    kind: "cards"
+    cards:
+      - title: "Mika Tanaka"
+        badge: "owner"
+        badge_tone: "accent"
+        variant: "accent"
+        tags: ["family-core", "ops-alerts"]
+      - title: "Sam Ortiz"
+        badge: "staff"
+        tags: ["ops-alerts", "book-club"]
+      - title: "Alex Chen"
+        badge: "guest"
+        tags: ["book-club"]
+  - heading: "Access matrix"
+    note: "Who may do what, per tier. Owner approval promotes a tier."
+    kind: "table"
+    table:
+      caption: "Access by tier, release v2.3.1."
+      columns: ["Capability", "Owner", "Staff", "Guest"]
+      rows:
+        - ["Send as relay", "yes", "yes", "no"]
+        - ["Register a channel", "yes", "no", "no"]
+        - ["Read message log", "yes", "yes", "no"]
+        - ["Trigger deploy", "yes", "no", "no"]
+footer_left: "relay-01 · generated 2026-07-05 18:00 UTC"
+footer_right: "next audit: 2026-08-01"
