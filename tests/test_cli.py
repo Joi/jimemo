@@ -691,3 +691,26 @@ def test_doctor_reports_pdf_browser_missing_without_failing(
     out = capsys.readouterr().out
     assert "info pdf browser not found" in out
     assert "jimemo pdf unavailable" in out
+
+
+def test_scaffold_prints_md_skeleton(capsys):
+    assert main(["scaffold", "briefing"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("---\n")
+    assert 'title: ""' in out
+
+
+def test_scaffold_writes_file_and_renders_after_fill(tmp_path, capsys):
+    out = tmp_path / "skeleton.yaml"
+    assert main(["scaffold", "ops-board", "-o", str(out)]) == 0
+    assert out.is_file()
+    # The unfilled skeleton itself must render: proof nobody has to
+    # reverse-engineer anything before seeing a first page.
+    html_out = tmp_path / "page.html"
+    assert main(["render", "ops-board", str(out), "-o", str(html_out)]) == 0
+    assert html_out.is_file()
+
+
+def test_scaffold_unknown_template(capsys):
+    assert main(["scaffold", "nope"]) == 1
+    assert "unknown template" in capsys.readouterr().err

@@ -225,3 +225,27 @@ def test_data_slot_markdown_item_sanitized(tmp_path):
     assert "onerror" not in section_body
     assert '<img src="x" />' in section_body
     assert "<strong>bold</strong>" in section_body
+
+
+def test_markdown_rendering_never_consults_entry_points(monkeypatch):
+    # Regression: python-markdown resolves STRING extension names by
+    # scanning installed entry points first (vendor/markdown/core.py),
+    # and on Python < 3.10 that scan imports the importlib_metadata
+    # backport -- which jimemo does not vendor. Stock macOS Python
+    # 3.9.6 (the documented floor) crashed on first render exactly
+    # there, with jimemo doctor all-green (reported by a first-time
+    # tester). Extensions are passed as OBJECTS precisely so the
+    # entry-point path is never taken; this pins that on every
+    # interpreter version by making the scan explode if consulted.
+    import markdown.util
+
+    def boom():
+        raise ModuleNotFoundError("No module named 'importlib_metadata'")
+
+    monkeypatch.setattr(markdown.util, "get_installed_extensions", boom)
+
+    from jimemo.content import _render_markdown
+
+    html = str(_render_markdown("| a |\n| --- |\n| b |\n\n```\ncode\n```\n"))
+    assert "<table>" in html
+    assert "<code>" in html

@@ -79,6 +79,15 @@ photo-catalog	/path/to/jimemo/templates/photo-catalog
 timeline	/path/to/jimemo/templates/timeline
 ```
 
+Start a content file without reverse-engineering the sample — `scaffold`
+emits a fill-in skeleton matching a template's slots (markdown frontmatter,
+or YAML for templates without a body slot):
+
+```
+$ jimemo scaffold briefing -o mynote.md
+$ jimemo scaffold ops-board -o board.yaml
+```
+
 Inspect a template's slots and suitability:
 
 ```
