@@ -74,18 +74,19 @@ the two themes.
   paths inside `<marker>` definitions (document-level custom properties
   do reach marker content, but only via `style`).
 
-- **Labels on colored fills need a per-theme contrast check.** Some
-  `--jm-chart-*` tokens are dark enough in both themes for bold white
-  `#ffffff` labels (`--jm-chart-1` blue, `--jm-chart-2` green,
-  `--jm-chart-8` orange in the default theme). Others go light in one
-  theme or both (`--jm-chart-3` amber; the dark-theme values of
-  `--jm-chart-5` / `--jm-chart-7`), where white text washes out — and a
-  custom `--theme` can reshuffle all of them. Check the token's light
-  AND dark values in the rendered page's CSS before writing white on
-  it. On `--jm-accent` fills use `fill:var(--jm-accent-contrast)`,
-  which flips per theme for exactly this purpose. When in doubt, put
-  the label outside the shape in `fill:var(--jm-text)`. Everywhere
-  else, use `--jm-text` / `--jm-muted`, never a literal gray.
+- **Default to labels outside colored fills, in `var(--jm-text)`.**
+  Several `--jm-chart-*` slots sit below 3:1 contrast against white
+  (`toolkit/README.md` documents aqua, yellow, and magenta as WARN
+  slots in light mode), a custom `--theme` can reshuffle the whole
+  palette, and nothing lints SVG text contrast. So: put value labels
+  above, below, or beside the shape in `fill:var(--jm-text)`
+  (secondary lines in `--jm-muted`). Two sanctioned exceptions:
+  on an `--jm-accent` fill use `fill:var(--jm-accent-contrast)`, which
+  the theme flips for exactly this purpose; and white inside a
+  chart-token fill only after checking the token's light AND dark
+  values in the rendered page's CSS give bold white roughly 4.5:1 —
+  then confirm on a screenshot in both themes. Never use a literal
+  gray for text anywhere.
 
 - **SVG text never wraps, and nothing detects overflow.** Break long
   labels into separate `<text>` (or `<tspan>`) lines yourself. Budget
@@ -130,18 +131,18 @@ the same accent at low opacity, which works in both themes):
       style="font-size:15px;font-weight:700;letter-spacing:.08em;fill:var(--jm-accent)">HIGHLIGHTED</text>
 ```
 
-Split / stacked horizontal bar (two slices of one quantity; white labels
-work here because `--jm-chart-2` / `--jm-chart-8` stay dark in both
-themes — see the contrast rule above). Keep bars with inside white
-labels at full opacity: `fill-opacity` blends the fill toward the page
-surface (toward white in light mode) and eats the contrast. Reserve
-opacity softening for bars whose labels sit outside the shape.
+Split / stacked horizontal bar (two slices of one quantity). Labels sit
+outside the bar in `--jm-text` / `--jm-muted` per the contrast rule
+above, which also frees you to soften the fills with `fill-opacity`
+(blending toward the surface only matters under inside labels):
 
 ```html
-<rect x="40"  y="52" width="408" height="66" rx="8" style="fill:var(--jm-chart-2)"/>
-<rect x="452" y="52" width="268" height="66" rx="8" style="fill:var(--jm-chart-8)"/>
-<text x="244" y="80" text-anchor="middle" style="font-size:15px;font-weight:700;fill:#ffffff">$6,000</text>
-<text x="586" y="80" text-anchor="middle" style="font-size:15px;font-weight:700;fill:#ffffff">$4,000</text>
+<text x="244" y="40" text-anchor="middle" style="font-size:15px;font-weight:700;fill:var(--jm-text)">$6,000</text>
+<text x="586" y="40" text-anchor="middle" style="font-size:15px;font-weight:700;fill:var(--jm-text)">$4,000</text>
+<rect x="40"  y="52" width="408" height="66" rx="8" style="fill:var(--jm-chart-2);fill-opacity:.85"/>
+<rect x="452" y="52" width="268" height="66" rx="8" style="fill:var(--jm-chart-8);fill-opacity:.85"/>
+<text x="244" y="140" text-anchor="middle" style="font-size:12px;fill:var(--jm-muted)">value Japan already taxed</text>
+<text x="586" y="140" text-anchor="middle" style="font-size:12px;fill:var(--jm-muted)">appreciation in Bhutan</text>
 ```
 
 Timeline (axis, colored nodes, stacked label lines under each node):
