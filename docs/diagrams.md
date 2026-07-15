@@ -132,11 +132,14 @@ the same accent at low opacity, which works in both themes):
 
 Split / stacked horizontal bar (two slices of one quantity; white labels
 work here because `--jm-chart-2` / `--jm-chart-8` stay dark in both
-themes — see the contrast rule above):
+themes — see the contrast rule above). Keep bars with inside white
+labels at full opacity: `fill-opacity` blends the fill toward the page
+surface (toward white in light mode) and eats the contrast. Reserve
+opacity softening for bars whose labels sit outside the shape.
 
 ```html
-<rect x="40"  y="52" width="408" height="66" rx="8" style="fill:var(--jm-chart-2);fill-opacity:.85"/>
-<rect x="452" y="52" width="268" height="66" rx="8" style="fill:var(--jm-chart-8);fill-opacity:.85"/>
+<rect x="40"  y="52" width="408" height="66" rx="8" style="fill:var(--jm-chart-2)"/>
+<rect x="452" y="52" width="268" height="66" rx="8" style="fill:var(--jm-chart-8)"/>
 <text x="244" y="80" text-anchor="middle" style="font-size:15px;font-weight:700;fill:#ffffff">$6,000</text>
 <text x="586" y="80" text-anchor="middle" style="font-size:15px;font-weight:700;fill:#ffffff">$4,000</text>
 ```
