@@ -177,6 +177,17 @@ Brave) since charts are Chart.js — JavaScript a PDF library can't run.
 `jimemo doctor` reports whether one was found. See "Publish" below for
 backend setup.
 
+### Diagrams
+
+Templates carry charts, not free-form diagrams — and markdown content
+is sanitized, so inline SVG can't ride in through a content file.
+Diagrams enter through the draft loop instead: leave a
+`[[DIAGRAM:NAME]]` placeholder paragraph in the content, render,
+replace the placeholder `<p>` in `out.html` with a `<figure>` of
+hand-written inline SVG colored with the page's `--jm-*` tokens (so
+light/dark mode keeps working), and re-run `jimemo check`. Patterns,
+pitfalls, and copy-paste snippets: [`docs/diagrams.md`](docs/diagrams.md).
+
 ### Charts
 
 `chart-dashboard` renders headline stat tiles plus a line and a bar

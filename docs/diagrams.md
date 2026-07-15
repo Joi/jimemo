@@ -74,10 +74,18 @@ the two themes.
   paths inside `<marker>` definitions (document-level custom properties
   do reach marker content, but only via `style`).
 
-- **White text on chart-color fills is theme-safe.** The `--jm-chart-*`
-  palette stays saturated in both themes, so `fill:#ffffff` labels on a
-  chart-colored bar read correctly in light and dark. Everywhere else,
-  use `--jm-text` / `--jm-muted`, never a literal gray.
+- **Labels on colored fills need a per-theme contrast check.** Some
+  `--jm-chart-*` tokens are dark enough in both themes for bold white
+  `#ffffff` labels (`--jm-chart-1` blue, `--jm-chart-2` green,
+  `--jm-chart-8` orange in the default theme). Others go light in one
+  theme or both (`--jm-chart-3` amber; the dark-theme values of
+  `--jm-chart-5` / `--jm-chart-7`), where white text washes out — and a
+  custom `--theme` can reshuffle all of them. Check the token's light
+  AND dark values in the rendered page's CSS before writing white on
+  it. On `--jm-accent` fills use `fill:var(--jm-accent-contrast)`,
+  which flips per theme for exactly this purpose. When in doubt, put
+  the label outside the shape in `fill:var(--jm-text)`. Everywhere
+  else, use `--jm-text` / `--jm-muted`, never a literal gray.
 
 - **SVG text never wraps, and nothing detects overflow.** Break long
   labels into separate `<text>` (or `<tspan>`) lines yourself. Budget
@@ -122,8 +130,9 @@ the same accent at low opacity, which works in both themes):
       style="font-size:15px;font-weight:700;letter-spacing:.08em;fill:var(--jm-accent)">HIGHLIGHTED</text>
 ```
 
-Split / stacked horizontal bar (two slices of one quantity, white labels
-inside):
+Split / stacked horizontal bar (two slices of one quantity; white labels
+work here because `--jm-chart-2` / `--jm-chart-8` stay dark in both
+themes — see the contrast rule above):
 
 ```html
 <rect x="40"  y="52" width="408" height="66" rx="8" style="fill:var(--jm-chart-2);fill-opacity:.85"/>

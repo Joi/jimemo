@@ -126,7 +126,11 @@ page tokens (`--jm-text/-muted/-accent/-positive/-negative/-border/`
 `-surface/-chart-1..8`) so light/dark both work — and only via `style`
 attributes, because `var()` does not resolve in SVG presentation
 attributes (`style="fill:var(--jm-accent)"`, never `fill="var(…)"`).
-White `#ffffff` labels on `--jm-chart-*` fills are safe in both themes.
+Labels on colored fills need a per-theme contrast check: bold white is
+fine on dark chart tokens (default `--jm-chart-1/-2/-8`) but washes out
+on light ones (`--jm-chart-3`, dark-mode `--jm-chart-5/-7`) — check
+both theme values in the page CSS, use `var(--jm-accent-contrast)` on
+accent fills, or put the label outside the shape in `var(--jm-text)`.
 SVG text never wraps and nothing detects overflow: break long labels
 into separate `<text>` lines (~90 chars max at 12.5px across a 760
 viewBox) and screenshot the rendered file to check for clipping at the
