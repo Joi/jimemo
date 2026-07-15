@@ -90,6 +90,12 @@ and refuse on violations; `--no-verify` skips it. PDF conversion runs a
 local headless Chromium-family browser because charts are Chart.js —
 JavaScript a PDF library cannot execute.
 
+Diagrams ride this loop: markdown slots are sanitized, so inline SVG
+can't come in through content. Leave `[[DIAGRAM:NAME]]` placeholder
+paragraphs in the content, splice theme-token-colored SVG `<figure>`s
+into the rendered HTML, and re-`check`. Patterns and copy-paste snippets:
+`docs/diagrams.md`.
+
 ## Design systems are bring-your-own
 
 `import-design` reads tokens and font references from a folder (a

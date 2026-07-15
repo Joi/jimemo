@@ -106,6 +106,34 @@ It re-runs the self-containment lint without needing the template.
 `jimemo pdf` and `jimemo publish` run the same check themselves and
 refuse on violations (`--no-verify` skips).
 
+### 4c. Diagrams (inline SVG)
+
+Templates have no diagram slot, and markdown slots are sanitized — SVG
+written into a content file will not survive rendering. Diagrams go in
+via the draft loop:
+
+1. Leave a placeholder paragraph in the content where each diagram
+   belongs: `[[DIAGRAM:NAME]]`.
+2. Render, then replace each `<p>[[DIAGRAM:NAME]]</p>` in the output
+   with a `<figure>` containing hand-written inline SVG.
+3. Re-run `jimemo check out.html`.
+
+Make the SVG native to the page: root of
+`<svg viewBox="0 0 760 H" role="img" aria-label="..."
+style="width:100%;height:auto;font-family:var(--jm-font-ui)">` (760 ≈
+the content column, so viewBox px ≈ screen px); color ONLY with the
+page tokens (`--jm-text/-muted/-accent/-positive/-negative/-border/`
+`-surface/-chart-1..8`) so light/dark both work — and only via `style`
+attributes, because `var()` does not resolve in SVG presentation
+attributes (`style="fill:var(--jm-accent)"`, never `fill="var(…)"`).
+White `#ffffff` labels on `--jm-chart-*` fills are safe in both themes.
+SVG text never wraps and nothing detects overflow: break long labels
+into separate `<text>` lines (~90 chars max at 12.5px across a 760
+viewBox) and screenshot the rendered file to check for clipping at the
+right viewBox edge — the common failure. Copy-paste snippets (arrowhead
+markers, labeled boxes, split bars, timelines, hatched segments):
+`docs/diagrams.md` in the jimemo repo.
+
 ### 5. Optionally publish
 
 ```
