@@ -116,3 +116,25 @@ path, if nothing's cloned there yet.
 schema, generate content, render, optionally publish/theme) for an agent
 driving jimemo end to end. This file is the reference; that one is the
 walkthrough.
+
+## Landing changes: main is marshal-managed
+
+This repo carries a `.marshal-managed` marker at its root, which means one
+integrator ("merge marshal") is the only actor that pushes to `main`. Do not
+merge to `main` and do not push to it. Finish your branch, push it, and hand
+it off:
+
+```
+marshal-submit -r jimemo -p jimemo -t "what the branch does"
+```
+
+The marshal rebases the branch onto current `main`, runs `python3 -m pytest
+tests -q` in a throwaway checkout with a credential-free environment, and
+pushes only if the tests pass. If they fail, the kata issue comes back to you
+with a scrubbed failure comment; fix it, push again, and re-run
+`marshal-submit` — re-submission is the retry.
+
+`marshal-submit` lives in the cell-fleet repo at
+`ops/marshal/bin/marshal-submit`. The marker file is the check: if
+`.marshal-managed` is absent from a repo's root, that repo is unmanaged and
+normal merging applies.
