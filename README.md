@@ -405,6 +405,26 @@ Regenerate golden renders after a deliberate template/pipeline change:
 JIMEMO_UPDATE_GOLDENS=1 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_golden.py
 ```
 
+### Landing changes: `main` is marshal-managed
+
+This repo's `main` has one writer — the merge-marshal (see
+`.marshal-managed`). Finished work is pushed as a branch and handed off:
+
+```
+git push -u origin <branch>
+<cell-fleet>/ops/marshal/bin/marshal-submit -r jimemo -p jimemo [-i <kata-ref>]
+```
+
+GitHub enforces this with repository ruleset `marshal-only-main (rm3m)`
+(id 20598600, restrict updates on `refs/heads/main`); the sole bypass is
+the repo's deploy keys — the marshal's push identity (deploy key
+`merge-marshal azbd2 (rm3m)`, private key `azbd2:~/.ssh/marshal_deploy_jimemo`,
+ssh alias `github-marshal-jimemo`). Direct pushes and web-UI PR merges to
+`main` are rejected with GH013; retarget finished PR branches through
+`marshal-submit`. Break-glass: disable the ruleset in Settings → Rules →
+Rulesets, or
+`gh api repos/Joi/jimemo/rulesets/20598600 -X PUT -f enforcement=disabled`.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE). Third-party credits (vendored libraries,
