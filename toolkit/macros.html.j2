@@ -242,3 +242,19 @@
   {%- endfor %}
 </div>
 {%- endmacro %}
+
+{#- evidence_legend: a list of {tag, meaning} rows explaining a research
+    document's evidence-tag conventions. -#}
+{% macro evidence_legend(items, title="How to read the evidence tags") -%}
+<section class="jm-evidence-legend" aria-label="{{ title }}">
+  <p class="jm-evidence-legend__title">{{ title }}</p>
+  <dl class="jm-evidence-legend__list">
+    {%- for it in items %}
+    <div class="jm-evidence-legend__row">
+      <dt><code>{{ it.tag }}</code></dt>
+      <dd>{{ it.meaning }}</dd>
+    </div>
+    {%- endfor %}
+  </dl>
+</section>
+{%- endmacro %}

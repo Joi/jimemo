@@ -63,8 +63,9 @@ ln -s /path/to/jimemo/skill    ~/.amplifier/skills/jimemo # Amplifier
 
 ## Usage
 
-Seven seed templates ship in `templates/`: `briefing`, `chart-dashboard`,
-`data-dashboard`, `genealogy`, `ops-board`, `photo-catalog`, `timeline`.
+Eight seed templates ship in `templates/`: `briefing`, `chart-dashboard`,
+`data-dashboard`, `genealogy`, `ops-board`, `photo-catalog`,
+`research-bible`, `timeline`.
 
 List what's available:
 
@@ -76,6 +77,7 @@ data-dashboard	/path/to/jimemo/templates/data-dashboard
 genealogy	/path/to/jimemo/templates/genealogy
 ops-board	/path/to/jimemo/templates/ops-board
 photo-catalog	/path/to/jimemo/templates/photo-catalog
+research-bible	/path/to/jimemo/templates/research-bible
 timeline	/path/to/jimemo/templates/timeline
 ```
 
@@ -150,6 +152,34 @@ Add `--pdf [PATH]` to also write a PDF (default: the HTML path with
 `.pdf` swapped in), or give `-o` a `.pdf` extension instead for PDF
 only — no HTML file gets written. Both need a locally installed
 Chromium-family browser; see "The draft loop" below.
+
+### Research documents
+
+The `research-bible` template renders the output of a retrieval-first
+research pipeline — [deeper-research](https://github.com/nraford7/deeper-research)
+is the shape it was built against — as one navigable page: a
+corpus-provenance stat row, an evidence-tag legend, a numbered contents
+block, one anchored section per research position, an unresolved-links
+notice, and a bibliography.
+
+Mapping a deeper-research run onto the content file:
+
+- Each file in the run's `sections/` becomes one `sections:` item
+  (`heading` from the file's title, `body` from its markdown).
+- `bibliography.md` becomes the `bibliography:` slot.
+- The `## ⚠ Unresolved links` block, if the verifier emitted one,
+  becomes the `unresolved:` slot.
+- Corpus stats from the Bible's provenance line (sources, slices,
+  evidence gate, adversary) become `provenance:` stat tiles, and the
+  "how to read the evidence tags" legend becomes `legend:` rows.
+- Convert `<!-- editorial:background -->` … `<!-- /editorial -->` fences
+  to blockquotes with a bold **Background.** lead — the sanitizer strips
+  HTML comments, and inside a research section the template styles
+  blockquotes as background asides, keeping orienting context visually
+  fenced off from corpus findings.
+
+The sample (`templates/research-bible/sample/content.md`) shows every
+slot filled from a real deeper-research run.
 
 ### The draft loop
 

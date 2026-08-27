@@ -1,0 +1,107 @@
+/* evidence — research-document furniture: an evidence-tag legend,
+ * background-context asides (blockquotes inside research sections),
+ * an unresolved-links warning block, and compact bibliography type.
+ * Used by the research-bible template. */
+
+.jm-evidence-legend {
+  margin-block: var(--jm-space-6);
+  padding-block: var(--jm-space-4);
+  border-block: 1px solid var(--jm-border);
+}
+
+.jm-evidence-legend__title {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-muted);
+  margin-block-end: var(--jm-space-3);
+}
+
+.jm-evidence-legend__list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: var(--jm-space-4);
+  row-gap: var(--jm-space-2);
+}
+
+.jm-evidence-legend__row {
+  display: contents;
+}
+
+.jm-evidence-legend__list dt {
+  margin: 0;
+}
+
+.jm-evidence-legend__list dt code {
+  font-family: var(--jm-font-mono);
+  font-size: var(--jm-text-sm);
+  color: var(--jm-accent);
+  background: var(--jm-surface);
+  padding: 0.1em 0.4em;
+  border-radius: var(--jm-radius-sm);
+  white-space: nowrap;
+}
+
+.jm-evidence-legend__list dd {
+  margin: 0;
+  font-size: var(--jm-text-sm);
+  color: var(--jm-text);
+  line-height: var(--jm-leading-body);
+}
+
+@media (max-width: 480px) {
+  .jm-evidence-legend__list {
+    grid-template-columns: 1fr;
+    row-gap: var(--jm-space-1);
+  }
+  .jm-evidence-legend__list dd {
+    margin-block-end: var(--jm-space-2);
+  }
+}
+
+/* Background-context asides. Research documents fence orienting
+ * context off from corpus findings; the content convention maps those
+ * fences to blockquotes, so inside a research section a blockquote is
+ * an aside, not a quotation. */
+.jm-research-section .jm-prose blockquote {
+  margin-inline: 0;
+  margin-block: var(--jm-space-4);
+  padding: var(--jm-space-3) var(--jm-space-4);
+  background: var(--jm-surface);
+  border-inline-start: 3px solid var(--jm-accent);
+  border-radius: var(--jm-radius-sm);
+  font-size: var(--jm-text-sm);
+  font-style: normal;
+}
+
+.jm-unresolved {
+  margin-block: var(--jm-space-6);
+  padding: var(--jm-space-4);
+  border: 1px solid var(--jm-negative);
+  border-radius: var(--jm-radius-md);
+}
+
+.jm-unresolved__title {
+  font-family: var(--jm-font-ui);
+  font-size: var(--jm-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--jm-tracking-caps);
+  color: var(--jm-negative);
+  margin-block: 0 var(--jm-space-2);
+}
+
+.jm-unresolved .jm-prose {
+  font-size: var(--jm-text-sm);
+}
+
+.jm-bibliography .jm-prose {
+  font-size: var(--jm-text-sm);
+}
+
+.jm-bibliography .jm-prose li {
+  margin-block: var(--jm-space-1);
+}

@@ -1,0 +1,71 @@
+{#- research-bible — a deep-research reference document: masthead,
+    corpus-provenance stat row, purpose/field-map prose, evidence-tag
+    legend, contents, one anchored section per research position, an
+    unresolved-links notice, and a bibliography. Built for the output
+    of retrieval-first research pipelines (e.g. deeper-research).
+    Extends the toolkit page skeleton; components used: page-header,
+    stat-tile, toc, evidence. -#}
+{% extends "page.html.j2" %}
+{% import "macros.html.j2" as ui %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{{ ui.page_header(title,
+     kicker=kicker|default(none),
+     subtitle=subtitle|default(none),
+     meta=([date] if date|default(none) else [])) }}
+
+{% set prov = provenance|default([]) %}
+{% if prov %}
+{{ ui.stat_row(prov) }}
+{% endif %}
+
+{% if body|default(none) %}
+<div class="jm-prose">
+{{ body }}
+</div>
+{% endif %}
+
+{% set legend_items = legend|default([]) %}
+{% if legend_items %}
+{{ ui.evidence_legend(legend_items) }}
+{% endif %}
+
+{% set toc_items = [] %}
+{% for s in sections -%}
+  {%- set _ = toc_items.append({"label": s.heading, "href": "#sec-" ~ loop.index}) -%}
+{%- endfor %}
+{% if unresolved|default(none) %}{% set _ = toc_items.append({"label": "Unresolved links", "href": "#unresolved"}) %}{% endif %}
+{% if bibliography|default(none) %}{% set _ = toc_items.append({"label": "Bibliography", "href": "#bibliography"}) %}{% endif %}
+{{ ui.toc(toc_items) }}
+
+{% for s in sections %}
+<section class="jm-research-section" id="sec-{{ loop.index }}">
+<div class="jm-prose">
+<h2>{{ s.heading }}</h2>
+{{ s.body }}
+</div>
+</section>
+{% endfor %}
+
+{% if unresolved|default(none) %}
+<section class="jm-unresolved" id="unresolved">
+<p class="jm-unresolved__title">&#9888; Unresolved links</p>
+<div class="jm-prose">
+{{ unresolved }}
+</div>
+</section>
+{% endif %}
+
+{% if bibliography|default(none) %}
+<section class="jm-bibliography" id="bibliography">
+<div class="jm-prose">
+<h2>Bibliography</h2>
+{{ bibliography }}
+</div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block footer %}{% if colophon|default(none) %}{{ colophon }} &middot; {% endif %}Rendered with jimemo{% endblock %}

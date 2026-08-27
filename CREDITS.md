@@ -18,6 +18,12 @@ source.
 | pytest-dev | https://github.com/pytest-dev/pytest-html/blob/master/docs/user_guide.rst | Explicit warnings over silent failure when an asset can't be inlined, rather than quietly leaving a linked file as an external reference in "self-contained" mode. |
 | Author of cr0x.net | https://cr0x.net/en/dark-mode-toggle-pattern/ | Three-state (`system`/`light`/`dark`) theme attribute pattern on the document root, reacting to both the attribute and `prefers-color-scheme`, instead of a two-state light/dark toggle. |
 
+## Sample content
+
+| Template | Source |
+| --- | --- |
+| research-bible | Sample adapted (heavily trimmed) from the goal-elicitation example Bible bundled with [deeper-research](https://github.com/nraford7/deeper-research) (Noah Raford, MIT license); the template's slot structure mirrors that pipeline's output. |
+
 ## Vendored libraries
 
 Every jimemo dependency is vendored into the repo (`vendor/`,

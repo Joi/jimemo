@@ -30,7 +30,7 @@ def test_seed_templates_present():
     # cases than intended (e.g. a template dir missing manifest.json).
     assert sorted(SEED_NAMES) == [
         "briefing", "chart-dashboard", "data-dashboard", "genealogy",
-        "ops-board", "photo-catalog", "timeline",
+        "ops-board", "photo-catalog", "research-bible", "timeline",
     ]
 
 

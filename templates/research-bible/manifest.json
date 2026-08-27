@@ -1,0 +1,37 @@
+{
+  "name": "research-bible",
+  "version": 1,
+  "title": "Research Bible",
+  "description": "A deep-research reference document: corpus-provenance stat row, evidence-tag legend, contents, one anchored section per research position, unresolved-links notice, bibliography. Built for the output of retrieval-first research pipelines (e.g. deeper-research).",
+  "slots": {
+    "title": {"type": "text", "required": true},
+    "subtitle": {"type": "text"},
+    "date": {"type": "text"},
+    "kicker": {"type": "text"},
+    "provenance": {
+      "type": "data",
+      "items": {"label": "text", "value": "text"}
+    },
+    "body": {"type": "markdown"},
+    "legend": {
+      "type": "data",
+      "items": {"tag": "text", "meaning": "text"}
+    },
+    "sections": {
+      "type": "data",
+      "required": true,
+      "items": {"heading": "text", "body": "markdown"}
+    },
+    "unresolved": {"type": "markdown"},
+    "bibliography": {"type": "markdown"},
+    "colophon": {"type": "text"}
+  },
+  "components": ["page-header", "stat-tile", "toc", "evidence"],
+  "charts": [],
+  "suitability": {
+    "keywords": ["research", "evidence", "citations", "bibliography", "sources", "literature", "corpus", "findings", "bible"],
+    "content_kinds": ["narrative"],
+    "good_for": "A long, fully-cited research reference document: corpus provenance, evidence-tag legend, position sections, and a bibliography.",
+    "labeled_hash": "f375e274a32031c8b5fca020f6d28a18c5474985ea7b4f0d1d0bf115c138005c"
+  }
+}
