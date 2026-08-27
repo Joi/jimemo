@@ -183,8 +183,10 @@ Mapping a deeper-research run onto the content file:
   research section gets the aside treatment, so keep verbatim source
   quotations inline (quotation marks) rather than in blockquote form.
 
-The sample (`templates/research-bible/sample/content.md`) shows every
-slot filled from a real deeper-research run.
+The sample (`templates/research-bible/sample/content.md`) fills every
+slot: its prose and citations are adapted from a real deeper-research
+run's Bible, while the unresolved-links block is invented for
+illustration (that run's verification left nothing unresolved).
 
 ### The draft loop
 

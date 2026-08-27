@@ -83,10 +83,10 @@ sections:
       own uncertainty beats imitating when humans ask [Testoni &
       Fernández, 2024] [confidence: early, fast-moving literature].
 unresolved: |
-  Illustrative sample text: two bibliography entries did not resolve at
-  verification time and are retained with their retrieval snapshots — one
-  publisher page timed out (snapshot on file), and one link moved behind
-  a redirect chain the probe refuses to follow.
+  Invented for illustration — the run this sample adapts left nothing
+  unresolved. This block shows how a verifier's unresolved-links report
+  would render: which entries failed, why, and what was retained in
+  their place.
 bibliography: |
   - Fitzsimmons-Craft, E. E., et al. (2024). Optimizing a chatbot for
     eating-disorders services uptake: a factorial trial. *International
