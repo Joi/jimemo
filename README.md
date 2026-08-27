@@ -164,9 +164,12 @@ notice, and a bibliography.
 
 Mapping a deeper-research run onto the content file:
 
-- Each file in the run's `sections/` becomes one `sections:` item
-  (`heading` from the file's title, `body` from its markdown).
-- `bibliography.md` becomes the `bibliography:` slot.
+- Each file in the run's `sections/` except `bibliography.md` becomes
+  one `sections:` item — `heading` from the file's title line, `body`
+  from the markdown below it (drop the title line from the body; the
+  template renders the heading itself).
+- `sections/bibliography.md` becomes the `bibliography:` slot, its own
+  title line dropped the same way.
 - The `## ⚠ Unresolved links` block, if the verifier emitted one,
   becomes the `unresolved:` slot.
 - Corpus stats from the Bible's provenance line (sources, slices,
@@ -176,7 +179,9 @@ Mapping a deeper-research run onto the content file:
   to blockquotes with a bold **Background.** lead — the sanitizer strips
   HTML comments, and inside a research section the template styles
   blockquotes as background asides, keeping orienting context visually
-  fenced off from corpus findings.
+  fenced off from corpus findings. The tradeoff: every blockquote in a
+  research section gets the aside treatment, so keep verbatim source
+  quotations inline (quotation marks) rather than in blockquote form.
 
 The sample (`templates/research-bible/sample/content.md`) shows every
 slot filled from a real deeper-research run.

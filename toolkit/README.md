@@ -1,7 +1,7 @@
 # jimemo toolkit
 
 The design system every jimemo template renders through: design tokens,
-base typography, nine components, and their Jinja2 macros. Templates
+base typography, its components, and their Jinja2 macros. Templates
 import the macros and declare which components they use; the renderer
 inlines only that CSS into the final single-file page.
 
@@ -221,6 +221,21 @@ Items nest via `children`.
      {"label": "Overview", "href": "#overview"},
      {"label": "Calendar", "href": "#calendar",
       "children": [{"label": "July onward", "href": "#july"}]},
+   ]) }}
+```
+
+### evidence
+
+Research-document furniture: an evidence-tag legend (definition-list
+grid), background-aside styling for blockquotes inside
+`.jm-research-section`, an unresolved-links warning block, and compact
+bibliography type. The legend has a macro; the rest are classes the
+research-bible template emits directly.
+
+```jinja
+{{ ui.evidence_legend([
+     {"tag": "[Author, Year]", "meaning": "An attributed claim."},
+     {"tag": "FLAG", "meaning": "A number resting on a single source."},
    ]) }}
 ```
 

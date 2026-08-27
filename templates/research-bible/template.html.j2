@@ -16,7 +16,13 @@
      subtitle=subtitle|default(none),
      meta=([date] if date|default(none) else [])) }}
 
-{% set prov = provenance|default([]) %}
+{#- Normalize data-slot rows before handing them to shared macros:
+    item fields are optional under the manifest schema, and the
+    environment renders with StrictUndefined. -#}
+{% set prov = [] %}
+{% for p in provenance|default([]) -%}
+  {%- set _ = prov.append({"value": p.value|default(""), "label": p.label|default("")}) -%}
+{%- endfor %}
 {% if prov %}
 {{ ui.stat_row(prov) }}
 {% endif %}
@@ -27,14 +33,17 @@
 </div>
 {% endif %}
 
-{% set legend_items = legend|default([]) %}
+{% set legend_items = [] %}
+{% for l in legend|default([]) -%}
+  {%- set _ = legend_items.append({"tag": l.tag|default(""), "meaning": l.meaning|default("")}) -%}
+{%- endfor %}
 {% if legend_items %}
 {{ ui.evidence_legend(legend_items) }}
 {% endif %}
 
 {% set toc_items = [] %}
 {% for s in sections -%}
-  {%- set _ = toc_items.append({"label": s.heading, "href": "#sec-" ~ loop.index}) -%}
+  {%- set _ = toc_items.append({"label": s.heading|default("Section " ~ loop.index), "href": "#sec-" ~ loop.index}) -%}
 {%- endfor %}
 {% if unresolved|default(none) %}{% set _ = toc_items.append({"label": "Unresolved links", "href": "#unresolved"}) %}{% endif %}
 {% if bibliography|default(none) %}{% set _ = toc_items.append({"label": "Bibliography", "href": "#bibliography"}) %}{% endif %}
@@ -43,8 +52,8 @@
 {% for s in sections %}
 <section class="jm-research-section" id="sec-{{ loop.index }}">
 <div class="jm-prose">
-<h2>{{ s.heading }}</h2>
-{{ s.body }}
+<h2>{{ s.heading|default("Section " ~ loop.index) }}</h2>
+{{ s.body|default("") }}
 </div>
 </section>
 {% endfor %}
