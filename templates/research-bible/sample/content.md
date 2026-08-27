@@ -58,11 +58,11 @@ sections:
       hypothesized mediator — client change talk — carries
       [disputed: mediation estimates range from strong to null across the
       Magill et al. (2014, 2018) meta-analyses]. What survives review is
-      the practical toolkit:
-      open questions, reflective listening, and rolling with resistance
-      outperform confrontation in engagement outcomes [Miller & Rollnick,
-      2013] [confidence: strong within addiction and health-behavior
-      trials; transfer beyond them thinner].
+      the practical toolkit codified in Miller & Rollnick (2013) — open
+      questions, reflective listening, rolling with resistance — with the
+      process evidence against confrontation coming from the same Magill
+      et al. meta-analyses [confidence: strong within addiction and
+      health-behavior trials; transfer beyond them thinner].
   - heading: "What the questioning literature actually supports"
     body: |
       The process evidence favors subtraction over addition: across two
@@ -83,10 +83,10 @@ sections:
       own uncertainty beats imitating when humans ask [Testoni &
       Fernández, 2024] [confidence: early, fast-moving literature].
 unresolved: |
-  Two bibliography entries did not resolve at verification time and are
-  retained with their retrieval snapshots: the Schoeb (2014) publisher page
-  timed out (snapshot on file), and one Meta Stack Exchange thread moved
-  behind a redirect chain the probe refuses to follow.
+  Illustrative sample text: two bibliography entries did not resolve at
+  verification time and are retained with their retrieval snapshots — one
+  publisher page timed out (snapshot on file), and one link moved behind
+  a redirect chain the probe refuses to follow.
 bibliography: |
   - Fitzsimmons-Craft, E. E., et al. (2024). Optimizing a chatbot for
     eating-disorders services uptake: a factorial trial. *International
