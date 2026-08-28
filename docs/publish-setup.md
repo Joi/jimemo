@@ -21,26 +21,59 @@ one-time dashboard action), so the wizard prints the exact command or
 dashboard step and asks you to supply the resulting id instead of trying
 to fake automating it.
 
-## Single-machine limitation (read this)
+## The wipe-by-deploy hazard, and the git fix (read this)
 
-Unlike notes.ito.com, which deploys from a git-committed `public/` tree,
-the `cloudflare` backend deploys from a local, unsynced state directory:
+The `cloudflare` backend deploys from a local state directory:
 `~/.jimemo/cloudflare/<project>/`. That directory accumulates every hash
-this machine has ever published and is the *only* source of truth for
-what the next deploy will contain -- `jimemo publish` always redeploys
-the whole directory, replacing the production tree wholesale.
+this machine has published and is the *only* source of truth for what
+the next deploy will contain -- `jimemo publish` always redeploys the
+whole directory, replacing the production tree wholesale. Publishing
+from a second machine (or a reinstalled first one) whose copy is missing
+hashes silently 404s every one of them. notes.ito.com hit exactly this
+three times in production before fixing it by syncing its tree through
+git; jimemo ships the same fix, opt-in.
 
-**Publish from one machine per Cloudflare project.** If you publish from
-a second machine (or reinstall/wipe the first one) without that
-directory, the next `jimemo publish` deploys a directory missing every
-hash the first machine ever published -- silently 404ing all of them,
-with no warning. If you need multiple machines, sync
-`~/.jimemo/cloudflare/<project>/` between them yourself (e.g. a private
-git repo, or Dropbox/Syncthing) before publishing from the second one.
-`jimemo publish setup` and `jimemo publish` do not check for this --
-there's no reliable way to detect a stale/empty local copy through the
-wrangler seam (KV only records tombstoned hashes, not what's currently
-live), so this is a documentation-only guardrail, not a code one.
+**Single machine:** nothing to do. A state dir that is not a git repo
+behaves as it always has, and git is never invoked.
+
+**Multiple machines: make the state dir a git repo.** Create a PRIVATE
+empty repo (the pages are unlisted-by-hash; their content does not
+belong in a public repo), then on the machine that has the state dir:
+
+```
+cd ~/.jimemo/cloudflare/<project>
+git init
+git remote add origin git@github.com:you/jimemo-notes-state.git
+git add -A && git commit -m init && git push -u origin HEAD
+```
+
+On every other machine, clone it into place instead:
+
+```
+git clone git@github.com:you/jimemo-notes-state.git ~/.jimemo/cloudflare/<project>
+```
+
+From then on every deploying operation — `jimemo publish`, `jimemo
+publish gc`, `publish setup` re-runs, and `setup --assets-only` — syncs
+automatically, mirroring notes.ito.com's model and ordering:
+
+- **Dirty tree refused.** Local edits or deletions of tracked files
+  would ship wholesale on the next deploy (a deleted tracked hash
+  silently removes that live page), so they refuse the deploy;
+  untracked strays only warn.
+- **Pull before staging** (fast-forward to origin's default branch): a
+  deploy always ships the union of every machine's pages. Divergence or
+  an unreachable origin refuses the deploy with the git error.
+- **Commit + push BEFORE deploying**: the mutation lands on origin
+  first, so no other machine can pull-and-deploy a tree that lacks it.
+  Commits are pathspec-limited to the touched paths — an unrelated file
+  in the state dir is never swept in. A push rejected by a racing
+  machine is retried once via fetch + rebase (folding their pages in);
+  if the push still does not land, the deploy proceeds only when origin
+  provably has nothing newer, and otherwise refuses — the change stays
+  committed locally and rides out with the next successful publish.
+- **`--no-sync`** skips all of it for a deliberate emergency deploy
+  from a copy you know is current.
 
 ## Steps a friend runs for real
 

@@ -321,7 +321,7 @@ def test_publish_setup_without_dry_run_flag_defaults_false(monkeypatch):
     # rather than silently behaving like --dry-run.
     seen_dry_run = None
 
-    def fake_run_setup(dry_run, wrangler, config_path, io):
+    def fake_run_setup(dry_run, wrangler, config_path, io, **kw):
         nonlocal seen_dry_run
         seen_dry_run = dry_run
 
@@ -626,7 +626,7 @@ def _publish_env(tmp_path, monkeypatch):
     cfg.write_text('[publish]\nbackend = "command"\ncommand = "true"\n')
     monkeypatch.setenv("JIMEMO_CONFIG", str(cfg))
     fake = FakePublisher()
-    monkeypatch.setattr("jimemo.publish.get_publisher", lambda cfg: fake)
+    monkeypatch.setattr("jimemo.publish.get_publisher", lambda cfg, **kw: fake)
     return fake
 
 

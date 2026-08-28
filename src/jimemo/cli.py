@@ -612,7 +612,8 @@ def cmd_publish(args) -> int:
         from .publish.wrangler import Wrangler
 
         try:
-            run_setup(args.dry_run, Wrangler(), config_path(), RealIO())
+            run_setup(args.dry_run, Wrangler(), config_path(), RealIO(),
+                      no_sync=getattr(args, "no_sync", False))
         except PublishError as e:
             print(str(e), file=sys.stderr)
             return 1
@@ -622,7 +623,7 @@ def cmd_publish(args) -> int:
     from .publish import get_publisher
 
     try:
-        publisher = get_publisher(load_config())
+        publisher = get_publisher(load_config(), no_sync=getattr(args, "no_sync", False))
     except (ConfigError, PublishError) as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -909,6 +910,12 @@ def main(argv=None) -> int:
         help="with setup: refresh the cloudflare state dir's bundled "
         "assets (middleware, headers, index) and redeploy, touching "
         "neither hashes nor config.toml — the after-upgrade path",
+    )
+    publish_p.add_argument(
+        "--no-sync",
+        action="store_true",
+        help="cloudflare backend: skip the state-dir git pull/commit/push "
+        "for a deliberate deploy of exactly this machine's copy",
     )
     publish_p.add_argument(
         "--dry-run", action="store_true",

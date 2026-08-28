@@ -414,8 +414,11 @@ of one-time steps (creating the KV namespace, binding it to the Pages
 project as `TOMBSTONES`) have no wrangler CLI equivalent, so the wizard
 prints the exact manual command or dashboard step instead of faking
 automation of it. See [`docs/publish-setup.md`](docs/publish-setup.md)
-for the full walkthrough, including the single-machine state-directory
-limitation. Preview the whole plan without touching any account:
+for the full walkthrough — including publishing from several machines,
+where making the state directory a git repo turns on automatic
+syncing — dirty-tree refusal, pull, then commit + push before every
+deploy (the same model notes.ito.com uses); `--no-sync` skips it for
+one deploy. Preview the whole plan without touching any account:
 
 ```
 $ jimemo publish setup --dry-run
@@ -431,8 +434,8 @@ between read and purge — anyone with the link can view or purge it,
 nobody without the link can find it. Purging tombstones the hash
 (subsequent requests 404) rather than deleting the underlying file;
 `gc` is the separate step that removes tombstoned files. Full details,
-including the `cloudflare` backend's single-machine limitation, are in
-[`docs/publish-setup.md`](docs/publish-setup.md).
+including multi-machine publishing via a git-synced state directory,
+are in [`docs/publish-setup.md`](docs/publish-setup.md).
 
 ## Security posture
 

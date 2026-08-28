@@ -47,8 +47,12 @@ class Publisher(abc.ABC):
         them, or None when an external command reports for itself."""
 
 
-def get_publisher(config: Config) -> Publisher:
+def get_publisher(config: Config, no_sync: bool = False) -> Publisher:
     """Resolve config.publish.backend to a Publisher instance.
+
+    `no_sync` skips the cloudflare backend's optional git state-dir
+    synchronization for this invocation (see publish/gitsync.py); the
+    command backend has no jimemo-side sync to skip.
 
     Raises PublishError if no [publish] section is configured, the
     backend name is unrecognized, or the backend module can't be
@@ -73,7 +77,7 @@ def get_publisher(config: Config) -> Publisher:
             from .cloudflare_backend import CloudflarePublisher
         except ImportError as e:
             raise PublishError(f'"cloudflare" backend is not available: {e}')
-        return CloudflarePublisher(config.publish)
+        return CloudflarePublisher(config.publish, no_sync=no_sync)
 
     raise PublishError(
         f"unknown publish backend {backend!r} (must be one of: {', '.join(BACKENDS)})"

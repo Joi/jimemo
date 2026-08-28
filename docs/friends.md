@@ -74,7 +74,8 @@ jimemo publish setup --dry-run
 
 Full walkthrough, including a couple of one-time steps the wizard can't
 automate (creating a KV namespace, binding it to the Pages project) and
-the single-machine limitation of this backend: `docs/publish-setup.md`.
+how to publish from several machines safely (make the state directory a
+git repo; jimemo then syncs it around every deploy): `docs/publish-setup.md`.
 
 Once configured:
 

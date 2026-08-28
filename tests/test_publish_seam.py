@@ -54,8 +54,9 @@ def test_registry_resolves_cloudflare_backend_by_name(monkeypatch):
     fake_mod = types.ModuleType("jimemo.publish.cloudflare_backend")
 
     class FakeCloudflarePublisher:
-        def __init__(self, publish_config):
+        def __init__(self, publish_config, no_sync=False):
             self.publish_config = publish_config
+            self.no_sync = no_sync
 
     fake_mod.CloudflarePublisher = FakeCloudflarePublisher
     monkeypatch.setitem(sys.modules, "jimemo.publish.cloudflare_backend", fake_mod)

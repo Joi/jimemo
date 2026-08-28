@@ -72,9 +72,10 @@ def _seed_strays(state_dir: Path) -> set:
     dir accumulates. Returns the set of top-level stray names so tests
     can assert they survive in the state dir but never deploy."""
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / ".git").mkdir()
-    (state_dir / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
-    (state_dir / ".git" / "config").write_text("[core]\n")
+    # a real (origin-less) repo: sync does not opt in without an origin
+    # remote, but the .git dir must still never reach a deploy
+    import subprocess as _sp
+    _sp.run(["git", "init", "-q", str(state_dir)], check=True)
     (state_dir / ".DS_Store").write_bytes(b"\x00Bud1")
     (state_dir / "index (conflicted copy).html").write_text("<html>conflict</html>")
     (state_dir / "notes.html~").write_text("<html>backup</html>")

@@ -31,7 +31,7 @@ class _FakePublisher(Publisher):
 
 
 def _run_publish(monkeypatch, target, publisher):
-    monkeypatch.setattr("jimemo.publish.get_publisher", lambda config: publisher)
+    monkeypatch.setattr("jimemo.publish.get_publisher", lambda config, **kw: publisher)
     monkeypatch.setattr("jimemo.config.load_config", lambda *a, **k: object())
     args = argparse.Namespace(target=target, arg=None, title=None, dry_run=False)
     return cli.cmd_publish(args)

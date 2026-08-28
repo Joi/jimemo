@@ -46,7 +46,7 @@ Every subcommand has its own `--help`; this is the map, not the manual.
 | `jimemo scaffold <template> [-o OUT]` | emits a fill-in content skeleton for a template's slots (.md frontmatter, or .yaml when the template has no body slot) |
 | `jimemo new-template <name>` | scaffolds a personal template under `~/.jimemo/templates/<name>/` |
 | `jimemo import-design <export-dir>\|--from NAME [--name NAME] [--embed-fonts]` | parses a Claude-design export into a jimemo theme at `~/.jimemo/themes/<name>.css`; `--from NAME` resolves `~/.jimemo/design-systems/NAME/` instead of a positional path |
-| `jimemo publish <file>` / `purge <hash-or-url>` / `list` / `gc` / `setup [--dry-run]` | publishes a rendered file to an unlisted link and manages it; HTML files are re-verified for self-containment first (`--no-verify` skips); `setup` provisions a backend in `~/.jimemo/config.toml` |
+| `jimemo publish <file>` / `purge <hash-or-url>` / `list` / `gc` / `setup [--dry-run]` | publishes a rendered file to an unlisted link and manages it; HTML files are re-verified for self-containment first (`--no-verify` skips); `setup` provisions a backend in `~/.jimemo/config.toml`; `--no-sync` skips the cloudflare backend's git state-dir sync for one deploy |
 
 ## The content contract
 

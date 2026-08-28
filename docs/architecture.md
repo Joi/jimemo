@@ -47,6 +47,10 @@ contract in detail.
   - `errors.py` — `ManifestError`/`ContentError`/`ScaffoldError`/
     `ConfigError`/`PublishError`/`DesignImportError`/`PdfError`: domain
     errors the CLI prints as a plain message (no traceback), exit 1.
+  - `publish/gitsync.py` — optional git synchronization of the
+    cloudflare backend's state directory (dirty-tree refusal,
+    fast-forward pull, commit + push before deploy); opt in by making
+    the state dir a git repo with an `origin` remote.
   - `discovery.py`, `checksums.py`, `_paths.py`, `_vendor.py` — template
     discovery, vendor checksum verification, and `sys.path` setup
     (vendor verification and discovery plumbing).

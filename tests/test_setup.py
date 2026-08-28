@@ -712,8 +712,8 @@ def test_setup_deploy_excludes_synced_strays_from_a_pre_seeded_state_dir(tmp_pat
     _patch_home(monkeypatch, tmp_path)
     state_dir = _default_state_dir("friend-notes")
     state_dir.mkdir(parents=True)
-    (state_dir / ".git").mkdir()
-    (state_dir / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    import subprocess as _sp
+    _sp.run(["git", "init", "-q", str(state_dir)], check=True)
     (state_dir / ".DS_Store").write_bytes(b"\x00Bud1")
     (state_dir / "index (conflicted copy).html").write_text("<html>conflict</html>")
 

@@ -68,21 +68,18 @@ Concretely, this wizard:
     site (see docs/publish-setup.md for the manual live-verification
     steps).
 
-Single-machine limitation (loudly, on purpose)
------------------------------------------------
-Unlike notes-ito-com's git-committed ``public/`` tree, the state
-directory this backend deploys from is local-only: no git, no sync, no
-`check_deploy_freshness()`-style guard against a stale/empty copy. This
-wizard and docs/publish-setup.md both say so explicitly: publish from
-ONE machine per Cloudflare project, or sync
-``~/.jimemo/cloudflare/<project>/`` (e.g. via git or Dropbox) across
-every machine that publishes to it. Publishing from a second machine
-whose local state directory is missing prior hashes will deploy over
-them -- there is no reliable, seam-available signal to detect this
-automatically (``kv_list`` only enumerates tombstoned hashes, not what a
-live deploy is currently serving, and there's no HTTP client here to ask
-the deployed site directly), so this wizard does not attempt an
-automatic freshness check; it only documents the limitation.
+Multi-machine sync (publish/gitsync.py)
+---------------------------------------
+The state directory deploys wholesale, so a stale copy silently wipes
+other machines' pages. The fix mirrors notes-ito-com's git-committed
+``public/`` tree: make ``~/.jimemo/cloudflare/<project>/`` itself a git
+repo with an ``origin`` remote (see docs/publish-setup.md), and every
+deploying operation — publish, gc, refresh-assets, and this wizard's
+own deploy step — refuses a dirty tree, fast-forwards to the union,
+and commits + pushes what it changed BEFORE deploying. A state dir
+that is not a git repo keeps the original single-machine behavior:
+publish from one machine per project, and know that a second machine's
+publish would deploy over the first's pages.
 
 Secrets: this module never reads, stores, or prints the value of
 CLOUDFLARE_API_TOKEN. It only checks whether that variable is *set*, to
@@ -111,6 +108,7 @@ from .cloudflare_backend import (
     _default_state_dir,
     _install_state_dir_assets,
 )
+from . import gitsync
 from .wrangler import NO_WRANGLER_MESSAGE
 
 DEFAULT_PROJECT_NAME = "jimemo-notes"
@@ -421,7 +419,8 @@ def _write_config(
     config_path.write_text(content)
 
 
-def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
+def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO,
+              no_sync: bool = False) -> None:
     """Run the cloudflare-backend setup wizard.
 
     In --dry-run: prints the full plan (every step, every wrangler
@@ -567,6 +566,17 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
         "on this call and on every future `jimemo publish`; see module "
         "docstring)"
     )
+    sync = False
+    if not dry_run and state_dir.exists():
+        # A state dir synced through git (see publish/gitsync.py) gets
+        # the same protocol as publish(): refuse a dirty tree, pull the
+        # union, and later push the refreshed assets before deploying —
+        # a setup re-run from a stale clone must not wipe remote-only
+        # pages.
+        sync = (not no_sync) and gitsync.is_synced_repo(state_dir)
+        if sync:
+            gitsync.refuse_dirty(state_dir)
+            gitsync.pull_before_deploy(state_dir)
     if dry_run:
         io.print(f"  [dry-run] would create {state_dir}/functions/_middleware.js")
         io.print(f"  [dry-run] would create {state_dir}/_headers")
@@ -601,6 +611,14 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO) -> None:
         # running setup against a state directory already synced from
         # another machine (and possibly holding .git/, .DS_Store, etc.)
         # can never leak those files. See _build_deploy_dir's docstring.
+        if sync:
+            pushed = gitsync.commit_and_push(
+                state_dir,
+                gitsync.touched_asset_paths(),
+                "setup: install/refresh bundled assets",
+            )
+            if not pushed:
+                gitsync.verify_fresh(state_dir)
         with tempfile.TemporaryDirectory(prefix="jimemo-deploy-") as tmp:
             deploy_dir = _build_deploy_dir(state_dir, Path(tmp))
             io.print(f"  running: {_deploy_argv(project, deploy_dir)}")
