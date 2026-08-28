@@ -7,8 +7,10 @@ contract in detail.
 - `jimemo` (repo root) — CLI entry point; puts `src/` and `vendor/` on
   `sys.path`. Users never pip-install anything.
 - `src/jimemo/` — CLI implementation:
-  - `cli.py` — argparse entry point; wires the `doctor`, `list`, `render`,
-    `info`, `new-template`, `suggest` subcommands to the modules below.
+  - `cli.py` — argparse entry point; wires the `doctor`, `list`,
+    `render`, `info`, `suggest`, `scaffold`, `new-template`, `check`,
+    `pdf`, `publish`, and `import-design` subcommands to the modules
+    below.
   - `manifest.py` — `load_manifest`: parses and validates a template's
     `manifest.json` against the Manifest v1 schema.
   - `content.py` — `load_content`: parses a `.md`/`.json`/`.yaml` content
@@ -42,11 +44,12 @@ contract in detail.
     `render auto`.
   - `scaffold.py` — `create_template`: scaffolds a new personal template
     under `~/.jimemo/templates/<name>/` for `new-template`.
-  - `errors.py` — `ManifestError`/`ContentError`/`ScaffoldError`: domain
+  - `errors.py` — `ManifestError`/`ContentError`/`ScaffoldError`/
+    `ConfigError`/`PublishError`/`DesignImportError`/`PdfError`: domain
     errors the CLI prints as a plain message (no traceback), exit 1.
   - `discovery.py`, `checksums.py`, `_paths.py`, `_vendor.py` — template
     discovery, vendor checksum verification, and `sys.path` setup
-    (carried over from Phases 1-2).
+    (vendor verification and discovery plumbing).
 - `vendor/` — pinned pure-Python dependencies (Jinja2, MarkupSafe,
   Markdown, PyYAML, tomli) with `SHA256SUMS`; verified by `jimemo doctor`.
   tomli parses `~/.jimemo/config.toml` on the 3.9-3.10 floor, where
@@ -75,7 +78,7 @@ contract in detail.
   sample, compared byte-for-byte by `tests/test_golden.py`;
   `JIMEMO_UPDATE_GOLDENS=1 python3 -m pytest tests/test_golden.py`
   regenerates them.
-- `themes/` — repo-level theme token file overrides: a `<name>.css`
+- `toolkit/themes/` — repo-level theme token file overrides: a `<name>.css`
   `:root` block layered on top of `toolkit/tokens.css` by
   `assemble_css`'s `--theme NAME` resolution. `~/.jimemo/themes/` is the
   personal counterpart (mirroring `~/.jimemo/templates/` for personal

@@ -96,6 +96,10 @@ _MACOS_BUNDLES = (
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "~/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "~/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "~/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
 )
 
 
@@ -132,6 +136,7 @@ def find_browser(
         if hit:
             return hit
     for path in _MACOS_BUNDLES:
+        path = os.path.expanduser(path)
         if exists(path):
             return path
     return None

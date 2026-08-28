@@ -269,7 +269,7 @@ def test_gc_removes_tombstoned_local_dirs_and_redeploys(tmp_path):
     publisher.purge(hash1)
 
     deploys_before = len([c for c in wrangler.calls if c[0] == "pages_deploy"])
-    publisher.gc()
+    assert publisher.gc() == 1
     deploys_after = len([c for c in wrangler.calls if c[0] == "pages_deploy"])
 
     state_dir = tmp_path / "state"
@@ -286,7 +286,7 @@ def test_gc_is_a_noop_when_nothing_tombstoned(tmp_path):
     publisher.publish(html)
 
     deploys_before = len([c for c in wrangler.calls if c[0] == "pages_deploy"])
-    publisher.gc()
+    assert publisher.gc() == 0
     deploys_after = len([c for c in wrangler.calls if c[0] == "pages_deploy"])
 
     assert deploys_after == deploys_before

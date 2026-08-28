@@ -40,7 +40,7 @@ Every subcommand has its own `--help`; this is the map, not the manual.
 | `jimemo list` | lists installed templates (repo `templates/` + `~/.jimemo/templates/`) |
 | `jimemo suggest <content> [--json]` | ranks templates by fit for a content file, with reasons |
 | `jimemo info <template> [--json]` | shows a template's slot schema, components, charts, and suitability metadata |
-| `jimemo render <template\|auto> <content> [-o OUT] [--theme NAME] [--open] [--pdf [PATH]]` | renders a template + content file to one HTML file; `auto` uses the same scorer as `suggest` and falls through to the next-best template if the top pick's manifest rejects the content; `-o` ending in `.pdf` writes only a PDF |
+| `jimemo render <template\|auto> <content> [-o OUT] [--theme NAME] [--open] [--pdf [PATH]]` | renders a template + content file to one HTML file; `auto` uses the same scorer as `suggest` and falls through to the next-best template if the top pick's manifest rejects the content; `-o` ending in `.pdf` writes only a PDF; `--theme light|dark` pins the output's color mode (any other NAME applies a theme override) |
 | `jimemo check <file.html>` | verifies a rendered (possibly hand-tweaked) HTML file still meets the self-contained guarantee |
 | `jimemo pdf <file.html> [-o OUT] [--no-verify]` | converts a rendered HTML file to PDF via a locally installed Chromium-family browser (Chrome, Chromium, Edge, Brave; override with `[pdf] browser` in `~/.jimemo/config.toml`) |
 | `jimemo scaffold <template> [-o OUT]` | emits a fill-in content skeleton for a template's slots (.md frontmatter, or .yaml when the template has no body slot) |

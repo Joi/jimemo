@@ -11,7 +11,7 @@ value the chart macro may be called with). The renderer then hands lint
 the exact bodies it emitted (library + every init), and lint requires
 the page's inline scripts to equal that set — nothing forged, extra,
 duplicated, or missing. A chartless manifest injects neither name,
-leaving the Phase 3 no-script output byte-identical.
+leaving chartless no-script output byte-identical.
 """
 import sys
 from pathlib import Path
@@ -150,7 +150,7 @@ def render_page(
     context["theme"] = theme
 
     # Chartless manifests inject NOTHING here — their rendered output
-    # is byte-identical to Phase 3 (the goldens pin this). The
+    # is byte-identical to the chartless form (the goldens pin this). The
     # charts/chart_lib slot-name collision is validated authoritatively
     # in load_manifest (manifest.py), which this function has already
     # called above to obtain `manifest` — so it cannot reach this point

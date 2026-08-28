@@ -8,7 +8,7 @@ Node, no account anywhere.
 ## 1. Clone and install
 
 ```
-git clone <this repo's URL> jimemo
+git clone https://github.com/Joi/jimemo.git jimemo
 cd jimemo
 ./install.sh
 ```

@@ -5,8 +5,8 @@ into an unlisted private link (mirroring notes.ito.com's model: a
 24-hex-hash path is the access control, symmetric read/purge, tombstone
 on purge). Two backends implement `Publisher`:
 
-- "command" (Task 2): shells out to a configured CLI (e.g. notes-publish).
-- "cloudflare" (Task 4): a native Wrangler-driven Cloudflare Pages + KV
+- "command": shells out to a configured CLI (e.g. notes-publish).
+- "cloudflare": a native Wrangler-driven Cloudflare Pages + KV
   backend, for friends without an existing publish setup.
 
 Backend modules are imported lazily, inside get_publisher(), rather than
@@ -41,8 +41,10 @@ class Publisher(abc.ABC):
         """Return published entries (shape is backend-defined)."""
 
     @abc.abstractmethod
-    def gc(self) -> None:
-        """Remove tombstoned/orphaned entries."""
+    def gc(self) -> Optional[int]:
+        """Remove tombstoned/orphaned entries. Returns the number of
+        entries removed when the backend owns its storage and can count
+        them, or None when an external command reports for itself."""
 
 
 def get_publisher(config: Config) -> Publisher:
@@ -50,7 +52,7 @@ def get_publisher(config: Config) -> Publisher:
 
     Raises PublishError if no [publish] section is configured, the
     backend name is unrecognized, or the backend module can't be
-    imported (e.g. before Task 2/4 add it).
+    imported.
     """
     if config.publish is None:
         raise PublishError(

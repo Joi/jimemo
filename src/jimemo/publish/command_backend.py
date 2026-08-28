@@ -7,7 +7,7 @@ its ``publish``/``purge``/``list``/``gc`` subcommands.
 Hashing and file staging (staging.py) are NOT used here: the configured
 command owns hash generation, staging, and deploy end-to-end, which is
 the whole point of a passthrough. staging.py is for the ``cloudflare``
-backend (Task 4) instead.
+backend instead.
 
 Every subprocess call goes through the module-level ``_run`` (or an
 injected replacement) so tests never invoke a real command.
@@ -77,5 +77,6 @@ class CommandPublisher(Publisher):
         result = self._invoke(["list"], "list")
         return result.stdout.splitlines()
 
-    def gc(self) -> None:
+    def gc(self) -> Optional[int]:
         self._invoke(["gc"], "gc")
+        return None

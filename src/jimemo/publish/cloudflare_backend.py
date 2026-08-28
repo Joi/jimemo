@@ -1,6 +1,6 @@
 """The "cloudflare" publish backend: native Cloudflare Pages + KV, driven
 entirely through the Wrangler seam (wrangler.py) -- no other external CLI.
-This is the backend Task 5's `jimemo publish setup` wizard provisions for
+This is the backend the `jimemo publish setup` wizard provisions for
 a friend who doesn't already have a publish site of their own (unlike
 Joi, who keeps notes-publish/notes.ito.com authoritative via the
 `command` backend instead).
@@ -355,7 +355,7 @@ class CloudflarePublisher(Publisher):
             })
         return rows
 
-    def gc(self) -> None:
+    def gc(self) -> int:
         """Remove locally staged hash directories that are tombstoned in
         KV, then redeploy the (now smaller) accumulated content -- only if
         something was actually removed, to avoid a needless no-op deploy.
@@ -367,7 +367,7 @@ class CloudflarePublisher(Publisher):
         docstring), so gc's job is exactly notes-ito-com's `gc --apply`:
         delete tombstoned directories from disk and redeploy to shrink
         the next deploy's size. Unlike notes-ito-com's CLI, there is no
-        separate dry-run mode at this layer -- Task 5's `--dry-run` wizard
+        separate dry-run mode at this layer -- the setup wizard's `--dry-run`
         covers the "show me what would happen" need for setup; a plain
         `gc()` call here always applies.
 
@@ -389,7 +389,7 @@ class CloudflarePublisher(Publisher):
             if name and _HASH_RE.match(name):
                 tombstoned_names.add(name)
 
-        removed_any = False
+        removed = 0
         if self._state_dir.is_dir():
             for child in list(self._state_dir.iterdir()):
                 # Belt-and-suspenders: only ever rmtree a child whose own
@@ -402,8 +402,9 @@ class CloudflarePublisher(Publisher):
                     and child.name in tombstoned_names
                 ):
                     shutil.rmtree(child)
-                    removed_any = True
+                    removed += 1
 
-        if removed_any:
+        if removed:
             _ensure_state_dir_assets(self._state_dir)
             self._deploy_state_dir()
+        return removed

@@ -7,3 +7,9 @@ build/
 .superpowers/
 docs/superpowers/
 docs/research/
+
+# README example outputs
+out.html
+out.pdf
+*.pdf
+.venv/

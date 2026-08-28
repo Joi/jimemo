@@ -12,7 +12,7 @@ steps.
 ## Install
 
 ```
-git clone <this repo's URL> jimemo
+git clone https://github.com/Joi/jimemo.git jimemo
 cd jimemo
 ./install.sh
 jimemo doctor
@@ -124,11 +124,10 @@ $ jimemo suggest templates/briefing/sample/content.md
      - prose-dominant (212 words, 5 records) -> narrative
      - keyword 'briefing' matched
      - keyword 'status' matched
-2. data-dashboard  (score 3.0)
+2. chart-dashboard  (score 3.0)
      - top-level list of records -> tabular-data
-3. timeline  (score 2.0)
-     - keyword 'history' matched
-     - keyword 'log' matched
+3. data-dashboard  (score 3.0)
+     - top-level list of records -> tabular-data
 ```
 
 Render a specific template, or let `auto` pick one via the same scorer:
@@ -143,15 +142,21 @@ wrote out.html
 ```
 
 A content file is either `.md` (YAML frontmatter for every slot except
-`body`, which is the markdown after the closing `---`) or a `.json`/`.yaml`
-object keyed by slot name — see any `templates/<name>/sample/` for a real
-example. `out.html` is a single file: CSS and images inlined, nothing
+`body`, which is the markdown after the closing `---`) or a
+`.json`/`.yaml`/`.yml` object keyed by slot name — see any
+`templates/<name>/sample/` for a real example. `out.html` is a single file: CSS and images inlined, nothing
 fetched at view time; open it directly in a browser.
 
 Add `--pdf [PATH]` to also write a PDF (default: the HTML path with
 `.pdf` swapped in), or give `-o` a `.pdf` extension instead for PDF
 only — no HTML file gets written. Both need a locally installed
 Chromium-family browser; see "The draft loop" below.
+
+By default the page follows the viewer's OS light/dark preference.
+`--theme light` or `--theme dark` pins one mode in the output — worth
+doing before a PDF or print run so the result doesn't depend on the
+rendering machine's setting. Any other `--theme NAME` applies a named
+theme override (see "Import a design" below).
 
 ### Research documents
 
@@ -162,7 +167,17 @@ corpus-provenance stat row, an evidence-tag legend, a numbered contents
 block, one anchored section per research position, an unresolved-links
 notice, and a bibliography.
 
-Mapping a deeper-research run onto the content file:
+**deeper-research exports through this template automatically.** With
+jimemo on `PATH`, its `scripts/export.py` detects the install, checks
+the template with `jimemo info research-bible --json`, assembles the
+content file itself, and calls `jimemo render` — the HTML Bible lands
+next to the run's other export artifacts with no manual assembly (see
+[nraford7/deeper-research#3](https://github.com/nraford7/deeper-research/issues/3)).
+Without jimemo installed, it falls back to a bundled renderer that
+borrows this template's formatting.
+
+The manual mapping below is the reference for wiring any *other*
+research pipeline onto the template:
 
 - Each file in the run's `sections/` except `bibliography.md` becomes
   one `sections:` item — `heading` from the file's title line, `body`
@@ -175,6 +190,11 @@ Mapping a deeper-research run onto the content file:
 - Corpus stats from the Bible's provenance line (sources, slices,
   evidence gate, adversary) become `provenance:` stat tiles, and the
   "how to read the evidence tags" legend becomes `legend:` rows.
+- The document's title, subtitle, and compilation date fill `title:`,
+  `subtitle:`, and `date:`; `kicker:` is the small label above the
+  title (the sample uses "Research Bible"); introductory prose before
+  the first section becomes the markdown body; and `colophon:` is a
+  one-line production note rendered in the page footer.
 - Convert `<!-- editorial:background -->` … `<!-- /editorial -->` fences
   to blockquotes with a bold **Background.** lead — the sanitizer strips
   HTML comments, and inside a research section the template styles
@@ -261,6 +281,7 @@ ok   python 3.14.6
 ok   vendor checksums (/path/to/jimemo/vendor)
 ok   charts vendored (chart.js 4.5.1)
 ok   vendored imports (jinja2, markdown, yaml, tomli)
+ok   markdown render path (tables, fenced_code)
 ok   suitability labels fresh (or none recorded)
 ok   pdf browser (/Applications/Google Chrome.app/Contents/MacOS/Google Chrome)
 ```
@@ -442,7 +463,14 @@ Regenerate golden renders after a deliberate template/pipeline change:
 JIMEMO_UPDATE_GOLDENS=1 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/test_golden.py
 ```
 
-### Landing changes: `main` is marshal-managed
+### Contributing
+
+Open an ordinary GitHub pull request. `main` only takes writes from an
+automated merge queue on Joi's side, so a maintainer lands your branch
+for you after review — the PR itself is all you need to do. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+### Landing changes: `main` is marshal-managed (maintainers)
 
 This repo's `main` has one writer — the merge-marshal (see
 `.marshal-managed`). Finished work is pushed as a branch and handed off:

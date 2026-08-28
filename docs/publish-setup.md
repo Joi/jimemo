@@ -123,6 +123,22 @@ live), so this is a documentation-only guardrail, not a code one.
    KV's read-cache means a 404 may take up to ~60 seconds to appear
    everywhere even once the binding is correct.
 
+## Upgrading
+
+The state directory keeps its own copy of `functions/_middleware.js`,
+`_headers`, and the root index, installed at setup time. `jimemo
+publish` self-heals a *missing* file but deliberately never overwrites
+an existing one — so after a `git pull` that changes the middleware,
+existing sites keep serving the old copy until you re-run:
+
+```
+jimemo publish setup
+```
+
+against the same project. Re-running is safe: it re-copies the current
+assets into the state directory and redeploys; your published hashes
+are untouched.
+
 ## Config written
 
 `~/.jimemo/config.toml` (or `$JIMEMO_CONFIG`, if set):
@@ -147,7 +163,7 @@ which resolves its own auth the same way `setup` does.
 
 This live path (a friend's own Cloudflare account and token) is what
 Joi or a friend runs manually to confirm the `cloudflare` backend works
-end to end -- it's the one part of Phase 5 that automated tests can't
+end to end -- it's the one part of the publish subsystem automated tests can't
 cover, since it needs a real account, a real token, and a real network
 round trip. The dry-run plan and every wrangler call the wizard makes
 (project/account/namespace prompts, `pages_deploy`, `kv_put`/`kv_get`)

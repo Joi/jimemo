@@ -149,6 +149,9 @@ Prints an unlisted URL. Requires a backend configured in
 `--dry-run` to preview without writing anything) if none is configured
 yet. `jimemo publish purge <hash-or-url>` revokes a link;
 `jimemo publish list` / `jimemo publish gc` manage what's published.
+`--title "…"` names the page when the configured `command` backend
+wraps raw content itself; the `cloudflare` backend ignores it (the
+rendered HTML already carries its own `<title>`).
 
 For a PDF instead of or alongside the page: `jimemo pdf out.html`
 (after the fact), `jimemo render ... --pdf` (both), or
@@ -182,6 +185,15 @@ Never fetch, clone, or reference someone else's design export on their
 behalf without them providing it. The import is parse-only — jimemo
 reads tokens as data and never executes any code in the export
 directory.
+
+## Make a new template
+
+`jimemo new-template <name>` scaffolds a personal template under
+`~/.jimemo/templates/<name>/` (template + manifest + sample), which
+discovery picks up alongside the repo's own. Build it from the
+components documented in `toolkit/README.md`; repo (shared) templates
+are the same folder shape under `templates/<name>/` plus a golden and a
+`tests/test_selfrank.py` roster entry.
 
 ## Stale suitability labels
 

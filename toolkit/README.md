@@ -250,6 +250,55 @@ node or a list.
             "children": [{"label": "Cutting A", "meta": "2021 · E-2"}]}) }}
 ```
 
+### meta-pills
+
+A mono chip row for masthead facts (host, uptime, version). Items are
+plain strings.
+
+```jinja
+{{ ui.meta_pills(["host: azbd2", "uptime 41d", "v0.0.2"]) }}
+```
+
+### entity-card
+
+An inventory grid of cards (the ops-board's machine roster): title,
+optional badge, tag chips, label/value fields, free text. `variant` in
+`accent`/`positive`/`negative` colors the card's leading edge.
+
+```jinja
+{{ ui.entity_cards([
+     {"title": "azbd2", "badge": "live", "badge_tone": "positive",
+      "variant": "positive", "tags": ["mac", "always-on"],
+      "fields": [{"label": "role", "value": "gate host"}]},
+   ]) }}
+```
+
+### board-section
+
+Class-based, no macro: a labeled band on a board page. The template
+emits the classes directly.
+
+```jinja
+<section class="jm-board-section">
+  <h2 class="jm-board-section__heading">{{ s.heading }}</h2>
+  <p class="jm-board-section__note">{{ s.note }}</p>
+  ...
+</section>
+```
+
+### chart-block
+
+The chart-dashboard layout cell: a titled block wrapping the `ui.chart`
+macro — the only macro that emits a `<script>` (the chart's init call;
+the manifest must declare the chart so the renderer injects Chart.js).
+
+```jinja
+<section class="jm-chart-block">
+  <h2 class="jm-chart-block__title">{{ c.title }}</h2>
+  {{ ui.chart(c.id, c.init_js) }}
+</section>
+```
+
 ## Page skeleton
 
 ```jinja

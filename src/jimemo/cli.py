@@ -113,7 +113,7 @@ def cmd_doctor(args) -> int:
     if stale_names:
         for name in stale_names:
             print(f"WARNING stale suitability labels: {name} "
-                  "(template.html.j2 changed since labeling; re-run suggest tuning)")
+                  "(template.html.j2 changed since labeling; review the manifest's suitability block and set labeled_hash to the sha256 of template.html.j2)")
     else:
         print("ok   suitability labels fresh (or none recorded)")
 
@@ -130,7 +130,7 @@ def cmd_doctor(args) -> int:
         try:
             configured = _configured_browser()
         except ConfigError as e:
-            print(f"WARNING pdf config: {e}")
+            print(f"WARNING config: {e}")
             configured = None
     try:
         browser = find_browser(configured)
@@ -626,9 +626,20 @@ def cmd_publish(args) -> int:
             print(f"purged: {args.arg}")
         elif target == "list":
             for entry in publisher.list():
-                print(entry)
+                if isinstance(entry, dict):
+                    line = f"{entry.get('hash', '?')}  {entry.get('status', '?')}"
+                    if entry.get("tombstoned_at"):
+                        line += f"  tombstoned {entry['tombstoned_at']}"
+                    if entry.get("staged_locally") is False:
+                        line += "  (not staged locally)"
+                    print(line)
+                else:
+                    print(entry)
         elif target == "gc":
-            publisher.gc()
+            removed = publisher.gc()
+            if removed is not None:
+                print(f"removed {removed} tombstoned page(s)"
+                      if removed else "nothing to collect")
         elif target is None:
             print(
                 "jimemo publish: provide a file to publish, or purge/list/gc",

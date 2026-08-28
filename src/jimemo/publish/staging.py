@@ -4,7 +4,7 @@ directory, mirroring notes-ito-com's ``public/<hash>/`` layout.
 The 24-hex-char hash IS the access control (``secrets.token_hex(12)`` = 96
 bits of entropy) -- unguessable, and symmetric between read and purge.
 
-This module is for the ``cloudflare`` backend (Task 4), which hosts pages
+This module is for the ``cloudflare`` backend, which hosts pages
 itself and needs to lay out its own hash directories before deploying.
 The ``command`` backend (command_backend.py) does NOT use this: it
 delegates hashing/staging/deploy to the configured external command

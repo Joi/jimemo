@@ -94,7 +94,7 @@ class Wrangler:
         it needs no network access and no auth. Callers that skip this
         and call a method anyway still get NO_WRANGLER_MESSAGE from
         _invoke if npx turns out to be missing; this just lets a caller
-        (cloudflare_backend.py, or Task 5's setup wizard) fail fast with
+        (cloudflare_backend.py, or the setup wizard) fail fast with
         the same clear message before doing any other work.
         """
         return shutil.which(self._npx) is not None
