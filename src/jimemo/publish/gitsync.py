@@ -19,7 +19,12 @@ This module ports that fix, with the same ordering:
    proceeds when a freshness re-check proves origin has nothing newer —
    otherwise it refuses, leaving the change safely committed locally
    for the next successful publish to carry.
-3. Deploy.
+3. Deploy, then re-check origin: two machines CAN still finish
+   wholesale deploys in an order inconsistent with git history (git
+   alone cannot serialize the CDN upload — the reference implementation
+   has the same residual window). The post-deploy check turns that
+   silent race into a loud warning naming the fix: any synced
+   publish/gc redeploys the union.
 
 Opt-in: make the state dir itself a git repo with an `origin` remote.
 A state dir that is not one behaves exactly as before and git is never
@@ -33,6 +38,7 @@ dirty or even pre-staged — in the state dir are never swept in.
 Everything shells out to the `git` CLI (list-form argv, never
 shell=True): git stays the authority on merging, rebasing, and auth.
 """
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -41,6 +47,7 @@ from typing import List, Optional, Sequence
 from ..errors import PublishError
 
 _GIT_TIMEOUT_S = 120
+_HASH_DIR_RE = re.compile(r"^[a-f0-9]{24}/?$")
 
 
 def _git(state_dir: Path, args: Sequence[str]) -> "subprocess.CompletedProcess":
@@ -110,13 +117,19 @@ def _remote_branch(state_dir: Path) -> Optional[str]:
         return None
     for line in ls.stdout.splitlines():
         if line.startswith("ref:") and line.endswith("\tHEAD"):
-            # "ref: refs/heads/<branch>\tHEAD"
-            return line.split()[1].rsplit("/", 1)[-1]
+            # "ref: refs/heads/<branch>\tHEAD" — branch names may
+            # themselves contain slashes, so strip the prefix rather
+            # than splitting on "/".
+            ref = line.split()[1]
+            prefix = "refs/heads/"
+            if ref.startswith(prefix):
+                return ref[len(prefix):]
     raise PublishError(
         "origin has branches but no resolvable default (HEAD) branch; "
-        "refusing to guess which branch to sync. Set one with "
-        "`git remote set-head origin --auto` (or -a <branch>), or pass "
-        "--no-sync."
+        "refusing to guess which branch to sync. Set the default branch "
+        "on the hosting side (e.g. the repo settings page, or `git "
+        "symbolic-ref HEAD refs/heads/<branch>` in the bare repo), or "
+        "pass --no-sync."
     )
 
 
@@ -125,8 +138,11 @@ def refuse_dirty(state_dir: Path) -> None:
     locally modified or deleted — a successful pull cannot see those,
     and the wholesale deploy would silently ship them (deleting a
     tracked live hash locally would remove that page from production).
-    Untracked paths (from an earlier `--no-sync` publish or a failed
-    run) only warn: they are additive, not a wipe.
+    Untracked non-page strays only warn (they never deploy or
+    commit); untracked HASH directories are not handled here — the
+    caller adopts them into its next synced commit via
+    untracked_hash_dirs(), so a `--no-sync` page does not stay
+    invisible to other machines forever.
     """
     state_dir = Path(state_dir)
     status = _git(state_dir, ["status", "--porcelain"])
@@ -153,14 +169,39 @@ def refuse_dirty(state_dir: Path) -> None:
             "tracked hash would remove that live page). Commit or restore "
             f"them in {state_dir}, or pass --no-sync."
         )
-    if untracked:
+    strays = [u for u in untracked if not _is_hash_dir(u)]
+    if strays:
         print(
-            f"warning: {len(untracked)} untracked path(s) in the state dir "
-            "(earlier --no-sync publishes?) will deploy from this machine "
-            "but are invisible to other machines until committed: "
-            + ", ".join(untracked[:5]),
+            f"warning: {len(strays)} untracked non-page path(s) in the "
+            "state dir are never deployed or committed: "
+            + ", ".join(strays[:5]),
             file=sys.stderr,
         )
+
+
+def _is_hash_dir(porcelain_path: str) -> bool:
+    return bool(_HASH_DIR_RE.match(porcelain_path.strip().strip('"')))
+
+
+def untracked_hash_dirs(state_dir: Path) -> List[str]:
+    """Hash directories on disk that git does not know about — pages an
+    earlier `--no-sync` publish (or an interrupted run) left behind.
+    They deploy from this machine but are invisible to every other
+    machine, so a synced mutation ADOPTS them into its commit: the
+    escape hatch stays one deploy, not a permanent divergence.
+    """
+    state_dir = Path(state_dir)
+    status = _git(state_dir, ["status", "--porcelain"])
+    if status.returncode != 0:
+        raise PublishError(
+            f"git status failed in {state_dir} ({_detail(status)}); "
+            "refusing to deploy. Repair the repo or pass --no-sync."
+        )
+    found = []
+    for line in status.stdout.splitlines():
+        if line.startswith("??") and _is_hash_dir(line[3:]):
+            found.append(line[3:].strip().strip('"').rstrip("/"))
+    return found
 
 
 def pull_before_deploy(state_dir: Path) -> None:
@@ -201,11 +242,20 @@ def pull_before_deploy(state_dir: Path) -> None:
 
 
 def _count(state_dir: Path, range_spec: str) -> int:
-    # An unborn HEAD (fresh `git init`, no commits yet) makes rev-list
-    # fail; treat as zero — there is nothing local to diverge with.
     result = _git(state_dir, ["rev-list", "--count", range_spec])
     if result.returncode != 0:
-        return 0
+        # An unborn HEAD (fresh `git init`, no commits yet) legitimately
+        # cannot be compared — there is nothing local to diverge with.
+        # Any other rev-list failure fails CLOSED: an unprovable
+        # comparison must never become permission to deploy.
+        head = _git(state_dir, ["rev-parse", "--verify", "--quiet", "HEAD"])
+        if head.returncode != 0:
+            return 0
+        raise PublishError(
+            f"git rev-list {range_spec} failed in {state_dir} "
+            f"({_detail(result)}); refusing to deploy on an unprovable "
+            "comparison. Repair the repo, or pass --no-sync."
+        )
     return int(result.stdout.strip() or "0")
 
 
@@ -252,7 +302,11 @@ def commit_and_push(state_dir: Path, paths: Sequence[str], message: str) -> bool
         if add.returncode != 0:
             raise PublishError(f"state-dir git add failed: {_detail(add)}")
         pending = _git(state_dir, ["status", "--porcelain", "--", *known])
-        if pending.returncode == 0 and pending.stdout.strip():
+        if pending.returncode != 0:
+            raise PublishError(
+                f"state-dir git status failed: {_detail(pending)}"
+            )
+        if pending.stdout.strip():
             commit = _git(
                 state_dir,
                 ["commit", "--quiet", "-m", message, "--", *known],
@@ -272,7 +326,11 @@ def _known_paths(state_dir: Path, paths: Sequence[str]) -> List[str]:
             known.append(rel)
             continue
         tracked = _git(state_dir, ["ls-files", "--", rel])
-        if tracked.returncode == 0 and tracked.stdout.strip():
+        if tracked.returncode != 0:
+            raise PublishError(
+                f"state-dir git ls-files failed: {_detail(tracked)}"
+            )
+        if tracked.stdout.strip():
             known.append(rel)
     return known
 
@@ -316,6 +374,38 @@ def _warn_unpushed(state_dir: Path, detail: str) -> None:
         f"`git -C {state_dir} push` succeeds.",
         file=sys.stderr,
     )
+
+
+def warn_if_origin_moved_during_deploy(state_dir: Path) -> bool:
+    """Concurrent wholesale deploys cannot be serialized through git
+    alone: after OUR deploy returns, another machine may have pushed
+    (and deployed) meanwhile, and whichever wrangler call finished last
+    now owns production. Detect it instead of missing it: when origin
+    moved past our HEAD during the deploy, say so and name the fix (any
+    synced publish/gc redeploys the union). Returns True when the
+    warning fired. Detection is best-effort — an unreachable origin
+    here changes nothing about what was already deployed."""
+    state_dir = Path(state_dir)
+    try:
+        branch = _remote_branch(state_dir)
+        if branch is None:
+            return False
+        fetch = _git(state_dir, ["fetch", "--quiet", "origin", branch])
+        if fetch.returncode != 0:
+            return False
+        moved = _count(state_dir, "HEAD..FETCH_HEAD")
+    except PublishError:
+        return False
+    if not moved:
+        return False
+    print(
+        "warning: another machine pushed while this deploy was running; "
+        "production may be missing whichever machine deployed first. "
+        "Run `jimemo publish gc` (or any synced publish) on either "
+        "machine to redeploy the union.",
+        file=sys.stderr,
+    )
+    return True
 
 
 def touched_asset_paths() -> List[str]:

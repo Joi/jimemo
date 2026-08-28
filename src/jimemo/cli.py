@@ -592,7 +592,10 @@ def cmd_publish(args) -> int:
             from .publish import get_publisher
 
             try:
-                publisher = get_publisher(load_config())
+                publisher = get_publisher(
+                    load_config(),
+                    no_sync=getattr(args, "no_sync", False),
+                )
                 refresh = getattr(publisher, "refresh_assets", None)
                 if refresh is None:
                     print(

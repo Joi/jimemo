@@ -101,3 +101,24 @@ def test_setup_assets_only_rejects_command_backend(monkeypatch, capsys):
     )
     assert cli.cmd_publish(args) == 2
     assert "cloudflare backend" in capsys.readouterr().err
+
+
+def test_setup_assets_only_forwards_no_sync(monkeypatch):
+    seen = {}
+
+    class _CfLike(_FakePublisher):
+        def refresh_assets(self):
+            pass
+
+    def capture(config, no_sync=False):
+        seen["no_sync"] = no_sync
+        return _CfLike()
+
+    monkeypatch.setattr("jimemo.publish.get_publisher", capture)
+    monkeypatch.setattr("jimemo.config.load_config", lambda *a, **k: object())
+    args = argparse.Namespace(
+        target="setup", arg=None, title=None, dry_run=False,
+        assets_only=True, no_sync=True,
+    )
+    assert cli.cmd_publish(args) == 0
+    assert seen["no_sync"] is True

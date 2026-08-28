@@ -426,3 +426,76 @@ def test_setup_deploy_pulls_the_union_first(tmp_path, monkeypatch):
     assert (state / foreign / "index.html").is_file()
     fresh = _clone(origin, tmp_path / "fresh2")
     assert (fresh / "functions" / "_middleware.js").is_file()
+
+
+def test_no_sync_orphan_is_adopted_by_next_synced_publish(tmp_path):
+    """--no-sync must stay a one-deploy escape hatch: the page it left
+    untracked is committed and pushed by the next synced mutation."""
+    state, origin = _init_synced_state_dir(tmp_path)
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    wrangler = MockWrangler()
+
+    nosync = CloudflarePublisher(
+        _publish_config(), wrangler=wrangler, state_dir=state,
+        clock=lambda: "ts", no_sync=True,
+    )
+    orphan_hash = _hash_from_url(nosync.publish(html))
+
+    synced_hash = _hash_from_url(_publisher(state, wrangler).publish(html))
+
+    fresh = _clone(origin, tmp_path / "fresh-adopt")
+    assert (fresh / orphan_hash / "index.html").is_file()
+    assert (fresh / synced_hash / "index.html").is_file()
+
+
+def test_origin_moving_during_deploy_is_detected(tmp_path, capsys):
+    """git cannot serialize the CDN upload, so a machine that pushes
+    while our wrangler call runs must at least be detected loudly."""
+    state, origin = _init_synced_state_dir(tmp_path)
+    other = _clone(origin, tmp_path / "other")
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+
+    class MidDeployPusher(MockWrangler):
+        def pages_deploy(self, project, directory, branch="main"):
+            # by now the publisher has already pushed its hash (the
+            # commit-before-deploy ordering), so the racing machine
+            # pulls first, then lands its own commit mid-deploy
+            _git(other, "pull", "-q", "--ff-only", "origin", "HEAD")
+            (other / "raced.txt").write_text("x")
+            _git(other, "add", "raced.txt")
+            _git(other, "commit", "-q", "-m", "raced in mid-deploy")
+            _git(other, "push", "-q", "origin", "HEAD")
+            return super().pages_deploy(project, directory, branch)
+
+    _publisher(state, MidDeployPusher()).publish(html)
+    assert "pushed while this deploy was running" in capsys.readouterr().err
+
+
+def test_slashed_default_branch_is_synced_correctly(tmp_path):
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git(seed, "init", "-q", "-b", "release/prod")
+    _git(seed, "config", "user.email", "test@example.invalid")
+    _git(seed, "config", "user.name", "test")
+    _git(seed, "remote", "add", "origin", str(origin))
+    (seed / ".gitkeep").write_text("")
+    _git(seed, "add", ".gitkeep")
+    _git(seed, "commit", "-q", "-m", "init")
+    _git(seed, "push", "-q", "origin", "release/prod")
+    _git(origin, "symbolic-ref", "HEAD", "refs/heads/release/prod")
+
+    state = _clone(origin, tmp_path / "state-slash")
+    html = tmp_path / "page.html"
+    html.write_text("<html></html>")
+    url = _publisher(state).publish(html)
+    page_hash = _hash_from_url(url)
+
+    tip = subprocess.run(
+        ["git", "-C", str(origin), "log", "--oneline", "-1", "release/prod"],
+        capture_output=True, text=True,
+    ).stdout
+    assert page_hash in tip

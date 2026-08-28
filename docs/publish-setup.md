@@ -72,8 +72,14 @@ automatically, mirroring notes.ito.com's model and ordering:
   if the push still does not land, the deploy proceeds only when origin
   provably has nothing newer, and otherwise refuses — the change stays
   committed locally and rides out with the next successful publish.
+- **Post-deploy re-check**: git cannot serialize the CDN upload
+  itself, so if another machine pushed while this deploy was running,
+  jimemo says so and names the fix (any synced publish or gc redeploys
+  the union) instead of leaving the race silent.
 - **`--no-sync`** skips all of it for a deliberate emergency deploy
-  from a copy you know is current.
+  from a copy you know is current. Pages it leaves behind are adopted —
+  committed and pushed — by the next synced publish or gc, so the
+  escape hatch stays one deploy, not a lasting divergence.
 
 ## Steps a friend runs for real
 

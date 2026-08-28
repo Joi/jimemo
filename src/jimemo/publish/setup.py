@@ -612,9 +612,10 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO,
         # another machine (and possibly holding .git/, .DS_Store, etc.)
         # can never leak those files. See _build_deploy_dir's docstring.
         if sync:
+            adopted = gitsync.untracked_hash_dirs(state_dir)
             pushed = gitsync.commit_and_push(
                 state_dir,
-                gitsync.touched_asset_paths(),
+                [*gitsync.touched_asset_paths(), *adopted],
                 "setup: install/refresh bundled assets",
             )
             if not pushed:

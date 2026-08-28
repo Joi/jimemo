@@ -304,6 +304,7 @@ class CloudflarePublisher(Publisher):
             # union of every machine's pages.
             gitsync.refuse_dirty(self._state_dir)
             gitsync.pull_before_deploy(self._state_dir)
+        adopted = gitsync.untracked_hash_dirs(self._state_dir) if sync else []
         _ensure_state_dir_assets(self._state_dir)
         page_hash, staged_dir = stage_page(Path(html_path), self._state_dir)
         if sync:
@@ -311,9 +312,12 @@ class CloudflarePublisher(Publisher):
             # the page lands on origin first, so no other machine can
             # pull-and-deploy a tree that lacks it. If the push did not
             # land, deploy only when origin provably has nothing newer.
+            # `adopted` folds in hash dirs an earlier --no-sync run
+            # left untracked, so the escape hatch stays one deploy
+            # rather than a permanent divergence between machines.
             pushed = gitsync.commit_and_push(
                 self._state_dir,
-                [f"{page_hash}/", *gitsync.touched_asset_paths()],
+                [f"{page_hash}/", *adopted, *gitsync.touched_asset_paths()],
                 f"publish {page_hash}",
             )
             if not pushed:
@@ -339,6 +343,8 @@ class CloudflarePublisher(Publisher):
                     "successful publish)"
                 )
             raise PublishError(detail) from exc
+        if sync:
+            gitsync.warn_if_origin_moved_during_deploy(self._state_dir)
         return f"{self._cf.base_url.rstrip('/')}/{page_hash}/"
 
     def refresh_assets(self) -> None:
@@ -351,19 +357,23 @@ class CloudflarePublisher(Publisher):
         self._ensure_wrangler_available()
         self._state_dir.mkdir(parents=True, exist_ok=True)
         sync = not self._no_sync and gitsync.is_synced_repo(self._state_dir)
+        adopted = []
         if sync:
             gitsync.refuse_dirty(self._state_dir)
             gitsync.pull_before_deploy(self._state_dir)
+            adopted = gitsync.untracked_hash_dirs(self._state_dir)
         _install_state_dir_assets(self._state_dir)
         if sync:
             pushed = gitsync.commit_and_push(
                 self._state_dir,
-                gitsync.touched_asset_paths(),
+                [*gitsync.touched_asset_paths(), *adopted],
                 "refresh bundled assets",
             )
             if not pushed:
                 gitsync.verify_fresh(self._state_dir)
         self._deploy_state_dir()
+        if sync:
+            gitsync.warn_if_origin_moved_during_deploy(self._state_dir)
 
     def purge(self, hash_or_url: str) -> None:
         """Tombstone a hash by writing a timestamp to the KV namespace
@@ -440,9 +450,11 @@ class CloudflarePublisher(Publisher):
         """
         self._ensure_wrangler_available()
         sync = not self._no_sync and gitsync.is_synced_repo(self._state_dir)
+        adopted = []
         if sync:
             gitsync.refuse_dirty(self._state_dir)
             gitsync.pull_before_deploy(self._state_dir)
+            adopted = gitsync.untracked_hash_dirs(self._state_dir)
         tombstoned_names = set()
         for entry in self._wrangler.kv_list(self._cf.kv_namespace_id):
             name = entry.get("name") if isinstance(entry, dict) else entry
@@ -474,10 +486,12 @@ class CloudflarePublisher(Publisher):
             if sync:
                 pushed = gitsync.commit_and_push(
                     self._state_dir,
-                    removed_names,
+                    [*removed_names, *adopted],
                     f"gc: remove {removed} tombstoned page(s)",
                 )
                 if not pushed:
                     gitsync.verify_fresh(self._state_dir)
             self._deploy_state_dir()
+            if sync:
+                gitsync.warn_if_origin_moved_during_deploy(self._state_dir)
         return removed
