@@ -671,6 +671,32 @@ def test_publish_non_html_passes_through_unverified(tmp_path, monkeypatch, capsy
     assert fake.published == [f]
 
 
+def test_doctor_stale_labels_warning_names_the_manifest_procedure(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.setattr("jimemo.suggest.is_stale_labels", lambda m, d: True)
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "WARNING stale suitability labels" in out
+    # the remedy is a manifest edit, not a CLI command that doesn't exist
+    assert "labeled_hash" in out
+    assert "sha256" in out
+    assert "suggest tuning" not in out
+
+
+def test_doctor_labels_config_errors_as_config_not_pdf(
+    tmp_path, monkeypatch, capsys
+):
+    bad = tmp_path / "config.toml"
+    bad.write_text('[publish]\nbackend = "carrier-pigeon"\n')
+    monkeypatch.setenv("JIMEMO_CONFIG", str(bad))
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "WARNING config:" in out
+    assert "WARNING pdf config:" not in out
+
+
 def test_doctor_reports_pdf_browser_found(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
     monkeypatch.setattr(

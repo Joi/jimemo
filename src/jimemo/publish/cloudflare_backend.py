@@ -306,6 +306,18 @@ class CloudflarePublisher(Publisher):
             raise PublishError(f"cloudflare pages deploy failed: {exc}") from exc
         return f"{self._cf.base_url.rstrip('/')}/{page_hash}/"
 
+    def refresh_assets(self) -> None:
+        """Overwrite the state directory's baseline assets
+        (functions/_middleware.js, _headers, index.html) with the
+        current bundled copies and redeploy — the upgrade path after a
+        `git pull` changes the middleware. Touches no hashes and no
+        config (unlike a full `publish setup` re-run, which rewrites
+        config.toml)."""
+        self._ensure_wrangler_available()
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+        _install_state_dir_assets(self._state_dir)
+        self._deploy_state_dir()
+
     def purge(self, hash_or_url: str) -> None:
         """Tombstone a hash by writing a timestamp to the KV namespace
         the ported middleware reads as `env.TOMBSTONES` -- mirroring

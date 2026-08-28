@@ -11,7 +11,8 @@ notes.ito.com), use the `command` backend instead and point
 
 ## What the wizard can't automate
 
-The wizard's `wrangler` calls go through a narrow seam (`check_available`,
+The wizard's `wrangler` calls go through a narrow seam
+(`check_available`, `pages_project_names`, `pages_project_create`,
 `pages_deploy`, `kv_put`, `kv_get`, `kv_list` -- see
 `src/jimemo/publish/wrangler.py`). It does not create a Cloudflare
 account, create a KV namespace, or bind a KV namespace to a Pages
@@ -129,15 +130,17 @@ The state directory keeps its own copy of `functions/_middleware.js`,
 `_headers`, and the root index, installed at setup time. `jimemo
 publish` self-heals a *missing* file but deliberately never overwrites
 an existing one — so after a `git pull` that changes the middleware,
-existing sites keep serving the old copy until you re-run:
+existing sites keep serving the old copy until you run:
 
 ```
-jimemo publish setup
+jimemo publish setup --assets-only
 ```
 
-against the same project. Re-running is safe: it re-copies the current
-assets into the state directory and redeploys; your published hashes
-are untouched.
+It re-copies the current bundled assets into the state directory and
+redeploys — published hashes untouched, `config.toml` untouched. (A
+full `jimemo publish setup` re-run also refreshes the assets, but it
+rewrites `config.toml` from scratch — dropping any `[pdf]` section or
+comments you added — so it's the wrong tool for a routine upgrade.)
 
 ## Config written
 

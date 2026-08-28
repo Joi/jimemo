@@ -13,7 +13,7 @@ contract in detail.
     below.
   - `manifest.py` — `load_manifest`: parses and validates a template's
     `manifest.json` against the Manifest v1 schema.
-  - `content.py` — `load_content`: parses a `.md`/`.json`/`.yaml` content
+  - `content.py` — `load_content`: parses a `.md`/`.json`/`.yaml`/`.yml` content
     file against a manifest's slots; renders `markdown`-typed slots to
     sanitized HTML.
   - `render.py` — `render_page`/`write_output`: Jinja2 render, then image

@@ -187,7 +187,7 @@
     that may emit script, and only from the renderer's `charts` context
     entries: {{ ui.chart(c.id, c.init_js) }}.
 
-    SECURITY (see charts.py and the Phase 4 plan, "The security crux"):
+    SECURITY (see charts.py's module docstring, "The security crux"):
     init_js MUST be the renderer-supplied value — the full script body
     built by charts.chart_init_js around a serialize_chart_config
     payload (every "<" is u003c-escaped inside the JSON, so the payload

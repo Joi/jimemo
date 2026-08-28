@@ -54,7 +54,7 @@ Scale (ratio 1.25, anchored at a 17px body): `--jm-text-xs` 0.68rem ·
 ### Chart palette
 
 Eight categorical colors, `--jm-chart-1` through `--jm-chart-8`, for charts
-built by `src/jimemo/charts.py` (Phase 4). The order (blue, aqua, yellow,
+built by `src/jimemo/charts.py`. The order (blue, aqua, yellow,
 green, violet, red, magenta, orange) is fixed and CVD-optimized — never
 reorder it, and never cycle past 8; a 9th series wraps back to slot 1
 rather than inventing a hue.

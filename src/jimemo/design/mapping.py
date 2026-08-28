@@ -19,7 +19,7 @@ No LLM, no export-specific special-casing: same export in, same theme
 string out (`test_deterministic_across_runs` below).
 
 One deliberate deviation from the plan text's literal `--jm-font`: toolkit/
-tokens.css (Phase 3) ships a two-voice type system (--jm-font-prose for
+tokens.css ships a two-voice type system (--jm-font-prose for
 content, --jm-font-ui for apparatus/labels; --jm-font-mono for code) and
 defines no bare --jm-font at all -- no toolkit CSS reads it, so setting it
 would be a silent no-op. A design export's single primary typeface is

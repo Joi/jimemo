@@ -165,3 +165,13 @@ def test_default_runner_is_real_subprocess_argv_no_shell():
     result = mod._run([sys.executable, "-c", "print('hello from subprocess')"])
     assert result.returncode == 0
     assert "hello from subprocess" in result.stdout
+
+
+def test_gc_forwards_the_external_clis_report(capsys):
+    runner = FakeRunner(
+        CompletedProcess([], 0, stdout="removed 3 notes\n", stderr="")
+    )
+    publisher = CommandPublisher(_config(), runner=runner)
+    assert publisher.gc() is None
+    assert capsys.readouterr().out == "removed 3 notes\n"
+    assert runner.calls == [["notes-publish", "gc"]]

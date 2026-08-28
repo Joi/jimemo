@@ -4,7 +4,9 @@ Open an ordinary GitHub pull request. That is the whole job from your
 side:
 
 1. Fork or branch, make the change.
-2. Run the tests: `python3 -m pytest tests -q` (and `./jimemo doctor`).
+2. Run the tests: `python3 -m pip install pytest`, then
+   `python3 -m pytest tests -q` (and `./jimemo doctor`) — pytest is the
+   suite runner and the repo's only development dependency.
    If you changed a template or its sample, regenerate its golden with
    `JIMEMO_UPDATE_GOLDENS=1 python3 -m pytest tests/test_golden.py`.
 3. Open the PR.

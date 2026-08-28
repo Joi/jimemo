@@ -2,7 +2,7 @@
 
 This module is the only path by which content data may reach an inline
 ``<script>`` in a rendered page, so it is a security boundary (see the
-Phase 4 plan, "The security crux"). Two rules hold everywhere here:
+chart-support design note, "The security crux"). Two rules hold everywhere here:
 
 1.  Config is data, never code. The config is a plain Python dict built
     from validated content values and serialized with ``json.dumps``.

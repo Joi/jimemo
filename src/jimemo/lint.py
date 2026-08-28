@@ -702,7 +702,7 @@ class _Linter(HTMLParser):
                 # Never allowed, remote, local, or valueless/empty: a
                 # src-bearing script is an external fetch/file
                 # dependency (or, for a browser, "ignore my body and
-                # fetch src") either way. (Phase 4 chart support vendors
+                # fetch src") either way. (Chart support vendors
                 # its script inline instead.) Presence is what counts —
                 # not the value — so this reports the raw value only
                 # for display, defaulting to "" when there is none.
@@ -717,7 +717,7 @@ class _Linter(HTMLParser):
                     "(manifest 'charts' is empty)"
                 )
             # else: the ONE controlled opening in the no-script rule
-            # (Phase 4 charts): an inline, src-less <script> may pass
+            # (charts): an inline, src-less <script> may pass
             # when the manifest declares charts — but only if its BODY
             # is one the renderer emits: in exact mode, string-equal to
             # a body render_page actually built for this page; in the
@@ -727,7 +727,7 @@ class _Linter(HTMLParser):
             # not a JavaScript judge — a lint that pretends to evaluate
             # JS is a false promise — it recognizes renderer output and
             # rejects everything else, so the guarantee holds even for
-            # a template someone else wrote. Every other Phase 3 rule
+            # a template someone else wrote. Every other lint rule
             # (script src, on*, script-scheme URLs, banned tags, the
             # fetch-on-load and CSS allowlists) still applies on chart
             # pages, unchanged.

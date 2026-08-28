@@ -78,5 +78,12 @@ class CommandPublisher(Publisher):
         return result.stdout.splitlines()
 
     def gc(self) -> Optional[int]:
-        self._invoke(["gc"], "gc")
+        result = self._invoke(["gc"], "gc")
+        # _invoke captures the subprocess's output; the external CLI is
+        # the one that knows what gc did, so pass its report through
+        # instead of swallowing it. Returns None: there is no count of
+        # our own to add on top.
+        out = (result.stdout or "").strip()
+        if out:
+            print(out)
         return None

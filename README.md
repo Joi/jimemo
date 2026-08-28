@@ -152,10 +152,11 @@ Add `--pdf [PATH]` to also write a PDF (default: the HTML path with
 only — no HTML file gets written. Both need a locally installed
 Chromium-family browser; see "The draft loop" below.
 
-By default the page follows the viewer's OS light/dark preference.
-`--theme light` or `--theme dark` pins one mode in the output — worth
-doing before a PDF or print run so the result doesn't depend on the
-rendering machine's setting. Any other `--theme NAME` applies a named
+By default the page follows the viewer's OS light/dark preference on
+screen; `--theme light` or `--theme dark` pins one mode instead. Print
+and PDF always use the light palette regardless (the toolkit's
+print-force stylesheet), so pinning is about how the page reads in a
+browser, not about the PDF. Any other `--theme NAME` applies a named
 theme override (see "Import a design" below).
 
 ### Research documents

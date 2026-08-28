@@ -170,7 +170,7 @@ def assemble_css(manifest: Dict[str, Any], theme: Optional[str] = None) -> str:
             available = _available_theme_names()
             hint = f" (available: {', '.join(available)})" if available else ""
             raise ManifestError(
-                f"unknown theme {theme!r} (not found in repo themes/ or "
+                f"unknown theme {theme!r} (not found in repo toolkit/themes/ or "
                 f"~/.jimemo/themes/; import one with `jimemo import-design`)"
                 f"{hint}"
             )

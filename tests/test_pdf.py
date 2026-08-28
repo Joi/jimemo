@@ -50,6 +50,17 @@ def test_find_browser_falls_back_to_macos_bundles():
     assert find_browser(None, which=no_which, exists=lambda p: p == mac) == mac
 
 
+def test_find_browser_checks_home_applications_expanded():
+    """~/Applications candidates are checked with the tilde expanded —
+    a literal "~" path would never exist."""
+    import os
+    home_mac = os.path.expanduser(
+        "~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    )
+    assert "~" not in home_mac
+    assert find_browser(None, which=no_which, exists=lambda p: p == home_mac) == home_mac
+
+
 def test_find_browser_returns_none_when_nothing_found():
     assert find_browser(None, which=no_which, exists=no_exists) is None
 

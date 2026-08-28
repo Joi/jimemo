@@ -587,6 +587,26 @@ def cmd_publish(args) -> int:
     # ~/.jimemo/config.toml, so requiring a valid config first would make
     # it impossible to ever run on a fresh machine.
     if args.target == "setup":
+        if getattr(args, "assets_only", False):
+            from .config import load_config
+            from .publish import get_publisher
+
+            try:
+                publisher = get_publisher(load_config())
+                refresh = getattr(publisher, "refresh_assets", None)
+                if refresh is None:
+                    print(
+                        "publish setup --assets-only only applies to the "
+                        "cloudflare backend",
+                        file=sys.stderr,
+                    )
+                    return 2
+                refresh()
+            except (ConfigError, PublishError) as e:
+                print(str(e), file=sys.stderr)
+                return 1
+            print("state-dir assets refreshed and redeployed")
+            return 0
         from .config import config_path
         from .publish.setup import RealIO, run_setup
         from .publish.wrangler import Wrangler
@@ -789,7 +809,7 @@ def main(argv=None) -> int:
 
     render_p = sub.add_parser("render", help="render a template + content file to HTML")
     render_p.add_argument("template", help='template name, or "auto" to pick automatically')
-    render_p.add_argument("content", help="content file (.md, .json, or .yaml)")
+    render_p.add_argument("content", help="content file (.md, .json, .yaml, or .yml)")
     render_p.add_argument("-o", "--out", help="output path (default: dist/<content-stem>.html)")
     render_p.add_argument(
         "--theme",
@@ -848,7 +868,7 @@ def main(argv=None) -> int:
     )
 
     suggest_p = sub.add_parser("suggest", help="rank templates by fit for a content file")
-    suggest_p.add_argument("content", help="content file (.md, .json, or .yaml)")
+    suggest_p.add_argument("content", help="content file (.md, .json, .yaml, or .yml)")
     suggest_p.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     check_p = sub.add_parser(
@@ -883,6 +903,13 @@ def main(argv=None) -> int:
         "arg", nargs="?", help='hash or URL (only used with "purge")',
     )
     publish_p.add_argument("--title", help="title for the published page")
+    publish_p.add_argument(
+        "--assets-only",
+        action="store_true",
+        help="with setup: refresh the cloudflare state dir's bundled "
+        "assets (middleware, headers, index) and redeploy, touching "
+        "neither hashes nor config.toml — the after-upgrade path",
+    )
     publish_p.add_argument(
         "--dry-run", action="store_true",
         help='with "setup": print the plan without executing or writing anything',
