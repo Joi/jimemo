@@ -662,3 +662,82 @@ def test_symlink_inside_a_hash_dir_is_not_followed_into_the_deploy(tmp_path):
     tree = wrangler.deployed_trees[-1]
     assert f"{hash1}/index.html" in tree
     assert f"{hash1}/leak.txt" not in tree
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed preflight (jibot-code#efw6): no deploy while the Pages project
+# would serve static files without the tombstone middleware.
+# ---------------------------------------------------------------------------
+
+from jimemo.publish.cloudflare_backend import require_fail_closed  # noqa: E402
+
+
+def _staged(tmp_path):
+    html = tmp_path / "note.html"
+    html.write_text("<html><title>t</title></html>")
+    return html
+
+
+def test_publish_refuses_when_project_is_fail_open(tmp_path):
+    wrangler = MockWrangler(fail_open=True)
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+
+    with pytest.raises(PublishError) as exc:
+        publisher.publish(_staged(tmp_path))
+
+    msg = str(exc.value)
+    assert "fail-open" in msg and "jimemo publish setup" in msg
+    assert "production=open" in msg and "preview=open" in msg
+    assert not any(c[0] == "pages_deploy" for c in wrangler.calls)
+
+
+def test_refresh_assets_refuses_when_project_is_fail_open(tmp_path):
+    wrangler = MockWrangler(fail_open=True)
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(PublishError):
+        publisher.refresh_assets()
+    assert not any(c[0] == "pages_deploy" for c in wrangler.calls)
+
+
+def test_gc_refuses_when_project_is_fail_open(tmp_path):
+    # gc() only deploys when it removed something: seed one tombstoned hash
+    # (a hash-shaped state dir plus its KV tombstone) so the deploy path is
+    # reached and the preflight is what stops it.
+    wrangler = MockWrangler(fail_open=True)
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+    tombstoned = "a3f1c1a61bb30736d2374c1f"
+    (tmp_path / "state" / tombstoned).mkdir(parents=True)
+    (tmp_path / "state" / tombstoned / "index.html").write_text("<html></html>")
+    wrangler.kv_put("ns1", tombstoned, "2026-01-01T00:00:00.000Z")
+
+    with pytest.raises(PublishError) as exc:
+        publisher.gc()
+    assert "fail-open" in str(exc.value)
+    assert not any(c[0] == "pages_deploy" for c in wrangler.calls)
+
+
+def test_publish_checks_fail_open_before_deploy(tmp_path):
+    wrangler = MockWrangler()
+    publisher = _publisher(tmp_path, wrangler=wrangler)
+
+    publisher.publish(_staged(tmp_path))
+
+    names = [c[0] for c in wrangler.calls]
+    assert "pages_project_fail_open" in names
+    assert names.index("pages_project_fail_open") < names.index("pages_deploy")
+
+
+def test_require_fail_closed_propagates_unreadable_project(tmp_path):
+    class Unreadable(MockWrangler):
+        def pages_project_fail_open(self, project):
+            raise PublishError("curl GET Pages project failed (exit 2): boom")
+
+    with pytest.raises(PublishError) as exc:
+        require_fail_closed(Unreadable(), "friend-notes")
+    assert "boom" in str(exc.value)
+
+
+def test_require_fail_closed_passes_when_closed():
+    require_fail_closed(MockWrangler(), "friend-notes")

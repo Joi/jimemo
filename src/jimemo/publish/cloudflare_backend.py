@@ -1,5 +1,7 @@
 """The "cloudflare" publish backend: native Cloudflare Pages + KV, driven
-entirely through the Wrangler seam (wrangler.py) -- no other external CLI.
+entirely through the Wrangler seam (wrangler.py); the seam itself shells
+out to ``npx wrangler`` and, for the one Pages setting wrangler cannot
+reach (fail_open), to ``curl``.
 This is the backend the `jimemo publish setup` wizard provisions for
 a friend who doesn't already have a publish site of their own (unlike
 Joi, who keeps notes-publish/notes.ito.com authoritative via the
@@ -218,6 +220,31 @@ def _build_deploy_dir(state_dir: Path, deploy_dir: Path) -> Path:
     return deploy_dir
 
 
+#: Refusal text shared by publish()/refresh_assets()/gc() and by setup's
+#: own deploy. Keep this module free of the token variable's name and of
+#: any environment access (test_module_never_reads_or_logs_cf_token).
+FAIL_OPEN_MESSAGE = (
+    "Pages project {project!r} is fail-open (production={production}, "
+    "preview={preview}): a Functions outage would serve purged pages; run "
+    "`jimemo publish setup` to set fail_open=false on both environments, "
+    "then retry"
+)
+
+
+def require_fail_closed(wrangler, project: str) -> None:
+    """Deploy preflight (jibot-code#efw6). One project read through the
+    seam; raises PublishError unless BOTH environments are fail-closed.
+    An unreadable project propagates the seam's PublishError, which is
+    also a refusal: nothing deploys on a guess."""
+    flags = wrangler.pages_project_fail_open(project)
+    if flags["production"] or flags["preview"]:
+        raise PublishError(FAIL_OPEN_MESSAGE.format(
+            project=project,
+            production="open" if flags["production"] else "closed",
+            preview="open" if flags["preview"] else "closed",
+        ))
+
+
 class CloudflarePublisher(Publisher):
     """Publisher backed by a Cloudflare Pages project + tombstone KV
     namespace, driven through the Wrangler seam. See module docstring
@@ -259,6 +286,8 @@ class CloudflarePublisher(Publisher):
         call returns -- never the raw state dir itself (see
         _build_deploy_dir for the allowlist and the leak it prevents).
         """
+        # Fail-closed preflight: refuse before the build dir is even assembled.
+        require_fail_closed(self._wrangler, self._cf.project)
         with tempfile.TemporaryDirectory(prefix="jimemo-deploy-") as tmp:
             deploy_dir = _build_deploy_dir(self._state_dir, Path(tmp))
             self._wrangler.pages_deploy(self._cf.project, deploy_dir)
