@@ -12,7 +12,10 @@ What this wizard can and cannot automate, and why
 wrangler.py's Wrangler seam is deliberately narrow: it exposes the
 Pages project list/create calls setup needs, plus ``pages_deploy``,
 ``kv_put``, ``kv_get``, ``kv_list`` for the steady-state
-publish/purge/list/gc path. There is still no "create a KV namespace" or
+publish/purge/list/gc path. Since jibot-code#efw6 it also exposes
+`curl_version`, `pages_project_fail_open`, and
+`pages_project_set_fail_closed` (Pages project config via curl; wrangler
+has no subcommand for fail_open). There is still no "create a KV namespace" or
 "bind a KV namespace to a Pages project" method: those are one-time
 account-setup actions without a single reliable wrangler verb for the
 binding, so setup prints the manual steps and asks the human for the
@@ -107,9 +110,10 @@ from .cloudflare_backend import (
     _build_deploy_dir,
     _default_state_dir,
     _install_state_dir_assets,
+    require_fail_closed,
 )
 from . import gitsync
-from .wrangler import NO_WRANGLER_MESSAGE
+from .wrangler import CURL_TOO_OLD_MESSAGE, FAIL_CLOSED_BODY, MIN_CURL, NO_WRANGLER_MESSAGE
 
 DEFAULT_PROJECT_NAME = "jimemo-notes"
 
@@ -196,6 +200,18 @@ def _project_create_argv(project: str) -> str:
     )
 
 
+def _fail_closed_argv(account_id: str, project: str) -> str:
+    """Printed in dry-run only. The header is a curl TEMPLATE -- curl
+    expands {{CLOUDFLARE_API_TOKEN}} from its own environment; the value
+    never appears here, in argv, or in any log."""
+    return (
+        "curl -q -sS --max-time 30 --variable %CLOUDFLARE_API_TOKEN "
+        "--expand-header 'Authorization: Bearer {{CLOUDFLARE_API_TOKEN}}' "
+        f"-X PATCH -H 'Content-Type: application/json' -d '{FAIL_CLOSED_BODY}' "
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/pages/projects/{project}"
+    )
+
+
 def _is_existing_pages_project_error(exc: PublishError) -> bool:
     msg = str(exc)
     return (
@@ -255,7 +271,8 @@ def _print_intro(io: SetupIO) -> None:
         "     credential store. Only non-secret ids (project name, "
         "account id, KV\n"
         "     namespace id, base URL) get written to ~/.jimemo/config.toml.\n"
-        "  3. Node + npx (wrangler runs via `npx wrangler`).\n"
+        "  3. Node + npx (wrangler runs via `npx wrangler`) and curl >= 8.3 (used once\n"
+        "     per deploy to confirm the project is fail-closed; see Step 2).\n"
         "\n"
         "How to read this output: a command you must run yourself appears "
         "on its own\n"
@@ -467,6 +484,15 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO,
     elif not wrangler.check_available():
         raise PublishError(NO_WRANGLER_MESSAGE)
 
+    if dry_run:
+        io.print("[dry-run] would check: curl >= 8.3 (Pages project fail_open needs curl's --variable)")
+    else:
+        found = wrangler.curl_version()
+        if found is None:
+            raise PublishError(CURL_TOO_OLD_MESSAGE.format(found="none on PATH"))
+        if found < MIN_CURL:
+            raise PublishError(CURL_TOO_OLD_MESSAGE.format(found=".".join(map(str, found))))
+
     # Confirm BEFORE any side effect (asset install, deploy, KV call) --
     # not just before the final config write. Declining here must be a
     # clean, total no-op: the previous placement of this same confirm
@@ -545,6 +571,18 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO,
             else:
                 io.print(f"  created project {project!r}")
 
+    # Cloudflare's default is fail_open=true: a Functions outage (free-plan
+    # allowance exhausted, execution error) would serve the static files
+    # WITHOUT the tombstone middleware, so purged hashes would come back.
+    # Set both environments fail-closed now and verify (jibot-code#efw6).
+    if dry_run:
+        io.print("  [dry-run] would set fail_open=false on production and preview via: "
+                 f"{_fail_closed_argv(account_id, project)}")
+    else:
+        wrangler.pages_project_set_fail_closed(project)
+        io.print("  set fail_open=false on production and preview (a Functions "
+                 "outage now returns an error instead of serving purged pages)")
+
     _print_single_machine_warning(io, state_dir)
 
     _print_kv_instructions(io, project)
@@ -622,6 +660,9 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO,
                 gitsync.verify_fresh(state_dir)
         with tempfile.TemporaryDirectory(prefix="jimemo-deploy-") as tmp:
             deploy_dir = _build_deploy_dir(state_dir, Path(tmp))
+            # Same preflight every publish/gc runs: never deploy on a
+            # PATCH response alone, re-read the project first.
+            require_fail_closed(wrangler, project)
             io.print(f"  running: {_deploy_argv(project, deploy_dir)}")
             wrangler.pages_deploy(project, deploy_dir)
 

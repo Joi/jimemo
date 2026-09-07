@@ -306,7 +306,8 @@ def test_real_run_creates_kv_and_deploys_in_expected_order(tmp_path, monkeypatch
     wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch)
 
     assert [c[0] for c in wrangler.calls] == [
-        "check_available", "pages_project_names", "pages_project_create",
+        "check_available", "curl_version", "pages_project_names", "pages_project_create",
+        "pages_project_set_fail_closed", "pages_project_fail_open",
         "pages_deploy", "kv_put", "kv_get",
     ]
 
@@ -644,6 +645,7 @@ def test_existing_config_declining_overwrite_makes_no_side_effects(tmp_path, mon
     assert not any(
         c[0] in (
             "pages_project_names", "pages_project_create",
+            "pages_project_set_fail_closed", "pages_project_fail_open",
             "pages_deploy", "kv_put", "kv_get",
         )
         for c in wrangler.calls
@@ -680,6 +682,7 @@ def test_real_run_rejects_invalid_project_name(tmp_path, monkeypatch, bad_name):
     assert not any(
         c[0] in (
             "pages_project_names", "pages_project_create",
+            "pages_project_set_fail_closed", "pages_project_fail_open",
             "pages_deploy", "kv_put", "kv_get",
         )
         for c in wrangler.calls
@@ -871,3 +874,95 @@ def test_intro_explains_the_dollar_convention(tmp_path):
     text = io.text()
     assert "$ " in text
     assert "run yourself" in text
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed (jibot-code#efw6): setup sets fail_open=false right after the
+# project exists and checks it again right before its own deploy.
+# ---------------------------------------------------------------------------
+
+from jimemo.publish.setup import _fail_closed_argv  # noqa: E402
+from jimemo.publish.wrangler import CURL_TOO_OLD_MESSAGE  # noqa: E402
+
+
+def test_real_run_sets_fail_closed_before_deploy_on_existing_project(tmp_path, monkeypatch):
+    wrangler = MockWrangler(projects=["friend-notes"], fail_open=True)
+
+    wrangler, io, cfg_path = _run_real(tmp_path, monkeypatch, wrangler=wrangler)
+
+    names = [c[0] for c in wrangler.calls]
+    assert names.index("pages_project_set_fail_closed") < names.index("pages_deploy")
+    assert names.index("pages_project_fail_open") < names.index("pages_deploy")
+    assert ("pages_project_set_fail_closed", "friend-notes") in wrangler.calls
+    assert "fail_open=false" in io.text()
+
+
+def test_real_run_never_deploys_when_fail_closed_does_not_stick(tmp_path, monkeypatch):
+    class StickyOpen(MockWrangler):
+        def pages_project_set_fail_closed(self, project):
+            self.calls.append(("pages_project_set_fail_closed", project))
+            # PATCH "succeeds" but the flags stay open (e.g. token lacks Pages:Edit)
+
+    wrangler = StickyOpen(projects=["friend-notes"], fail_open=True)
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "fake-token")
+    io = FakeIO(prompts=["friend-notes", "acct123", "ns123"])
+
+    with pytest.raises(PublishError) as exc:
+        run_setup(False, wrangler, tmp_path / "config.toml", io)
+
+    assert "fail-open" in str(exc.value) and "jimemo publish setup" in str(exc.value)
+    assert not any(c[0] == "pages_deploy" for c in wrangler.calls)
+    assert not (tmp_path / "config.toml").exists()
+
+
+def test_real_run_refuses_old_curl_before_any_project_call(tmp_path, monkeypatch):
+    class OldCurl(MockWrangler):
+        def curl_version(self):
+            self.calls.append(("curl_version",))
+            return (7, 88, 1)
+
+    wrangler = OldCurl()
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "fake-token")
+
+    with pytest.raises(PublishError) as exc:
+        run_setup(False, wrangler, tmp_path / "config.toml", FakeIO(prompts=["friend-notes", "acct123", "ns123"]))
+
+    assert str(exc.value) == CURL_TOO_OLD_MESSAGE.format(found="7.88.1")
+    assert [c[0] for c in wrangler.calls] == ["check_available", "curl_version"]
+
+
+def test_real_run_refuses_missing_curl(tmp_path, monkeypatch):
+    class NoCurl(MockWrangler):
+        def curl_version(self):
+            self.calls.append(("curl_version",))
+            return None
+
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "fake-token")
+
+    with pytest.raises(PublishError) as exc:
+        run_setup(False, NoCurl(), tmp_path / "config.toml", FakeIO(prompts=["friend-notes", "acct123", "ns123"]))
+
+    assert str(exc.value) == CURL_TOO_OLD_MESSAGE.format(found="none on PATH")
+
+
+def test_dry_run_prints_fail_closed_plan_and_makes_no_calls(tmp_path):
+    wrangler = MockWrangler()
+    io = FakeIO()
+
+    run_setup(True, wrangler, tmp_path / "config.toml", io)
+
+    text = io.text()
+    assert "[dry-run] would check: curl >= 8.3" in text
+    assert _fail_closed_argv("<ACCOUNT_ID>", "jimemo-notes") in text
+    assert wrangler.calls == []
+
+
+def test_fail_closed_argv_carries_the_template_not_a_value():
+    argv = _fail_closed_argv("acct123", "friend-notes")
+    assert argv.startswith("curl -q ")
+    assert "{{CLOUDFLARE_API_TOKEN}}" in argv
+    assert "--variable %CLOUDFLARE_API_TOKEN" in argv
+    assert "/accounts/acct123/pages/projects/friend-notes" in argv
