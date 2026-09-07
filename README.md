@@ -408,8 +408,11 @@ authority on hosting, hashing, and storage.
 
 For someone with nowhere to publish to yet: `jimemo publish setup` walks
 through provisioning a free Cloudflare Pages project and KV namespace.
-It needs Node (everything runs through `npx wrangler`) and a Cloudflare
-API token scoped to `Pages: Edit` + `Workers KV Storage: Edit`; a couple
+It needs Node (wrangler runs through `npx wrangler`), curl >= 8.3 (one
+project-config call per deploy that wrangler cannot make: it confirms the
+Pages project is fail-closed, so a Functions outage never serves purged
+pages), and a Cloudflare API token scoped to `Pages: Edit` + `Workers KV
+Storage: Edit`, exported as `CLOUDFLARE_API_TOKEN`; a couple
 of one-time steps (creating the KV namespace, binding it to the Pages
 project as `TOMBSTONES`) have no wrangler CLI equivalent, so the wizard
 prints the exact manual command or dashboard step instead of faking

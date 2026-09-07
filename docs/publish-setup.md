@@ -101,6 +101,11 @@ automatically, mirroring notes.ito.com's model and ordering:
 3. **Install Node** if you don't have it (wrangler runs via `npx
    wrangler`): https://nodejs.org
 
+   Also make sure `curl --version` reports 8.3 or newer (macOS ships 8.7;
+   Debian 12's 7.88 is too old). The wizard uses curl once to set the Pages
+   project fail-closed, and every later `jimemo publish` uses it once to
+   confirm that before deploying.
+
 4. **Run the wizard**:
 
    ```
@@ -196,10 +201,13 @@ kv_namespace_id = "..."
 base_url = "https://jimemo-notes.pages.dev"
 ```
 
-No token is ever written here. `CLOUDFLARE_API_TOKEN` must stay in your
-shell environment (or wherever `wrangler login`/your shell profile keeps
-it) -- `jimemo publish`/`purge`/`list`/`gc` all shell out to `wrangler`,
-which resolves its own auth the same way `setup` does.
+No token is ever written here. `CLOUDFLARE_API_TOKEN` must stay exported in
+your shell environment: `jimemo publish`/`purge`/`list`/`gc` shell out to
+`wrangler`, and before every deploy they also have `curl` read the Pages
+project's fail-open flags straight from that same variable (curl expands it
+itself; jimemo never reads the value). A `wrangler login` credential store
+alone is not enough for that check, so the deploy refuses without the
+variable.
 
 ## Who verifies this
 
