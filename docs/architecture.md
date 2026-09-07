@@ -161,7 +161,8 @@ contract in detail.
     wrapping `npx wrangler` subprocess calls, plus a `MockWrangler` for
     tests. Auth is never touched by jimemo — wrangler resolves its own
     `CLOUDFLARE_API_TOKEN` from the environment or its own credential
-    store.
+    store (setup and every deploy of the cloudflare backend need the
+    variable exported; the store alone only serves purge/list).
   - `cloudflare_backend.py` — the `cloudflare` backend: publishes by
     staging a hash directory into a persistent local state dir
     (`~/.jimemo/cloudflare/<project>/`) and redeploying that whole

@@ -120,7 +120,7 @@ directory, so it's safe to point at an export you didn't write yourself.
 | Step | Needs |
 | --- | --- |
 | Install, render, suggest, info, list, doctor, new-template, import-design | Python >= 3.9 only |
-| Publish (either backend) | The `command` backend needs whatever CLI you already point it at; the `cloudflare` backend needs Node (`npx wrangler`) and a Cloudflare account |
+| Publish (either backend) | The `command` backend needs whatever CLI you already point it at; the `cloudflare` backend needs Node (`npx wrangler`), curl >= 8.3, a Cloudflare account, and `CLOUDFLARE_API_TOKEN` exported in your shell |
 
 Everything in the first row works with nothing installed beyond Python
 itself -- no account, no network access, no dependency to fetch.

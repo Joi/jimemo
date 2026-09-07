@@ -24,8 +24,9 @@ SECURITY: this file NEVER holds secrets. It stores only non-secret
 identifiers -- a command name, or a Cloudflare project/account/KV-namespace
 name and public base URL. No API tokens, no credentials. The `cloudflare`
 backend's Wrangler seam reads its API token from the environment or
-Wrangler's own credential store; jimemo must never write one into
-config.toml.
+Wrangler's own credential store (setup and every deploy of the cloudflare
+backend need the variable exported; the store alone only serves
+purge/list); jimemo must never write one into config.toml.
 """
 import os
 import re

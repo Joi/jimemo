@@ -202,12 +202,13 @@ base_url = "https://jimemo-notes.pages.dev"
 ```
 
 No token is ever written here. `CLOUDFLARE_API_TOKEN` must stay exported in
-your shell environment: `jimemo publish`/`purge`/`list`/`gc` shell out to
-`wrangler`, and before every deploy they also have `curl` read the Pages
-project's fail-open flags straight from that same variable (curl expands it
-itself; jimemo never reads the value). A `wrangler login` credential store
-alone is not enough for that check, so the deploy refuses without the
-variable.
+your shell environment. Every `jimemo publish` subcommand shells out to
+`wrangler`; the deploying ones (`publish`, `refresh`, `gc`) additionally have
+`curl` read the Pages project's fail-open flags straight from that same
+variable before deploying (curl expands it itself; jimemo never reads the
+value). A `wrangler login` credential store alone is not enough for that
+check, so those three refuse without the variable; `purge` and `list` still
+work through wrangler alone.
 
 ## Who verifies this
 
