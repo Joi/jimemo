@@ -696,8 +696,9 @@ def test_refresh_assets_refuses_when_project_is_fail_open(tmp_path):
     publisher = _publisher(tmp_path, wrangler=wrangler)
     (tmp_path / "state").mkdir(parents=True, exist_ok=True)
 
-    with pytest.raises(PublishError):
+    with pytest.raises(PublishError) as exc:
         publisher.refresh_assets()
+    assert "fail-open" in str(exc.value)
     assert not any(c[0] == "pages_deploy" for c in wrangler.calls)
 
 

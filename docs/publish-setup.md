@@ -14,7 +14,10 @@ notes.ito.com), use the `command` backend instead and point
 The wizard's `wrangler` calls go through a narrow seam
 (`check_available`, `pages_project_names`, `pages_project_create`,
 `pages_deploy`, `kv_put`, `kv_get`, `kv_list` -- see
-`src/jimemo/publish/wrangler.py`). It does not create a Cloudflare
+`src/jimemo/publish/wrangler.py`). The same seam has three more methods
+(`curl_version`, `pages_project_fail_open`, `pages_project_set_fail_closed`)
+that reach the Pages project REST API through `curl`, because wrangler has
+no subcommand for `fail_open`. It does not create a Cloudflare
 account, create a KV namespace, or bind a KV namespace to a Pages
 project -- there's no single wrangler CLI verb for the last one (it's a
 one-time dashboard action), so the wizard prints the exact command or
@@ -203,12 +206,13 @@ base_url = "https://jimemo-notes.pages.dev"
 
 No token is ever written here. `CLOUDFLARE_API_TOKEN` must stay exported in
 your shell environment. Every `jimemo publish` subcommand shells out to
-`wrangler`; the deploying ones (`publish`, `refresh`, `gc`) additionally have
-`curl` read the Pages project's fail-open flags straight from that same
-variable before deploying (curl expands it itself; jimemo never reads the
-value). A `wrangler login` credential store alone is not enough for that
-check, so those three refuse without the variable; `purge` and `list` still
-work through wrangler alone.
+`wrangler`; the deploying ones (`publish`, `gc`, and `setup` including
+`--assets-only`) additionally have `curl` read the Pages project's fail-open
+flags straight from that same variable before deploying (curl expands it
+itself; jimemo never reads the value). A `wrangler login` credential store
+alone is not enough for that check, so those refuse without the variable --
+plain `setup` needs it too, since it sets `fail_open=false` through the same
+path; `purge` and `list` still work through wrangler alone.
 
 ## Who verifies this
 

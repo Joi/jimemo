@@ -541,3 +541,14 @@ def test_set_fail_closed_permission_error_is_a_publish_error(monkeypatch):
     with pytest.raises(PublishError) as exc:
         w.pages_project_set_fail_closed("friend-notes")
     assert "curl" in str(exc.value)
+
+
+@pytest.mark.parametrize("stdout", [
+    "[]",                                          # valid JSON, non-object root
+    json.dumps({"success": True, "result": []}),   # object root, non-object result
+])
+def test_non_object_response_raises(monkeypatch, stdout):
+    w, _ = _wrangler_with_token(monkeypatch, _ok(stdout))
+
+    with pytest.raises(PublishError):
+        w.pages_project_fail_open("friend-notes")
