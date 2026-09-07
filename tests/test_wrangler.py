@@ -461,6 +461,8 @@ def test_missing_account_id_refuses_without_calling_curl(monkeypatch):
     with pytest.raises(PublishError) as exc:
         w.pages_project_fail_open("friend-notes")
     assert "account_id" in str(exc.value)
+    assert "[publish.cloudflare].account_id" in str(exc.value)
+    assert "jimemo publish setup" in str(exc.value)
     assert runner.calls == []
 
 
@@ -552,3 +554,28 @@ def test_non_object_response_raises(monkeypatch, stdout):
 
     with pytest.raises(PublishError):
         w.pages_project_fail_open("friend-notes")
+
+
+TOKEN_HINT = "check that CLOUDFLARE_API_TOKEN is valid and scoped Pages:Edit"
+
+
+@pytest.mark.parametrize("code", [9106, 10000])
+def test_auth_error_codes_add_a_token_scope_hint(monkeypatch, code):
+    envelope = json.dumps({"success": False, "result": None, "errors": [
+        {"code": code, "message": "Authentication error"}]})
+    w, _ = _wrangler_with_token(monkeypatch, _ok(envelope))
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_fail_open("friend-notes")
+    assert TOKEN_HINT in str(exc.value)
+
+
+def test_other_error_codes_get_no_token_hint(monkeypatch):
+    envelope = json.dumps({"success": False, "result": None, "errors": [
+        {"code": 8000007, "message": "Project not found"}]})
+    w, _ = _wrangler_with_token(monkeypatch, _ok(envelope))
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_fail_open("friend-notes")
+    assert TOKEN_HINT not in str(exc.value)
+    assert "8000007" in str(exc.value)

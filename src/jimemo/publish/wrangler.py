@@ -68,6 +68,11 @@ CURL_TOO_OLD_MESSAGE = (
     "fail_open on the Pages project; upgrade curl and retry"
 )
 
+#: Cloudflare API error codes for a missing/invalid token (10000) or a
+#: token without the needed scope (9106): the one refusal where the fix
+#: is the token, so the message says so. Only the code is inspected.
+AUTH_ERROR_CODES = frozenset({9106, 10000})
+
 #: PATCH body that makes a Functions outage an outage, not a leak.
 FAIL_CLOSED_BODY = json.dumps(
     {"deployment_configs": {"production": {"fail_open": False},
@@ -265,7 +270,9 @@ class Wrangler:
         envelope whose ``success`` is not the literal boolean true."""
         if not self.account_id:
             raise PublishError(
-                "cloudflare backend needs account_id to read the Pages project config"
+                "cloudflare backend needs account_id to read the Pages project "
+                "config (set [publish.cloudflare].account_id in "
+                "~/.jimemo/config.toml or re-run `jimemo publish setup`)"
             )
         if "CLOUDFLARE_API_TOKEN" not in os.environ:
             raise PublishError(TOKEN_ENV_REQUIRED_MESSAGE)
@@ -296,9 +303,15 @@ class Wrangler:
         if (not isinstance(payload, dict) or payload.get("success") is not True
                 or not isinstance(payload.get("result"), dict)):
             errors = payload.get("errors") if isinstance(payload, dict) else payload
+            hint = ""
+            if isinstance(errors, list) and any(
+                isinstance(e, dict) and e.get("code") in AUTH_ERROR_CODES
+                for e in errors
+            ):
+                hint = "; check that CLOUDFLARE_API_TOKEN is valid and scoped Pages:Edit"
             raise PublishError(
                 f"Pages project API {method} {project!r} did not answer "
-                f"success=true: {errors!r}"
+                f"success=true: {errors!r}{hint}"
             )
         return payload["result"]
 
