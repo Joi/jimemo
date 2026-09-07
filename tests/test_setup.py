@@ -966,3 +966,14 @@ def test_fail_closed_argv_carries_the_template_not_a_value():
     assert "{{CLOUDFLARE_API_TOKEN}}" in argv
     assert "--variable %CLOUDFLARE_API_TOKEN" in argv
     assert "/accounts/acct123/pages/projects/friend-notes" in argv
+
+
+def test_setup_dry_run_argv_matches_the_seam():
+    """The dry-run line is a shell rendering of the exact argv the seam
+    runs; the two must never drift."""
+    import shlex
+    from jimemo.publish.wrangler import FAIL_CLOSED_BODY, Wrangler
+
+    assert shlex.split(_fail_closed_argv("acct-1", "p")) == (
+        Wrangler(account_id="acct-1")._cf_api_argv("PATCH", "p", FAIL_CLOSED_BODY)
+    )

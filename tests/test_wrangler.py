@@ -371,6 +371,7 @@ def test_fail_open_get_argv_keeps_the_token_out_of_argv(monkeypatch):
     assert argv[argv.index("--variable") + 1] == "%CLOUDFLARE_API_TOKEN"
     assert argv[argv.index("--expand-header") + 1] == "Authorization: Bearer {{CLOUDFLARE_API_TOKEN}}"
     assert argv[argv.index("-X") + 1] == "GET"
+    assert "-sS" in argv
     assert argv[-1] == PROJECT_URL
     assert "-d" not in argv
     assert all("super-secret-token" not in a for a in argv)
@@ -507,3 +508,36 @@ def test_mock_wrangler_fail_open_state():
     assert m.curl_version() == (8, 7, 1)
     assert ("pages_project_set_fail_closed", "p") in m.calls
     assert ("pages_project_fail_open", "p") in m.calls
+
+
+class PermissionRunner:
+    """Simulates a curl that exists but cannot be executed (mode 000,
+    wrong architecture, ...): process start raises an OSError that is
+    NOT FileNotFoundError."""
+
+    def __call__(self, argv, env=None):
+        raise PermissionError(13, "Permission denied", "curl")
+
+
+def test_curl_version_none_on_permission_error():
+    assert Wrangler(runner=PermissionRunner()).curl_version() is None
+
+
+def test_fail_open_get_permission_error_is_a_publish_error(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "x")
+    w = Wrangler(runner=PermissionRunner(), account_id="acct-1")
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_fail_open("friend-notes")
+    msg = str(exc.value)
+    assert "curl" in msg
+    assert "PermissionError" in msg
+
+
+def test_set_fail_closed_permission_error_is_a_publish_error(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "x")
+    w = Wrangler(runner=PermissionRunner(), account_id="acct-1")
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_set_fail_closed("friend-notes")
+    assert "curl" in str(exc.value)

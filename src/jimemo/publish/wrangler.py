@@ -64,8 +64,8 @@ TOKEN_ENV_REQUIRED_MESSAGE = (
 )
 
 CURL_TOO_OLD_MESSAGE = (
-    "cloudflare backend needs curl >= 8.3 (found {found}) to set "
-    "fail_open=false on the Pages project; upgrade curl and retry"
+    "cloudflare backend needs curl >= 8.3 (found {found}) to read or set "
+    "fail_open on the Pages project; upgrade curl and retry"
 )
 
 #: PATCH body that makes a Functions outage an outage, not a leak.
@@ -228,10 +228,12 @@ class Wrangler:
 
     def curl_version(self) -> Optional[Tuple[int, int, int]]:
         """(major, minor, patch) of the curl on PATH, or None when curl is
-        missing or its ``--version`` line is unparseable."""
+        missing, cannot be started (any OSError: not found, permission
+        denied, exec-format error), or its ``--version`` line is
+        unparseable."""
         try:
             result = self._run([self._curl, "-q", "--version"], None)
-        except FileNotFoundError:
+        except OSError:
             return None
         if result.returncode != 0:
             return None
@@ -269,8 +271,16 @@ class Wrangler:
             raise PublishError(TOKEN_ENV_REQUIRED_MESSAGE)
         try:
             result = self._run(self._cf_api_argv(method, project, body), None)
-        except FileNotFoundError:
-            raise PublishError(CURL_TOO_OLD_MESSAGE.format(found="none on PATH"))
+        except OSError as e:
+            # Any process-start failure (not found, permission denied,
+            # exec-format error) is a refusal, never a traceback. str(e)
+            # carries only errno text and the executable name -- never
+            # argv or the environment.
+            raise PublishError(
+                f"could not run curl for the fail-closed check "
+                f"({e.__class__.__name__}: {e}); "
+                f"{CURL_TOO_OLD_MESSAGE.format(found='none usable on PATH')}"
+            )
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
             raise PublishError(
