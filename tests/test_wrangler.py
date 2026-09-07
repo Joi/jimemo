@@ -324,3 +324,186 @@ def test_module_never_reads_the_cf_api_token_value():
         "os.getenv('CLOUDFLARE_API_TOKEN')",
     ):
         assert pattern not in src
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed: Pages project fail_open via curl (jibot-code#efw6). Wrangler
+# has no subcommand for it; curl imports the token from ITS environment
+# (--variable %NAME / --expand-header), so jimemo still never reads it.
+# ---------------------------------------------------------------------------
+
+from jimemo.publish.wrangler import (  # noqa: E402
+    FAIL_CLOSED_BODY, TOKEN_ENV_REQUIRED_MESSAGE,
+)
+
+PROJECT_URL = "https://api.cloudflare.com/client/v4/accounts/acct-1/pages/projects/friend-notes"
+
+
+def _project_json(prod, prev, success=True):
+    return json.dumps({"success": success, "errors": [], "result": {
+        "name": "friend-notes",
+        "deployment_configs": {"production": {"fail_open": prod},
+                               "preview": {"fail_open": prev}}}})
+
+
+def _ok(stdout):
+    return CompletedProcess([], 0, stdout=stdout, stderr="")
+
+
+def _wrangler_with_token(monkeypatch, *results):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "x")
+    runner = FakeRunner(*results)
+    return Wrangler(runner=runner, account_id="acct-1"), runner
+
+
+def test_fail_open_get_argv_keeps_the_token_out_of_argv(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "super-secret-token")
+    runner = FakeRunner(_ok(_project_json(False, False)))
+    w = Wrangler(runner=runner, account_id="acct-1")
+
+    flags = w.pages_project_fail_open("friend-notes")
+
+    argv = runner.calls[0]
+    assert flags == {"production": False, "preview": False}
+    assert argv[0] == "curl"
+    assert argv[1] == "-q"                      # first: no .curlrc (could enable --trace)
+    assert "--max-time" in argv and argv[argv.index("--max-time") + 1] == "30"
+    assert argv[argv.index("--variable") + 1] == "%CLOUDFLARE_API_TOKEN"
+    assert argv[argv.index("--expand-header") + 1] == "Authorization: Bearer {{CLOUDFLARE_API_TOKEN}}"
+    assert argv[argv.index("-X") + 1] == "GET"
+    assert argv[-1] == PROJECT_URL
+    assert "-d" not in argv
+    assert all("super-secret-token" not in a for a in argv)
+    assert runner.envs[0] is None               # inherited env, never a copy
+
+
+def test_set_fail_closed_patches_then_verifies(monkeypatch):
+    w, runner = _wrangler_with_token(
+        monkeypatch, _ok(_project_json(False, False)), _ok(_project_json(False, False)))
+
+    w.pages_project_set_fail_closed("friend-notes")
+
+    patch_argv, get_argv = runner.calls
+    assert patch_argv[1] == "-q"
+    assert patch_argv[patch_argv.index("-X") + 1] == "PATCH"
+    assert patch_argv[patch_argv.index("-d") + 1] == FAIL_CLOSED_BODY
+    assert json.loads(FAIL_CLOSED_BODY) == {"deployment_configs": {
+        "production": {"fail_open": False}, "preview": {"fail_open": False}}}
+    assert get_argv[get_argv.index("-X") + 1] == "GET"
+    assert runner.envs == [None, None]
+
+
+def test_set_fail_closed_that_does_not_stick_raises(monkeypatch):
+    w, _ = _wrangler_with_token(
+        monkeypatch, _ok(_project_json(False, False)), _ok(_project_json(True, False)))
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_set_fail_closed("friend-notes")
+    assert "still fail-open" in str(exc.value)
+
+
+@pytest.mark.parametrize("value", [True, None, 0, "", "false", 1])
+def test_only_literal_false_reads_as_closed(monkeypatch, value):
+    w, _ = _wrangler_with_token(monkeypatch, _ok(_project_json(value, value)))
+
+    assert w.pages_project_fail_open("friend-notes") == {"production": True, "preview": True}
+
+
+def test_missing_deployment_configs_reads_as_open(monkeypatch):
+    w, _ = _wrangler_with_token(
+        monkeypatch, _ok(json.dumps({"success": True, "errors": [], "result": {"name": "friend-notes"}})))
+
+    assert w.pages_project_fail_open("friend-notes") == {"production": True, "preview": True}
+
+
+@pytest.mark.parametrize("success", [1, "true", None, False])
+def test_success_must_be_literal_true(monkeypatch, success):
+    w, _ = _wrangler_with_token(monkeypatch, _ok(_project_json(False, False, success=success)))
+
+    with pytest.raises(PublishError):
+        w.pages_project_fail_open("friend-notes")
+
+
+def test_non_json_output_raises(monkeypatch):
+    w, _ = _wrangler_with_token(monkeypatch, _ok("<html>502</html>"))
+
+    with pytest.raises(PublishError):
+        w.pages_project_fail_open("friend-notes")
+
+
+def test_curl_failure_raises_with_stderr(monkeypatch):
+    w, _ = _wrangler_with_token(
+        monkeypatch, CompletedProcess([], 2, stdout="", stderr="curl: variable expansion failure"))
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_fail_open("friend-notes")
+    assert "exit 2" in str(exc.value)
+    assert "curl: variable expansion failure" in str(exc.value)   # stderr preserved
+
+
+def test_missing_token_env_refuses_without_calling_curl(monkeypatch):
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    runner = FakeRunner(_ok(_project_json(False, False)))
+    w = Wrangler(runner=runner, account_id="acct-1")
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_fail_open("friend-notes")
+    assert str(exc.value) == TOKEN_ENV_REQUIRED_MESSAGE
+    assert runner.calls == []
+
+
+def test_missing_account_id_refuses_without_calling_curl(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "x")
+    runner = FakeRunner(_ok(_project_json(False, False)))
+    w = Wrangler(runner=runner)
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_fail_open("friend-notes")
+    assert "account_id" in str(exc.value)
+    assert runner.calls == []
+
+
+def test_missing_curl_binary_raises(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "x")
+    w = Wrangler(runner=RaisingRunner(), account_id="acct-1")
+
+    with pytest.raises(PublishError) as exc:
+        w.pages_project_fail_open("friend-notes")
+    assert "curl" in str(exc.value)
+
+
+def test_curl_version_parses_first_line():
+    runner = FakeRunner(_ok("curl 8.7.1 (x86_64-apple-darwin25.0) libcurl/8.7.1\nRelease-Date: 2024-03-27\n"))
+    w = Wrangler(runner=runner)
+
+    assert w.curl_version() == (8, 7, 1)
+    assert runner.calls == [["curl", "-q", "--version"]]
+    assert runner.envs == [None]
+
+
+def test_curl_version_none_when_missing_or_unparseable():
+    assert Wrangler(runner=RaisingRunner()).curl_version() is None
+    assert Wrangler(runner=FakeRunner(_ok("not curl"))).curl_version() is None
+    assert Wrangler(runner=FakeRunner(CompletedProcess([], 1, stdout="", stderr=""))).curl_version() is None
+
+
+def test_cf_api_never_passes_an_env_dict(monkeypatch):
+    """The token must stay in the inherited environment: jimemo never
+    materializes a copy of os.environ for the curl call (dict(os.environ)
+    would be a read of the token value)."""
+    w, runner = _wrangler_with_token(monkeypatch, _ok(_project_json(False, False)))
+    w.pages_project_fail_open("friend-notes")
+    assert runner.envs == [None]
+
+
+def test_mock_wrangler_fail_open_state():
+    m = MockWrangler()
+    assert m.pages_project_fail_open("p") == {"production": False, "preview": False}
+    m.pages_project_create("p")
+    assert m.pages_project_fail_open("p") == {"production": True, "preview": True}
+    m.pages_project_set_fail_closed("p")
+    assert m.pages_project_fail_open("p") == {"production": False, "preview": False}
+    assert MockWrangler(fail_open=True).pages_project_fail_open("p") == {"production": True, "preview": True}
+    assert m.curl_version() == (8, 7, 1)
+    assert ("pages_project_set_fail_closed", "p") in m.calls
+    assert ("pages_project_fail_open", "p") in m.calls

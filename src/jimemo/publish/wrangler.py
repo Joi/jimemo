@@ -9,6 +9,19 @@ a token itself: every method here just execs ``npx wrangler <subcommand>
 from its environment. If jimemo doesn't touch the token, it can't leak
 the token.
 
+The one thing wrangler cannot do is read or set a Pages project's
+``deployment_configs.*.fail_open`` (jibot-code#efw6: Cloudflare's default,
+true, serves the static files WITHOUT the tombstone middleware whenever
+Functions cannot run, so purged hashes come back). Those two calls go to
+the Pages project REST API through ``curl``, run via the same injectable
+runner -- and curl, not jimemo, imports the token from ITS environment
+(``--variable %CLOUDFLARE_API_TOKEN`` + ``--expand-header``, curl >= 8.3),
+so the token is never in Python, in argv, or in a log; ``-q`` is curl's
+first argument so no ``.curlrc`` can switch on ``--trace``. jimemo checks
+only that the variable is PRESENT, never its value. Consequence: the
+environment token is mandatory for every deploy of this backend --
+``wrangler login`` credentials cannot call the project API.
+
 Every wrangler invocation goes through an injectable runner (default:
 a real subprocess, list-form argv, NEVER ``shell=True``) so tests can
 swap in a fake without ever touching a real wrangler process or the
@@ -19,11 +32,12 @@ fake-runner pair at all.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 from subprocess import CompletedProcess
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ..errors import PublishError
 
@@ -36,6 +50,29 @@ Runner = Callable[[List[str], Optional[Dict[str, str]]], CompletedProcess]
 NO_WRANGLER_MESSAGE = (
     "cloudflare backend needs Node + wrangler; install Node "
     "(https://nodejs.org) or use the command backend"
+)
+
+CF_API = "https://api.cloudflare.com/client/v4"
+
+#: curl gained ``--variable`` / ``--expand-header`` in 8.3.0 (2023-09).
+MIN_CURL = (8, 3, 0)
+
+TOKEN_ENV_REQUIRED_MESSAGE = (
+    "the fail-closed check needs CLOUDFLARE_API_TOKEN in the environment "
+    "(wrangler login credentials cannot read the Pages project config); "
+    "export it and retry"
+)
+
+CURL_TOO_OLD_MESSAGE = (
+    "cloudflare backend needs curl >= 8.3 (found {found}) to set "
+    "fail_open=false on the Pages project; upgrade curl and retry"
+)
+
+#: PATCH body that makes a Functions outage an outage, not a leak.
+FAIL_CLOSED_BODY = json.dumps(
+    {"deployment_configs": {"production": {"fail_open": False},
+                            "preview": {"fail_open": False}}},
+    separators=(",", ":"),
 )
 
 
@@ -53,7 +90,10 @@ class Wrangler:
     """Thin argv-building wrapper around ``npx wrangler``, one method per
     subcommand the cloudflare backend needs: listing/creating Cloudflare
     Pages projects for setup, deploying a directory to Cloudflare Pages,
-    and reading/writing/listing the tombstone KV namespace.
+    and reading/writing/listing the tombstone KV namespace. Plus two
+    Pages project-config calls (fail_open read/set) that wrangler has no
+    subcommand for, made through ``curl`` with the same runner -- see the
+    module docstring for why curl and not Python holds the token.
 
     Account scoping: CloudflareConfig carries an ``account_id``. None of
     these subcommands take an ``--account-id`` flag (checked against
@@ -77,9 +117,11 @@ class Wrangler:
         runner: Runner = _run,
         npx: str = "npx",
         account_id: Optional[str] = None,
+        curl: str = "curl",
     ):
         self._run = runner
         self._npx = npx
+        self._curl = curl
         #: Non-secret Cloudflare account id. Public and mutable (not
         #: constructor-only) because setup.py's `jimemo publish setup`
         #: wizard only learns it partway through the wizard -- after
@@ -184,6 +226,102 @@ class Wrangler:
             "pages project create",
         )
 
+    def curl_version(self) -> Optional[Tuple[int, int, int]]:
+        """(major, minor, patch) of the curl on PATH, or None when curl is
+        missing or its ``--version`` line is unparseable."""
+        try:
+            result = self._run([self._curl, "-q", "--version"], None)
+        except FileNotFoundError:
+            return None
+        if result.returncode != 0:
+            return None
+        first = (result.stdout or "").splitlines()[:1]
+        m = re.match(r"curl (\d+)\.(\d+)\.(\d+)", first[0]) if first else None
+        if not m:
+            return None
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+    def _cf_api_argv(self, method: str, project: str,
+                     body: Optional[str] = None) -> List[str]:
+        argv = [
+            self._curl, "-q", "-sS", "--max-time", "30",
+            "--variable", "%CLOUDFLARE_API_TOKEN",
+            "--expand-header", "Authorization: Bearer {{CLOUDFLARE_API_TOKEN}}",
+            "-X", method, "-H", "Content-Type: application/json",
+        ]
+        if body is not None:
+            argv += ["-d", body]
+        argv.append(f"{CF_API}/accounts/{self.account_id}/pages/projects/{project}")
+        return argv
+
+    def _cf_api(self, method: str, project: str,
+                body: Optional[str] = None) -> Dict[str, Any]:
+        """GET/PATCH the Pages project via curl. Returns the API ``result``
+        object. Every failure mode is a PublishError (a refusal upstream):
+        no account id, no token in the environment (presence only -- the
+        value is never read), curl missing, nonzero exit, non-JSON, or an
+        envelope whose ``success`` is not the literal boolean true."""
+        if not self.account_id:
+            raise PublishError(
+                "cloudflare backend needs account_id to read the Pages project config"
+            )
+        if "CLOUDFLARE_API_TOKEN" not in os.environ:
+            raise PublishError(TOKEN_ENV_REQUIRED_MESSAGE)
+        try:
+            result = self._run(self._cf_api_argv(method, project, body), None)
+        except FileNotFoundError:
+            raise PublishError(CURL_TOO_OLD_MESSAGE.format(found="none on PATH"))
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise PublishError(
+                f"curl {method} Pages project {project!r} failed "
+                f"(exit {result.returncode}): {stderr}"
+            )
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            raise PublishError(
+                f"Pages project API {method} {project!r}: could not parse JSON output: {e}"
+            )
+        if (not isinstance(payload, dict) or payload.get("success") is not True
+                or not isinstance(payload.get("result"), dict)):
+            errors = payload.get("errors") if isinstance(payload, dict) else payload
+            raise PublishError(
+                f"Pages project API {method} {project!r} did not answer "
+                f"success=true: {errors!r}"
+            )
+        return payload["result"]
+
+    @staticmethod
+    def _open_flags(result: Dict[str, Any]) -> Dict[str, bool]:
+        """Strict: an environment is CLOSED only when fail_open is the
+        literal JSON boolean false (``is False``; 0 == False in Python).
+        Missing keys, null, numbers, strings all read as open."""
+        dc = result.get("deployment_configs")
+        if not isinstance(dc, dict):
+            dc = {}
+        flags = {}
+        for env in ("production", "preview"):
+            cfg = dc.get(env)
+            flags[env] = not (isinstance(cfg, dict) and cfg.get("fail_open") is False)
+        return flags
+
+    def pages_project_fail_open(self, project: str) -> Dict[str, bool]:
+        """``{"production": is_open, "preview": is_open}`` for the project."""
+        return self._open_flags(self._cf_api("GET", project))
+
+    def pages_project_set_fail_closed(self, project: str) -> None:
+        """PATCH fail_open=false on both environments, then re-read and
+        verify; a PATCH that does not stick is a PublishError."""
+        self._cf_api("PATCH", project, FAIL_CLOSED_BODY)
+        flags = self.pages_project_fail_open(project)
+        if flags["production"] or flags["preview"]:
+            raise PublishError(
+                f"Pages project {project!r} is still fail-open after the PATCH "
+                f"(production={'open' if flags['production'] else 'closed'}, "
+                f"preview={'open' if flags['preview'] else 'closed'})"
+            )
+
     def kv_put(self, namespace_id: str, key: str, value: str) -> None:
         """Write ``value`` under ``key`` in the KV namespace. ``--remote``
         is explicit so this always hits the real (production) namespace,
@@ -229,18 +367,24 @@ class MockWrangler:
     network. Records every call (as a tuple, call name first) in
     ``.calls`` and serves kv_put/kv_get/kv_list from an in-memory dict,
     so a purge followed by a list/gc round-trips realistically without
-    a real KV namespace.
+    a real KV namespace. ``fail_open`` mirrors the project's flags: a
+    fresh mock is an already-provisioned (closed) project;
+    ``pages_project_create`` opens both, like Cloudflare;
+    ``fail_open=True`` starts open for refusal tests.
     """
 
     def __init__(
         self,
         deploy_stdout: str = "Deployment complete!\n",
         projects: Optional[List[str]] = None,
+        fail_open: bool = False,
     ):
         self.calls: List[tuple] = []
         self._kv: Dict[str, str] = {}
         self._deploy_stdout = deploy_stdout
         self._projects = set(projects or [])
+        self.fail_open: Dict[str, bool] = {
+            "production": bool(fail_open), "preview": bool(fail_open)}
 
     def check_available(self) -> bool:
         self.calls.append(("check_available",))
@@ -261,7 +405,21 @@ class MockWrangler:
     ) -> CompletedProcess:
         self.calls.append(("pages_project_create", project, branch))
         self._projects.add(project)
+        # Cloudflare's default for a new project: both environments open.
+        self.fail_open = {"production": True, "preview": True}
         return CompletedProcess([], 0, stdout="", stderr="")
+
+    def curl_version(self) -> Optional[Tuple[int, int, int]]:
+        self.calls.append(("curl_version",))
+        return (8, 7, 1)
+
+    def pages_project_fail_open(self, project: str) -> Dict[str, bool]:
+        self.calls.append(("pages_project_fail_open", project))
+        return dict(self.fail_open)
+
+    def pages_project_set_fail_closed(self, project: str) -> None:
+        self.calls.append(("pages_project_set_fail_closed", project))
+        self.fail_open = {"production": False, "preview": False}
 
     def kv_put(self, namespace_id: str, key: str, value: str) -> None:
         self.calls.append(("kv_put", namespace_id, key, value))
