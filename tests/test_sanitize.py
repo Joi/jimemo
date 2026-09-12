@@ -84,6 +84,44 @@ def test_on_attributes_stripped_even_on_allowlisted_tags():
     assert out == '<td align="left">c</td>'
 
 
+# --- <a> id: in-page anchor targets ---
+
+def test_a_id_kept_with_href_for_in_page_anchors():
+    # Rendered pages ship no JavaScript, so <a id="x"></a> + [jump](#x)
+    # needs the id to survive or the fragment has nothing to scroll to.
+    out = sanitize_html('<a id="sec" href="#sec">x</a>')
+    assert out == '<a id="sec" href="#sec">x</a>'
+
+
+@pytest.mark.parametrize(
+    "src, expected",
+    [
+        ('<p id="sec">x</p>', "<p>x</p>"),
+        ('<h2 id="sec">x</h2>', "<h2>x</h2>"),
+        ('<td id="x">y</td>', "<td>y</td>"),
+    ],
+)
+def test_id_still_stripped_on_every_tag_but_a(src, expected):
+    assert sanitize_html(src) == expected
+
+
+def test_a_name_still_stripped():
+    assert sanitize_html('<a name="sec">x</a>') == "<a>x</a>"
+
+
+def test_a_id_value_quote_escaped():
+    out = sanitize_html('<a id=\'a"b\' href="#x">y</a>')
+    assert out == '<a id="a&quot;b" href="#x">y</a>'
+    assert '"a"b"' not in out
+
+
+def test_a_onclick_still_stripped_alongside_kept_id():
+    # The on* rule runs before the allowlist, so a kept id never brings
+    # an event handler along with it.
+    out = sanitize_html('<a onclick="alert(1)" id="x">y</a>')
+    assert out == '<a id="x">y</a>'
+
+
 def test_fenced_code_language_class_preserved():
     src = '<pre><code class="language-python">x = 1</code></pre>'
     assert sanitize_html(src) == src

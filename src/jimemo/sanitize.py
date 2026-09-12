@@ -52,7 +52,12 @@ DISCARD_TAGS = frozenset({
 VOID_TAGS = frozenset({"br", "hr", "img"})
 
 ALLOWED_ATTRS = {
-    "a": frozenset({"href", "title"}),
+    # `id` on <a> alone, so raw-HTML in-page anchors (<a id="x"></a>
+    # plus a markdown [jump](#x)) have a target to scroll to. Carries
+    # no URL and executes nothing; the value is attribute-escaped by
+    # _format_tag like every other kept attribute. Not added to any
+    # other tag, and `name` is not added either.
+    "a": frozenset({"href", "title", "id"}),
     "img": frozenset({"src", "alt", "title"}),
     "th": frozenset({"align", "style"}),
     "td": frozenset({"align", "style"}),
