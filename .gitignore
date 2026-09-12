@@ -13,3 +13,4 @@ out.html
 out.pdf
 *.pdf
 .venv/
+.kata.local.toml

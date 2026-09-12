@@ -1,0 +1,8 @@
+# roborev per-repo config (kata jibot-code#xxf4). REVIEW.md carries the review guidelines.
+agent = 'claude-code'
+
+# Findings and failures from main-branch reviews are filed into the bound kata project (.kata.toml).
+[[hooks]]
+event = "review.*"
+type = "kata"
+branches = ["main"]
