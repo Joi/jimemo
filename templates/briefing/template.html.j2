@@ -1,6 +1,5 @@
-{#- briefing — a memo/status template: masthead, optional stat row,
-    prose body, optional dated/headed sections. Extends the toolkit
-    page skeleton; components used: page-header, stat-tile. -#}
+{#- briefing — a memo/status template: masthead, prose body, optional dated/headed sections. Extends the toolkit
+    page skeleton; components used: page-header. -#}
 {% extends "page.html.j2" %}
 {% import "macros.html.j2" as ui %}
 
@@ -11,11 +10,6 @@
      kicker=kicker|default(none),
      subtitle=subtitle|default(none),
      meta=([date] if date|default(none) else [])) }}
-
-{% set stat_items = stats|default([]) %}
-{% if stat_items %}
-{{ ui.stat_row(stat_items) }}
-{% endif %}
 
 <div class="jm-prose">
 {{ body }}

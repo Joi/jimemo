@@ -3,13 +3,6 @@ title: "Peer Review Pipeline — Week 3 Status"
 date: "3 July 2026"
 kicker: "Engineering briefing"
 subtitle: "Migration off the legacy review queue continues on schedule."
-stats:
-  - label: "Reviews migrated"
-    value: "142 of 180"
-  - label: "Days elapsed"
-    value: "18"
-  - label: "Open blockers"
-    value: "2"
 sections:
   - heading: "What shipped this week"
     body: |

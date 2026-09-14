@@ -1,8 +1,8 @@
 {#- chart-dashboard — a metrics dashboard: masthead, optional intro prose,
-    a row of headline stat-tiles, two charts (a trend line and a category
+    two charts (a trend line and a category
     bar) fed by their own schema-free data slots, a supporting data-table,
     and optional closing notes. Extends the toolkit page skeleton;
-    components used: page-header, stat-tile, chart, data-table.
+    components used: page-header, chart, data-table.
 
     The renderer supplies `charts` (one entry per manifest declaration:
     id, type, title, init_js) only because this manifest's `charts`
@@ -26,11 +26,6 @@
 <div class="jm-prose">
 {{ intro }}
 </div>
-{% endif %}
-
-{% set headline_stats = stats|default([]) %}
-{% if headline_stats %}
-{{ ui.stat_row(headline_stats) }}
 {% endif %}
 
 {% for c in charts %}

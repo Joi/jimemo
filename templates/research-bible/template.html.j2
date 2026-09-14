@@ -1,10 +1,10 @@
 {#- research-bible — a deep-research reference document: masthead,
-    corpus-provenance stat row, purpose/field-map prose, evidence-tag
+    corpus-provenance line, purpose/field-map prose, evidence-tag
     legend, contents, one anchored section per research position, an
     unresolved-links notice, and a bibliography. Built for the output
     of retrieval-first research pipelines (e.g. deeper-research).
     Extends the toolkit page skeleton; components used: page-header,
-    stat-tile, toc, evidence. -#}
+    toc, evidence. -#}
 {% extends "page.html.j2" %}
 {% import "macros.html.j2" as ui %}
 
@@ -24,7 +24,9 @@
   {%- set _ = prov.append({"value": p.value|default(""), "label": p.label|default("")}) -%}
 {%- endfor %}
 {% if prov %}
-{{ ui.stat_row(prov) }}
+<div class="jm-prose">
+<p><em>{% for p in prov %}{{ p.label }}: {{ p.value }}{% if not loop.last %} · {% endif %}{% endfor %}</em></p>
+</div>
 {% endif %}
 
 {% if body|default(none) %}

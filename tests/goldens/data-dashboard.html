@@ -633,63 +633,6 @@ body {
   }
 }
 
-/* stat-tile — a quiet figure with an apparatus label.
- * Serif value, tracked sans label; deltas use positive/negative roles.
- * `.jm-stat-row` lays tiles out in a responsive grid. */
-
-.jm-stat-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-  gap: var(--jm-space-3);
-  margin-block: var(--jm-space-6);
-}
-
-.jm-stat-tile {
-  background: var(--jm-surface);
-  border: 1px solid var(--jm-border);
-  border-radius: var(--jm-radius-md);
-  box-shadow: var(--jm-shadow-sm);
-  padding: var(--jm-space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--jm-space-1);
-  break-inside: avoid;
-}
-
-.jm-stat-tile__value {
-  font-family: var(--jm-font-prose);
-  font-size: var(--jm-text-xl);
-  line-height: var(--jm-leading-tight);
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
-
-.jm-stat-tile__label {
-  font-family: var(--jm-font-ui);
-  font-size: var(--jm-text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: var(--jm-tracking-caps);
-  color: var(--jm-muted);
-}
-
-.jm-stat-tile__delta {
-  margin-block-start: auto;
-  padding-block-start: var(--jm-space-1);
-  font-family: var(--jm-font-ui);
-  font-size: var(--jm-text-sm);
-  font-variant-numeric: tabular-nums;
-  color: var(--jm-muted);
-}
-
-.jm-stat-tile__delta--positive {
-  color: var(--jm-positive);
-}
-
-.jm-stat-tile__delta--negative {
-  color: var(--jm-negative);
-}
-
 /* data-table — a booktable: heavy rule above, hairline rows, no boxes,
  * no zebra. Headers and cells speak in the apparatus voice; numeric
  * columns align right with tabular figures. Wrap in __scroll so wide
@@ -855,32 +798,6 @@ body {
 resolution time improved for the second consecutive week, driven by
 the triage macros rolled out on 24 June. One P1 incident (a delayed
 payment webhook) was opened and resolved inside SLA.</p>
-</div>
-
-
-
-
-<div class="jm-stat-row">
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">394</div>
-  <div class="jm-stat-tile__label">Tickets closed</div>
-  <div class="jm-stat-tile__delta">+18 vs last week</div>
-</div>
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">3.4h</div>
-  <div class="jm-stat-tile__label">Median resolution</div>
-  <div class="jm-stat-tile__delta">-0.6h vs last week</div>
-</div>
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">4.6 / 5</div>
-  <div class="jm-stat-tile__label">CSAT</div>
-  <div class="jm-stat-tile__delta">+0.1 vs last week</div>
-</div>
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">57</div>
-  <div class="jm-stat-tile__label">Open backlog</div>
-  <div class="jm-stat-tile__delta">-9 vs last week</div>
-</div>
 </div>
 
 

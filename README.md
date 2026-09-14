@@ -95,7 +95,7 @@ Inspect a template's slots and suitability:
 ```
 $ jimemo info briefing
 briefing — Briefing / memo
-A status memo: masthead, optional stat row, prose summary, optional sections.
+A status memo: masthead, prose summary, optional sections.
 
 Slots:
   title            text      required
@@ -103,7 +103,6 @@ Slots:
   kicker           text
   subtitle         text
   body             markdown  required
-  stats            data
   sections         data
 ...
 ```
@@ -164,7 +163,7 @@ theme override (see "Import a design" below).
 The `research-bible` template renders the output of a retrieval-first
 research pipeline — [deeper-research](https://github.com/nraford7/deeper-research)
 is the shape it was built against — as one navigable page: a
-corpus-provenance stat row, an evidence-tag legend, a numbered contents
+corpus-provenance line, an evidence-tag legend, a numbered contents
 block, one anchored section per research position, an unresolved-links
 notice, and a bibliography.
 
@@ -189,7 +188,7 @@ research pipeline onto the template:
 - The `## ⚠ Unresolved links` block, if the verifier emitted one,
   becomes the `unresolved:` slot.
 - Corpus stats from the Bible's provenance line (sources, slices,
-  evidence gate, adversary) become `provenance:` stat tiles, and the
+  evidence gate, adversary) become the `provenance:` line, and the
   "how to read the evidence tags" legend becomes `legend:` rows.
 - The document's title, subtitle, and compilation date fill `title:`,
   `subtitle:`, and `date:`; `kicker:` is the small label above the
@@ -248,7 +247,7 @@ pitfalls, and copy-paste snippets: [`docs/diagrams.md`](docs/diagrams.md).
 
 ### Charts
 
-`chart-dashboard` renders headline stat tiles plus a line and a bar
+`chart-dashboard` renders a line and a bar
 chart from tabular content:
 
 ```

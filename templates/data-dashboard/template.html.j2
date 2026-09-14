@@ -1,8 +1,8 @@
 {#- data-dashboard — a metrics/ops report: masthead, optional intro
-    prose, a row of headline stat-tiles, one or more data-tables, and
-    optional closing notes. Phase 3: stat tiles + tables only, no chart
+    prose, one or more data-tables, and
+    optional closing notes. Phase 3: tables only, no chart
     scripts (manifest 'charts' stays empty). Extends the toolkit page
-    skeleton; components used: page-header, stat-tile, data-table. -#}
+    skeleton; components used: page-header, data-table. -#}
 {% extends "page.html.j2" %}
 {% import "macros.html.j2" as ui %}
 
@@ -18,11 +18,6 @@
 <div class="jm-prose">
 {{ intro }}
 </div>
-{% endif %}
-
-{% set headline_stats = stats|default([]) %}
-{% if headline_stats %}
-{{ ui.stat_row(headline_stats) }}
 {% endif %}
 
 {% for t in tables|default([]) %}

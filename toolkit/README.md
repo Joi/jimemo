@@ -113,7 +113,7 @@ light-palette colors.
 ## Conventions
 
 - Class naming: `.jm-<component>` block, `__element` children,
-  `--modifier` variants (`.jm-stat-tile__delta--positive`).
+  `--modifier` variants (`.jm-badge--positive`).
 - Markdown slots render inside a `.jm-prose` wrapper. Components are
   **siblings** of prose blocks, never children, so prose element
   selectors cannot leak into component internals.
@@ -139,19 +139,6 @@ The masthead: short indigo bar, kicker, serif title, apparatus meta row.
      kicker="Garden survey",
      subtitle="Thirty flowering plants for the tea room.",
      meta=["Thimphu", "28 June 2026", "30 species"]) }}
-```
-
-### stat-tile
-
-A quiet figure with a tracked label; `stat_row` lays tiles in a grid.
-`delta` is pre-signed text; `tone` is `positive` or `negative`.
-
-```jinja
-{{ ui.stat_row([
-     {"value": "30", "label": "Species"},
-     {"value": "14", "label": "In bloom", "delta": "+4", "tone": "positive"},
-   ]) }}
-{{ ui.stat_tile("2,320 m", "Elevation") }}
 ```
 
 ### card-grid

@@ -2,7 +2,7 @@
   "name": "research-bible",
   "version": 1,
   "title": "Research Bible",
-  "description": "A deep-research reference document: corpus-provenance stat row, evidence-tag legend, contents, one anchored section per research position, unresolved-links notice, bibliography. Built for the output of retrieval-first research pipelines (e.g. deeper-research).",
+  "description": "A deep-research reference document: corpus-provenance line, evidence-tag legend, contents, one anchored section per research position, unresolved-links notice, bibliography. Built for the output of retrieval-first research pipelines (e.g. deeper-research).",
   "slots": {
     "title": {
       "type": "text",
@@ -54,7 +54,6 @@
   },
   "components": [
     "page-header",
-    "stat-tile",
     "toc",
     "evidence"
   ],
@@ -75,6 +74,6 @@
       "narrative"
     ],
     "good_for": "A long, fully-cited research reference document: corpus provenance, evidence-tag legend, position sections, and a bibliography.",
-    "labeled_hash": "65e167f730e201048a36f0ee02d7b48b70981d27baafe3cbe7ca4c903dd3c224"
+    "labeled_hash": "9b4299235a51980fea77561d27f4fba91fc162d0f528dd32912685db7d0e1810"
   }
 }

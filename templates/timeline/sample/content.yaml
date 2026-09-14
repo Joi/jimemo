@@ -27,7 +27,7 @@ events:
     title: "Toolkit design system lands"
     body: |
       Tokens, base typography, and nine components — page-header,
-      stat-tile, card-grid, timeline, data-table, figure-block, badge,
+      card-grid, timeline, data-table, figure-block, badge,
       toc, tree — each with a Jinja macro and light, dark, and print
       support.
   - date: "2026-06-28"

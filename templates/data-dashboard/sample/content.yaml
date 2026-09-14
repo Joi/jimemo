@@ -8,20 +8,6 @@ intro: |
   the triage macros rolled out on 24 June. One P1 incident (a delayed
   payment webhook) was opened and resolved inside SLA.
 
-stats:
-  - label: "Tickets closed"
-    value: "394"
-    delta: "+18 vs last week"
-  - label: "Median resolution"
-    value: "3.4h"
-    delta: "-0.6h vs last week"
-  - label: "CSAT"
-    value: "4.6 / 5"
-    delta: "+0.1 vs last week"
-  - label: "Open backlog"
-    value: "57"
-    delta: "-9 vs last week"
-
 tables:
   - caption: "Tickets by channel, 29 June – 5 July."
     columns:

@@ -633,63 +633,6 @@ body {
   }
 }
 
-/* stat-tile — a quiet figure with an apparatus label.
- * Serif value, tracked sans label; deltas use positive/negative roles.
- * `.jm-stat-row` lays tiles out in a responsive grid. */
-
-.jm-stat-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-  gap: var(--jm-space-3);
-  margin-block: var(--jm-space-6);
-}
-
-.jm-stat-tile {
-  background: var(--jm-surface);
-  border: 1px solid var(--jm-border);
-  border-radius: var(--jm-radius-md);
-  box-shadow: var(--jm-shadow-sm);
-  padding: var(--jm-space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--jm-space-1);
-  break-inside: avoid;
-}
-
-.jm-stat-tile__value {
-  font-family: var(--jm-font-prose);
-  font-size: var(--jm-text-xl);
-  line-height: var(--jm-leading-tight);
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
-
-.jm-stat-tile__label {
-  font-family: var(--jm-font-ui);
-  font-size: var(--jm-text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: var(--jm-tracking-caps);
-  color: var(--jm-muted);
-}
-
-.jm-stat-tile__delta {
-  margin-block-start: auto;
-  padding-block-start: var(--jm-space-1);
-  font-family: var(--jm-font-ui);
-  font-size: var(--jm-text-sm);
-  font-variant-numeric: tabular-nums;
-  color: var(--jm-muted);
-}
-
-.jm-stat-tile__delta--positive {
-  color: var(--jm-positive);
-}
-
-.jm-stat-tile__delta--negative {
-  color: var(--jm-negative);
-}
-
 /* chart-block — a labeled wrapper around one Chart.js canvas. The
  * canvas is Chart.js's own drawing surface (sized by its `responsive`
  * default against this block's width) and cannot read these custom
@@ -896,32 +839,6 @@ four KPIs below summarize growth, revenue, and retention; the trend chart
 and the bar graph that follow break weekly volume down by channel and
 monthly recurring revenue down by plan tier. The table underneath repeats
 each channel's weekly values so the chart can be checked by hand.</p>
-</div>
-
-
-
-
-<div class="jm-stat-row">
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">350</div>
-  <div class="jm-stat-tile__label">Weekly signups</div>
-  <div class="jm-stat-tile__delta">+27 vs prior week</div>
-</div>
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">$100k</div>
-  <div class="jm-stat-tile__label">Monthly recurring revenue</div>
-  <div class="jm-stat-tile__delta">+6% vs last month</div>
-</div>
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">18.4%</div>
-  <div class="jm-stat-tile__label">Trial-to-paid conversion</div>
-  <div class="jm-stat-tile__delta">+1.2 pts vs last month</div>
-</div>
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">2.1%</div>
-  <div class="jm-stat-tile__label">Logo churn</div>
-  <div class="jm-stat-tile__delta">-0.4 pts vs last month</div>
-</div>
 </div>
 
 

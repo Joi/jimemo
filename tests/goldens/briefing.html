@@ -633,63 +633,6 @@ body {
   }
 }
 
-/* stat-tile — a quiet figure with an apparatus label.
- * Serif value, tracked sans label; deltas use positive/negative roles.
- * `.jm-stat-row` lays tiles out in a responsive grid. */
-
-.jm-stat-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-  gap: var(--jm-space-3);
-  margin-block: var(--jm-space-6);
-}
-
-.jm-stat-tile {
-  background: var(--jm-surface);
-  border: 1px solid var(--jm-border);
-  border-radius: var(--jm-radius-md);
-  box-shadow: var(--jm-shadow-sm);
-  padding: var(--jm-space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--jm-space-1);
-  break-inside: avoid;
-}
-
-.jm-stat-tile__value {
-  font-family: var(--jm-font-prose);
-  font-size: var(--jm-text-xl);
-  line-height: var(--jm-leading-tight);
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
-
-.jm-stat-tile__label {
-  font-family: var(--jm-font-ui);
-  font-size: var(--jm-text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: var(--jm-tracking-caps);
-  color: var(--jm-muted);
-}
-
-.jm-stat-tile__delta {
-  margin-block-start: auto;
-  padding-block-start: var(--jm-space-1);
-  font-family: var(--jm-font-ui);
-  font-size: var(--jm-text-sm);
-  font-variant-numeric: tabular-nums;
-  color: var(--jm-muted);
-}
-
-.jm-stat-tile__delta--positive {
-  color: var(--jm-positive);
-}
-
-.jm-stat-tile__delta--negative {
-  color: var(--jm-negative);
-}
-
 /* jimemo print-force — verbatim duplicate of base.css's @media print
  * block. jimemo.inline.assemble_css() always re-appends this file's
  * content LAST, after components and after any theme file, so this is
@@ -777,27 +720,6 @@ body {
   <p class="jm-page-header__meta"><span class="jm-page-header__meta-item">3 July 2026</span></p>
   
 </header>
-
-
-
-<div class="jm-stat-row">
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">142 of 180</div>
-  <div class="jm-stat-tile__label">Reviews migrated</div>
-  
-</div>
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">18</div>
-  <div class="jm-stat-tile__label">Days elapsed</div>
-  
-</div>
-  <div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">2</div>
-  <div class="jm-stat-tile__label">Open blockers</div>
-  
-</div>
-</div>
-
 
 <div class="jm-prose">
 <p>Migration is on track for the July 18 cutover. Of the eleven repos in

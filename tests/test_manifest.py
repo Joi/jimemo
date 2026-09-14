@@ -29,7 +29,7 @@ VALID = {
         "sections": {"type": "data", "items": {"heading": "text", "body": "markdown"}},
         "chart_data": {"type": "data", "required": True},
     },
-    "components": ["stat-tile", "card-grid"],
+    "components": ["badge", "card-grid"],
     "charts": [],
     "suitability": {
         "keywords": ["briefing", "memo", "report"],
@@ -45,7 +45,7 @@ def test_loads_valid_manifest(tmp_path):
     manifest = load_manifest(template_dir)
     assert manifest["name"] == "briefing"
     assert manifest["slots"]["title"]["required"] is True
-    assert manifest["components"] == ["stat-tile", "card-grid"]
+    assert manifest["components"] == ["badge", "card-grid"]
 
 
 def test_defaults_filled_when_absent(tmp_path):
@@ -210,7 +210,7 @@ def test_labeled_hash_non_string_named(tmp_path):
 
 def test_non_string_component_element_named(tmp_path):
     data = dict(VALID)
-    data["components"] = ["stat-tile", 7]
+    data["components"] = ["badge", 7]
     template_dir = write_manifest(tmp_path, data)
     with pytest.raises(ManifestError, match="components"):
         load_manifest(template_dir)

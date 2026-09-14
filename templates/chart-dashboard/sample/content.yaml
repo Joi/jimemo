@@ -10,20 +10,6 @@ intro: |
   monthly recurring revenue down by plan tier. The table underneath repeats
   each channel's weekly values so the chart can be checked by hand.
 
-stats:
-  - label: "Weekly signups"
-    value: "350"
-    delta: "+27 vs prior week"
-  - label: "Monthly recurring revenue"
-    value: "$100k"
-    delta: "+6% vs last month"
-  - label: "Trial-to-paid conversion"
-    value: "18.4%"
-    delta: "+1.2 pts vs last month"
-  - label: "Logo churn"
-    value: "2.1%"
-    delta: "-0.4 pts vs last month"
-
 chart_data_line:
   - labels: ["25 May", "1 Jun", "8 Jun", "15 Jun", "22 Jun", "29 Jun"]
     series:

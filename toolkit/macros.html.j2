@@ -29,25 +29,6 @@
 <span class="jm-badge{% if tone %} jm-badge--{{ tone }}{% endif %}">{{ label }}</span>
 {%- endmacro %}
 
-{#- stat-tile: one tile. delta is pre-signed text ("+4", "-12%");
-    tone colors the delta: "positive" | "negative" -#}
-{% macro stat_tile(value, label, delta=none, tone=none) -%}
-<div class="jm-stat-tile">
-  <div class="jm-stat-tile__value">{{ value }}</div>
-  <div class="jm-stat-tile__label">{{ label }}</div>
-  {% if delta %}<div class="jm-stat-tile__delta{% if tone %} jm-stat-tile__delta--{{ tone }}{% endif %}">{{ delta }}</div>{% endif %}
-</div>
-{%- endmacro %}
-
-{#- stat_row: list of {value, label, delta?, tone?} -#}
-{% macro stat_row(stats) -%}
-<div class="jm-stat-row">
-  {%- for s in stats %}
-  {{ stat_tile(s.value, s.label, delta=s.delta|default(none), tone=s.tone|default(none)) }}
-  {%- endfor %}
-</div>
-{%- endmacro %}
-
 {#- card-grid: list of {title, image?, image_alt?, text?, meta?, href?,
     badge?, badge_tone?} -#}
 {% macro card_grid(cards) -%}

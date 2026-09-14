@@ -120,14 +120,14 @@ title: A Quiet Afternoon
 """ + " ".join(["word"] * 130) + "\n"
 
 # A prose-heavy briefing-shaped doc: a substantial `body` (150 words) plus
-# a small `stats` sidecar (2 records -- just enough to also trip the
+# a small `figures` sidecar (2 records -- just enough to also trip the
 # tabular-data signal). Prose dominates the sidecar (150 words / 2 records),
 # so this should read as narrative, not tabular-data.
 SIDECAR_NARRATIVE_CONTENT_YAML = (
     'title: "Weekly status memo"\n'
     "body: |\n"
     "  " + " ".join(["word"] * 150) + "\n"
-    "stats:\n"
+    "figures:\n"
     '  - label: "Reviews migrated"\n'
     '    value: "12 of 20"\n'
     '  - label: "Days elapsed"\n'

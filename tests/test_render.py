@@ -31,7 +31,7 @@ BASIC_MANIFEST = """\
     "body": {"type": "markdown", "required": true},
     "image": {"type": "text"}
   },
-  "components": ["page-header", "stat-tile", "badge"],
+  "components": ["page-header", "badge"],
   "charts": []
 }
 """
@@ -43,7 +43,7 @@ BASIC_TEMPLATE = """\
 {% block content %}
 {{ ui.page_header(title) }}
 <div class="jm-prose">{{ body }}</div>
-{{ ui.stat_tile("42", "Answer") }}
+{{ ui.badge("Answer") }}
 {% if image|default(none) %}<img src="{{ image }}" alt="a plate">{% endif %}
 {% endblock %}
 """
@@ -320,7 +320,7 @@ def test_render_page_script_without_charts_raises_and_writes_nothing(tmp_path):
         tmp_path,
         "script-tpl",
         SCRIPT_TEMPLATE,
-        manifest_source=BASIC_MANIFEST.replace('"components": ["page-header", "stat-tile", "badge"]', '"components": []'),
+        manifest_source=BASIC_MANIFEST.replace('"components": ["page-header", "badge"]', '"components": []'),
     )
     content = {"title": "Hello", "body": Markup("<p>World</p>")}
 
@@ -407,7 +407,7 @@ def test_cli_render_lint_error_writes_no_file(tmp_path, monkeypatch, capsys):
         SCRIPT_TEMPLATE,
         manifest_source=BASIC_MANIFEST.replace(
             '"name": "test-tpl"', '"name": "script-tpl"'
-        ).replace('"components": ["page-header", "stat-tile", "badge"]', '"components": []'),
+        ).replace('"components": ["page-header", "badge"]', '"components": []'),
     )
     monkeypatch.setattr(cli, "default_search_dirs", lambda: [tmp_path / "templates"])
 
@@ -495,7 +495,7 @@ def test_render_page_template_syntax_error_raises_content_error(tmp_path):
 
 def test_render_page_undefined_template_value_raises_content_error(tmp_path):
     undefined_template = BASIC_TEMPLATE.replace(
-        "{{ ui.stat_tile(\"42\", \"Answer\") }}", "{{ no_such_value }}"
+        "{{ ui.badge(\"Answer\") }}", "{{ no_such_value }}"
     )
     template_dir = make_template_dir(tmp_path, "undef-tpl", undefined_template)
     content = {"title": "Hello", "body": Markup("<p>World</p>")}
