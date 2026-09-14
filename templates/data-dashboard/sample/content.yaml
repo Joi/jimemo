@@ -3,10 +3,13 @@ subtitle: "Ticket volume, resolution time, and satisfaction across all channels.
 period: "29 Jun – 5 Jul 2026"
 
 intro: |
-  Ticket volume held just under 400 for the third week running. Median
-  resolution time improved for the second consecutive week, driven by
-  the triage macros rolled out on 24 June. One P1 incident (a delayed
-  payment webhook) was opened and resolved inside SLA.
+  Ticket volume held just under 400 for the third week running, with
+  394 tickets closed, 18 more than last week. Median resolution time
+  improved for the second consecutive week, to 3.4 hours, driven by the
+  triage macros rolled out on 24 June. Satisfaction held at 4.6 out of 5
+  across all channels, and the open backlog fell to 57, nine fewer than
+  a week ago. One P1 incident (a delayed payment webhook) was opened and
+  resolved inside SLA.
 
 tables:
   - caption: "Tickets by channel, 29 June – 5 July."
