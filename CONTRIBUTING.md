@@ -12,7 +12,7 @@ side:
 3. Open the PR.
 
 `main` only takes writes from an automated merge queue on Joi's side
-(see `.marshal-managed`), so the web UI's merge button is disabled by a
+(see `.repoman-managed`), so the web UI's merge button is disabled by a
 repository ruleset — that's expected, not a problem with your PR. After
 review, a maintainer lands your branch through the queue and the PR
 closes with the landed commit referenced.

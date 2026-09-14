@@ -477,23 +477,23 @@ automated merge queue on Joi's side, so a maintainer lands your branch
 for you after review — the PR itself is all you need to do. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-### Landing changes: `main` is marshal-managed (maintainers)
+### Landing changes: `main` is repoman-managed (maintainers)
 
-This repo's `main` has one writer — the merge-marshal (see
-`.marshal-managed`). Finished work is pushed as a branch and handed off:
+This repo's `main` has one writer — repoman, formerly the merge-marshal (see
+`.repoman-managed`; the old `.marshal-managed` marker stays until 2026-09-28). Finished work is pushed as a branch and handed off:
 
 ```
 git push -u origin <branch>
-<cell-fleet>/ops/marshal/bin/marshal-submit -r jimemo -p jimemo [-i <kata-ref>]
+<cell-fleet>/ops/repoman/bin/repoman-submit -r jimemo -p jimemo [-i <kata-ref>]
 ```
 
-GitHub enforces this with repository ruleset `marshal-only-main (rm3m)`
+GitHub enforces this with repository ruleset `repoman-only-main (rm3m)`
 (id 20598600, restrict updates on `refs/heads/main`); the sole bypass is
-the repo's deploy keys — the marshal's push identity (deploy key
+the repo's deploy keys — repoman's push identity (deploy key
 `merge-marshal azbd2 (rm3m)`, private key `azbd2:~/.ssh/marshal_deploy_jimemo`,
 ssh alias `github-marshal-jimemo`). Direct pushes and web-UI PR merges to
 `main` are rejected with GH013; retarget finished PR branches through
-`marshal-submit`. Break-glass: disable the ruleset in Settings → Rules →
+`repoman-submit`. Break-glass: disable the ruleset in Settings → Rules →
 Rulesets, or
 `gh api repos/Joi/jimemo/rulesets/20598600 -X PUT -f enforcement=disabled`.
 
