@@ -459,6 +459,20 @@ _SVG_CSS_VALUE_ATTRS = frozenset({
     "fill", "stroke", "clip-path", "marker-start", "marker-mid", "marker-end",
 })
 
+# Allowed attributes whose value is NOT CSS and is never judged as CSS:
+# identifiers, labels (an aria-label may well read "Revenue (2024)"),
+# path data and coordinate lists. Every OTHER allowed attribute goes
+# through _svg_css_value_ok as well — not because font-family or
+# stop-color can fetch (no browser accepts a URL there; the attributes
+# above are the ones that can), but so that no url(https://…) text is
+# ever emitted at all and the rule needs no per-property reasoning.
+# transform values pass it as they are: rotate(), translate(), … are on
+# the function allowlist.
+_SVG_NON_CSS_ATTRS = frozenset({
+    "id", "class", "role", "aria-label", "aria-labelledby", "aria-hidden",
+    "xmlns", "d", "points", "viewbox", "href", "xlink:href",
+})
+
 # CSS functions a style or paint value may call. None of them fetches:
 # var() reads a page token, the colour and maths functions compute, the
 # transform functions move things, and url( is allowed only as a bare
@@ -543,10 +557,13 @@ def _svg_css_value_ok(value: str) -> bool:
 
 
 def _svg_fragment_ref(value: str) -> Optional[str]:
-    """The value to EMIT for a ``<use href>``: `value` with ASCII
-    whitespace and control characters removed and its case preserved
-    (``#Mark`` must keep pointing at ``id="Mark"``), or None if that is
-    not a pure same-document ``#fragment``.
+    """The value to EMIT for a ``<use href>``: `value` with leading and
+    trailing code points <= 0x20 (ASCII whitespace and C0 controls)
+    removed and its case preserved (``#Mark`` must keep pointing at
+    ``id="Mark"``), or None if that is not a pure same-document
+    ``#fragment``. A value with whitespace, a control character or DEL
+    INSIDE it is refused rather than repaired: deleting the space in
+    ``#a b`` would silently point the reference at a different id.
 
     The judgement is made on exactly the string that is emitted, which
     is exactly what a browser sees after it decodes the escaped
@@ -555,8 +572,10 @@ def _svg_fragment_ref(value: str) -> Optional[str]:
     test over-decoding errs toward ACCEPTING — ``&amp;#35;a`` would
     normalize to ``#a`` while the browser reads the relative URL
     ``&#35;a`` and fetches it."""
-    stripped = "".join(ch for ch in value if ord(ch) > 0x20)
+    stripped = value.strip("".join(chr(c) for c in range(0x21)))
     if not stripped.startswith("#"):
+        return None
+    if any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in stripped):
         return None
     return stripped
 
@@ -630,7 +649,10 @@ class _SVGSanitizer(HTMLParser):
                 if fragment is None:
                     continue
                 value = fragment
-            elif name == "style" or name in _SVG_CSS_VALUE_ATTRS:
+            elif name not in _SVG_NON_CSS_ATTRS:
+                # style, the paint/reference attributes
+                # (_SVG_CSS_VALUE_ATTRS) and every other presentation
+                # or geometry attribute: see _SVG_NON_CSS_ATTRS.
                 if not _svg_css_value_ok(value):
                     continue
             if name == "id":
@@ -739,16 +761,24 @@ def sanitize_svg_with_ids(svg_text: str) -> Tuple[str, List[str]]:
     start-tag attributes, never from scanning the output text.
 
     Raises ValueError when the input has no <svg> root (or nothing
-    survives), carries more than one root element, never closes its
-    root, or is malformed enough that html.parser itself raises — some
-    CPython versions raise AssertionError or NotImplementedError on
-    input such as ``<![bogus]>``; every such failure is reported as
-    ValueError so callers have one error to handle. An unterminated
+    survives), opens a second <svg> root after the first has closed,
+    never closes its root, or is malformed enough that html.parser
+    itself raises (some CPython versions raise AssertionError or
+    NotImplementedError on input such as ``<![bogus]>``; every such
+    failure is reported as ValueError so callers have one error to
+    handle). Anything else outside the root — text, other elements,
+    whatever follows it — is dropped without an error. An unterminated
     discard-mode element discards the rest of the document, which
     leaves the root unclosed: fail closed, like sanitize_html."""
     parser = _SVGSanitizer()
     try:
-        parser.feed(svg_text)
+        # A browser's HTML parser turns U+0000 into U+FFFD wherever this
+        # markup can carry one (attribute values, text in foreign
+        # content); html.parser passes it through. Doing the same here
+        # first makes both parsers see one document — otherwise
+        # id="g\x00" and id="g\ufffd" differ in Python and collide in
+        # the page.
+        parser.feed(svg_text.replace("\x00", "\ufffd"))
         parser.close()
     except ValueError:
         raise

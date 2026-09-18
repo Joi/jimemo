@@ -29,6 +29,7 @@ from .errors import ContentError
 from .inline import assemble_css, inline_images
 from .lint import lint_html
 from .manifest import load_manifest
+from .sanitize import sanitize_svg_with_ids
 
 add_vendor_to_path()
 from jinja2 import (  # noqa: E402
@@ -102,18 +103,107 @@ def _charts_context(
     return charts
 
 
+FIGURE_PLACEHOLDER = "<p>[[DIAGRAM:{name}]]</p>"
+
+# The wrapper every spliced figure gets. `contain:paint` is the structural
+# half of the sanitizer's "nothing leaves the figure" rule: `style` is kept
+# on SVG elements (theming needs it), so a figure could declare
+# `position:fixed;width:100vw;height:100vh` and paint over the whole page.
+# Paint containment makes the <figure> the containing block for fixed and
+# absolute descendants and clips their painting to its box — measured in
+# Chromium: the same SVG goes from covering the viewport to being confined
+# to the figure. Inline rather than in toolkit CSS on purpose: a stylesheet
+# change would alter every page, and pages without figures must stay
+# byte-identical.
+FIGURE_OPEN = '<figure class="jm-figure" style="contain:paint">'
+
+
+def _splice_figures(html: str, figures: Dict[str, str]) -> str:
+    """`html` with every ``<p>[[DIAGRAM:NAME]]</p>`` placeholder
+    paragraph replaced by FIGURE_OPEN + the sanitized SVG for NAME +
+    ``</figure>`` (`jimemo render --figure NAME=file.svg`;
+    docs/diagrams.md). `figures` maps NAME to RAW, untrusted SVG text.
+
+    Runs on the rendered page, so markdown sanitization has already
+    happened — the placeholder is a paragraph sanitize_html let through
+    as plain text — and BEFORE lint_html, which still judges the final
+    page as the second guard. The SVG is rebuilt by sanitize_svg first;
+    nothing raw is ever spliced. Plain ``str.replace`` on an exact
+    string: no regex over the page.
+
+    Raises ContentError, always before any replacement is made, when
+    a figure is not acceptable SVG (named), when a NAME has no
+    placeholder in the page — never a silent no-op — and when two
+    DIFFERENT figures define the same ``id``: inline <svg> roots share
+    the page's single id namespace, so figure B's ``url(#grad)`` would
+    resolve to figure A's gradient and render wrong without any error.
+    One figure spliced at several placeholders repeats identical
+    definitions, which resolve identically; that is allowed."""
+    sanitized: Dict[str, str] = {}
+    id_owner: Dict[str, str] = {}
+    for name, svg_text in figures.items():
+        try:
+            svg, ids = sanitize_svg_with_ids(svg_text)
+        except ValueError as e:
+            raise ContentError(f"--figure {name}: {e}") from e
+        for svg_id in ids:
+            owner = id_owner.setdefault(svg_id, name)
+            if owner != name:
+                raise ContentError(
+                    f"--figure {owner} and --figure {name} both define "
+                    f"id={svg_id!r}; "
+                    "inline SVG shares the page's one id namespace, so "
+                    f"url(#{svg_id}) would resolve to the wrong figure — "
+                    "give each figure's ids a distinct prefix"
+                )
+        sanitized[name] = svg
+
+    # Every placeholder is looked up in the page as rendered, before any
+    # figure lands, so text inside one figure can never stand in for
+    # another figure's placeholder.
+    for name in sanitized:
+        if FIGURE_PLACEHOLDER.format(name=name) in html:
+            continue
+        if f"[[DIAGRAM:{name}]]" in html:
+            # The text is there, but not as the exact bare paragraph the
+            # splice replaces. Say so: the usual cause is invisible in
+            # the source (a trailing space renders as "…]] </p>").
+            raise ContentError(
+                f"--figure {name}: [[DIAGRAM:{name}]] is in the rendered "
+                "page, but not as a paragraph of its own — remove any "
+                "other text or trailing spaces on its line, and do not "
+                "put it in a heading or a list item (see docs/diagrams.md)"
+            )
+        raise ContentError(
+            f"--figure {name}: placeholder [[DIAGRAM:{name}]] not found "
+            "in the rendered page — it must be a paragraph of its own "
+            "in a markdown slot (see docs/diagrams.md)"
+        )
+    for name, svg in sanitized.items():
+        html = html.replace(
+            FIGURE_PLACEHOLDER.format(name=name),
+            FIGURE_OPEN + svg + "</figure>",
+        )
+    return html
+
+
 def render_page(
     template_dir: Path,
     content: Dict[str, Any],
     theme: Optional[str] = None,
     *,
     base_dir: Optional[Path] = None,
+    figures: Optional[Dict[str, str]] = None,
 ) -> str:
     """Full HTML string (assembled + inlined) for `content` rendered
     through the template in `template_dir`. `base_dir` is the directory
     local <img> paths in content are resolved against (the content
     file's parent); it defaults to the current working directory when
     omitted, which is only correct if content carries no local images.
+    `figures` maps a ``[[DIAGRAM:NAME]]`` placeholder NAME to raw SVG
+    text to splice in its place, sanitized (see _splice_figures); None
+    or empty runs no figure code at all, so such pages are byte-for-byte
+    what they were before the parameter existed.
 
     Raises ContentError if lint finds a hard error (any resource
     reference outside lint's self-contained allowlist, script tags where
@@ -185,9 +275,20 @@ def render_page(
 
     html, img_warnings = inline_images(html, Path(base_dir) if base_dir else Path.cwd())
 
+    if figures:
+        html = _splice_figures(html, figures)
+
     errors, warnings = lint_html(html, manifest, allowed_scripts=allowed_scripts)
     if errors:
-        raise ContentError("; ".join(errors))
+        message = "; ".join(errors)
+        if figures:
+            # Lint judges the whole page and cannot say which part an
+            # error came from; point at the one new input.
+            message += (
+                " (this page includes --figure SVG: see 'What the "
+                "sanitizer removes' in docs/diagrams.md)"
+            )
+        raise ContentError(message)
 
     for w in [*img_warnings, *warnings]:
         print(f"warning: {w}", file=sys.stderr)

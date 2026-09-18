@@ -13,6 +13,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from jimemo.content import load_content
+from jimemo.errors import ContentError
+from jimemo.manifest import load_manifest
+from jimemo.render import render_page
 from jimemo.sanitize import sanitize_svg
 
 
@@ -313,8 +317,7 @@ def test_title_and_desc_are_text_only(src, expected):
 
 
 def test_title_desc_malformed_nesting_never_emits_a_child_element():
-    # <g> opened inside <desc> and "closed" by </desc>: the discard ends
-    # at </g> or end of input, never leaking an element into <desc>.
+    # A well-formed child first: dropped, the text and sibling stay.
     out = sanitize_svg(wrap("<desc>d<g></g></desc>"))
     assert out.startswith('<svg viewBox="0 0 20 20"><desc>d</desc><rect id="ok"')
     # An element inside <desc> that never closes discards to EOF, so the
@@ -325,8 +328,8 @@ def test_title_desc_malformed_nesting_never_emits_a_child_element():
     # text (3.13+); in neither case does an element land inside <title>.
     try:
         out = sanitize_svg("<svg><title><g>never closed</title></svg>")
-    except ValueError:
-        pass
+    except ValueError as e:
+        assert "never closed" in str(e)
     else:
         assert out == "<svg><title>&lt;g&gt;never closed</title></svg>"
 
@@ -336,7 +339,8 @@ def test_title_desc_malformed_nesting_never_emits_a_child_element():
     ('href="&#9;#a"', 'href="#a"'),
     ('xlink:href=" #Mark "', 'xlink:href="#Mark"'),
     ('href="#Mark"', 'href="#Mark"'),
-    ('href="#\n Mi xed"', 'href="#Mixed"'),
+    ('href="\n#Mixed\t"', 'href="#Mixed"'),
+    ('href="#caf\u00e9"', 'href="#caf\u00e9"'),  # non-ASCII ids are fine
 ])
 def test_use_fragment_href_emitted_stripped_with_case_preserved(attr, expected):
     out = sanitize_svg(wrap('<g id="Mark"/><use {0}/>'.format(attr)))
@@ -533,3 +537,281 @@ def test_large_malformed_input_is_processed_in_linear_time():
     assert 'style="' in sanitize_svg('<svg style="' + style + '"></svg>')
     assert time.perf_counter() - start < 10
 
+
+# --- the render-level splice (render_page figures=) -----------------------
+
+BRIEFING_DIR = Path(__file__).resolve().parents[1] / "templates" / "briefing"
+
+GOOD_SVG = (
+    '<svg viewBox="0 0 760 120" role="img" aria-label="A flow." '
+    'style="width:100%;height:auto;font-family:var(--jm-font-ui)">'
+    '<defs><linearGradient id="flow-grad"><stop offset="0" '
+    'style="stop-color:var(--jm-accent)"/></linearGradient></defs>'
+    '<rect x="10" y="10" width="200" height="60" '
+    'style="fill:url(#flow-grad);stroke:var(--jm-border)"/>'
+    '<text x="20" y="40" style="fill:var(--jm-text)">Flow &amp; more</text>'
+    "</svg>"
+)
+
+PLAIN_SVG = '<svg viewBox="0 0 10 10"><rect width="5" height="5"/></svg>'
+
+
+@pytest.fixture
+def _isolated_home(tmp_path, monkeypatch):
+    # See tests/test_render.py: keeps a personal ~/.jimemo theme on the
+    # machine running the suite from shadowing the repo's.
+    monkeypatch.setenv("HOME", str(tmp_path / "isolated-home"))
+
+
+def _briefing_content(tmp_path, body: str):
+    """Content for the real briefing template, loaded through the real
+    markdown path, so the placeholder paragraph is whatever
+    python-markdown + sanitize_html actually produce for it."""
+    src = tmp_path / "content.md"
+    src.write_text(
+        '---\ntitle: "T"\ndate: "18 September 2026"\n---\n' + body
+    )
+    return load_content(src, load_manifest(BRIEFING_DIR))
+
+
+BODY = "Before the figure.\n\n[[DIAGRAM:FLOW]]\n\nAFTER-THE-FIGURE marker.\n"
+
+
+def test_splice_replaces_placeholder_and_page_passes_lint(tmp_path, _isolated_home):
+    content = _briefing_content(tmp_path, BODY)
+    # The documented placeholder form really is what the pipeline emits.
+    assert "<p>[[DIAGRAM:FLOW]]</p>" in render_page(BRIEFING_DIR, content)
+
+    html = render_page(BRIEFING_DIR, content, figures={"FLOW": GOOD_SVG})  # lint ran: no raise
+
+    assert "[[DIAGRAM:" not in html
+    assert '<figure class="jm-figure" style="contain:paint"><svg viewBox="0 0 760 120"' in html
+    assert 'style="fill:url(#flow-grad);stroke:var(--jm-border)"' in html
+    assert "Flow &amp; more</text></svg></figure>" in html
+    figure_end = html.index("</figure>")
+    assert html.index("Before the figure.") < html.index("<figure") < figure_end
+    assert html.index("AFTER-THE-FIGURE") > figure_end
+
+
+def test_splice_replaces_every_occurrence_of_one_name(tmp_path, _isolated_home):
+    content = _briefing_content(tmp_path, "[[DIAGRAM:FLOW]]\n\nmid\n\n[[DIAGRAM:FLOW]]\n")
+    html = render_page(BRIEFING_DIR, content, figures={"FLOW": GOOD_SVG})
+    assert html.count('<figure class="jm-figure" ') == 2
+    assert "[[DIAGRAM:" not in html
+
+
+def test_without_figures_output_is_byte_identical(tmp_path, _isolated_home):
+    content = _briefing_content(tmp_path, BODY)
+    baseline = render_page(BRIEFING_DIR, content)
+    assert render_page(BRIEFING_DIR, content, figures=None) == baseline
+    assert render_page(BRIEFING_DIR, content, figures={}) == baseline
+    assert "jm-figure" not in baseline
+
+
+def test_unknown_placeholder_is_a_content_error(tmp_path, _isolated_home):
+    content = _briefing_content(tmp_path, BODY)
+    with pytest.raises(ContentError, match=r"\[\[DIAGRAM:NOPE\]\]"):
+        render_page(BRIEFING_DIR, content, figures={"FLOW": GOOD_SVG, "NOPE": PLAIN_SVG})
+
+
+def test_placeholder_not_alone_in_its_paragraph_is_not_spliced(tmp_path, _isolated_home):
+    content = _briefing_content(tmp_path, "See [[DIAGRAM:FLOW]] inline.\n")
+    with pytest.raises(ContentError, match="not as a paragraph of its own"):
+        render_page(BRIEFING_DIR, content, figures={"FLOW": GOOD_SVG})
+
+
+def test_malicious_svg_is_sanitized_before_it_lands(tmp_path, _isolated_home):
+    evil = (
+        '<svg viewBox="0 0 10 10" onload="evil()"><script>evil()</script>'
+        '<foreignObject><iframe src="https://evil.example/"></iframe></foreignObject>'
+        '<rect style="fill:url(https://evil.example/x)" width="5" height="5"/>'
+        '<rect style="background:url(/*);background:url(https://evil.example/p);/*x*/#g)" '
+        'width="4" height="4"/>'
+        r'<rect style="fill:u\72l(https://evil.example/e)" width="3" height="3"/>'
+        '<rect id="kept" style="fill:var(--jm-accent)" width="2" height="2"/></svg>'
+    )
+    html = render_page(
+        BRIEFING_DIR, _briefing_content(tmp_path, BODY), figures={"FLOW": evil}
+    )
+    figure = html[html.index("<figure"):html.index("</figure>")]
+    for gone in ("evil", "onload", "script", "foreignObject", "iframe", "\\"):
+        assert gone not in figure, gone
+    assert '<rect id="kept" style="fill:var(--jm-accent)" width="2" height="2" />' in figure
+
+
+def test_title_inside_desc_cannot_swallow_the_page(tmp_path, _isolated_home):
+    svg = '<svg viewBox="0 0 10 10"><desc><title /></desc><rect width="1" height="1"/></svg>'
+    html = render_page(
+        BRIEFING_DIR, _briefing_content(tmp_path, BODY), figures={"FLOW": svg}
+    )
+    figure = html[html.index("<figure"):html.index("</figure>")]
+    assert "<title" not in figure
+    assert html.index("AFTER-THE-FIGURE") > html.index("</figure>")
+
+
+def test_non_svg_figure_is_a_content_error_naming_the_figure(tmp_path, _isolated_home):
+    content = _briefing_content(tmp_path, BODY)
+    with pytest.raises(ContentError, match=r"--figure FLOW: .*<svg>"):
+        render_page(BRIEFING_DIR, content, figures={"FLOW": "<p>not an svg</p>"})
+    with pytest.raises(ContentError, match=r"--figure FLOW: .*never closed"):
+        render_page(BRIEFING_DIR, content, figures={"FLOW": "<svg><rect/>"})
+
+
+def test_same_id_in_two_figures_is_a_content_error(tmp_path, _isolated_home):
+    body = "[[DIAGRAM:A]]\n\n[[DIAGRAM:B]]\n"
+    a = '<svg><defs><linearGradient id="grad"/></defs><rect fill="url(#grad)"/></svg>'
+    b = '<svg><defs><radialGradient id="grad"/></defs><rect fill="url(#grad)"/></svg>'
+    with pytest.raises(ContentError) as exc_info:
+        render_page(BRIEFING_DIR, _briefing_content(tmp_path, body), figures={"A": a, "B": b})
+    assert "--figure A and --figure B both define id='grad'" in str(exc_info.value)
+
+
+def test_id_lookalike_in_svg_text_is_not_a_collision(tmp_path, _isolated_home):
+    body = "[[DIAGRAM:A]]\n\n[[DIAGRAM:B]]\n"
+    a = '<svg><text>example id="grad"</text></svg>'
+    b = '<svg><rect id="grad" width="1" height="1"/></svg>'
+    html = render_page(BRIEFING_DIR, _briefing_content(tmp_path, body), figures={"A": a, "B": b})
+    assert html.count('<figure class="jm-figure" ') == 2
+
+
+def test_one_figure_at_two_placeholders_may_repeat_its_own_ids(tmp_path, _isolated_home):
+    svg = '<svg><defs><linearGradient id="grad"/></defs><rect fill="url(#grad)"/></svg>'
+    html = render_page(
+        BRIEFING_DIR,
+        _briefing_content(tmp_path, "[[DIAGRAM:A]]\n\nmid\n\n[[DIAGRAM:A]]\n"),
+        figures={"A": svg},
+    )
+    assert html.count('id="grad"') == 2
+
+
+def test_placeholder_text_inside_a_figure_is_never_spliced(tmp_path, _isolated_home):
+    # Figure A's text names figure B's placeholder. It is escaped text,
+    # not a <p> paragraph, and placeholders are checked against the page
+    # as rendered BEFORE any figure lands — B has no placeholder: error.
+    a = "<svg><text>&lt;p&gt;[[DIAGRAM:B]]&lt;/p&gt;</text></svg>"
+    with pytest.raises(ContentError, match=r"\[\[DIAGRAM:B\]\]"):
+        render_page(
+            BRIEFING_DIR, _briefing_content(tmp_path, "[[DIAGRAM:A]]\n"),
+            figures={"A": a, "B": GOOD_SVG},
+        )
+
+
+def test_use_fragment_href_is_refused_by_lint_today(tmp_path, _isolated_home):
+    # sanitize_svg keeps <use href="#id">, but the self-containment lint
+    # accepts no fragment on a fetch-on-load attribute (jimemo#ktmx owns
+    # that allowlist). Pinned so the documented limitation stays true —
+    # and so a future lint change updates the docs with it.
+    svg = '<svg><defs><g id="sym"><rect width="1" height="1"/></g></defs><use href="#sym"/></svg>'
+    with pytest.raises(ContentError, match="use href") as exc_info:
+        render_page(BRIEFING_DIR, _briefing_content(tmp_path, BODY), figures={"FLOW": svg})
+    # lint cannot say where an error came from; the message points at the
+    # one new input.
+    assert "this page includes --figure SVG" in str(exc_info.value)
+
+
+def test_figure_wrapper_contains_a_fixed_position_svg(tmp_path, _isolated_home):
+    # `style` survives sanitization (theming needs it), so an SVG can ask
+    # for position:fixed over the whole viewport. The wrapper's paint
+    # containment confines it to the figure (measured in Chromium); this
+    # pins that the wrapper carries it and that lint accepts the page.
+    from jimemo.render import FIGURE_OPEN
+
+    cover = ('<svg viewBox="0 0 1 1" style="position:fixed;top:0;left:0;width:100vw;'
+             'height:100vh;z-index:99999"><text>spoof</text></svg>')
+    html = render_page(
+        BRIEFING_DIR, _briefing_content(tmp_path, BODY), figures={"FLOW": cover}
+    )
+    assert "contain:paint" in FIGURE_OPEN
+    assert FIGURE_OPEN + "<svg" in html
+    assert "position:fixed" in html  # the premise: style is kept, so the wrapper must contain it
+
+
+# --- second review round: remaining branches, exact outputs ----------------
+
+
+@pytest.mark.parametrize("attr", [
+    'href="#a b"',            # interior space: refused, never "repaired" to #ab
+    'href="#a\tb"',
+    'href="#a\x7fb"',        # DEL
+])
+def test_use_href_with_interior_whitespace_or_control_is_dropped(attr):
+    out = sanitize_svg(wrap("<use {0}/>".format(attr)))
+    assert "href" not in out and "<use />" in out
+
+
+@pytest.mark.parametrize("src, expected", [
+    ('<svg viewBox="0 0 1 1"/><svg/>', ValueError),                      # second root, self-closing
+    ("<svg><rect/></svg></g></svg>", "<svg><rect /></svg>"),             # stray close tags
+    ("<svg><foo><foo><rect/></foo><rect/></foo><circle r=\"1\"/></svg>",
+     '<svg><circle r="1" /></svg>'),                                     # nested same-name discard depth
+    ("<svg><rect style width=\"1\"/></svg>", '<svg><rect style="" width="1" /></svg>'),  # valueless attribute
+    ('<?xml version="1.0"?><svg><?pi x?><rect/></svg>', "<svg><rect /></svg>"),          # processing instructions
+    ("<svg><text>a<tspan>b</text>c</svg>", "<svg><text>a<tspan>b</tspan></text>c</svg>"),  # mis-nested close
+    ('<svg><rect href="#a" xlink:href="#a"/></svg>', "<svg><rect /></svg>"),             # href off <use>
+    ("<svg></svg><g><rect/></g>trailing", "<svg></svg>"),                # content after the root: dropped
+    ('<svg style="font-family:var(--jm-font-ui)"><rect/></svg>',
+     '<svg style="font-family:var(--jm-font-ui)"><rect /></svg>'),       # token style on the ROOT
+])
+def test_remaining_parser_branches_exact_output(src, expected):
+    if expected is ValueError:
+        with pytest.raises(ValueError, match="more than one"):
+            sanitize_svg(src)
+    else:
+        assert sanitize_svg(src) == expected
+
+
+def test_cdata_section_never_yields_markup():
+    # Older CPythons hand CDATA to unknown_decl (dropped); newer ones read
+    # "<![CDATA[" as a bogus comment and the rest as text (escaped).
+    out = sanitize_svg("<svg><text><![CDATA[<script>evil()</script>]]></text><rect/></svg>")
+    assert "<script" not in out and out.endswith("<rect /></svg>")
+
+
+def test_every_presentation_attribute_gets_the_css_value_rule():
+    # font-family and stop-color cannot fetch in any browser; the rule is
+    # applied anyway so no url(https://…) text is ever emitted.
+    out = sanitize_svg(
+        '<svg><text font-family="url(https://evil.example/f)" '
+        'stop-color="url(https://evil.example/s)" opacity="expression(1)" '
+        'transform="rotate(45 10 10) translate(5)" font-size="calc(10px + 2px)" '
+        'aria-label="Revenue (2024) — see url(https://evil.example/ok-in-a-label)">t</text></svg>'
+    )
+    assert out == (
+        '<svg><text transform="rotate(45 10 10) translate(5)" '
+        'font-size="calc(10px + 2px)" aria-label="Revenue (2024) — see '
+        'url(https://evil.example/ok-in-a-label)">t</text></svg>'
+    )
+
+
+@pytest.mark.parametrize("line", ["[[DIAGRAM:FLOW]] ", "[[DIAGRAM:FLOW]]   ", "- [[DIAGRAM:FLOW]]", "## [[DIAGRAM:FLOW]]"])
+def test_placeholder_present_but_not_a_bare_paragraph_says_so(tmp_path, _isolated_home, line):
+    content = _briefing_content(tmp_path, "Before.\n\n" + line + "\n\nAfter.\n")
+    rendered = render_page(BRIEFING_DIR, content)
+    if "<p>[[DIAGRAM:FLOW]]</p>" in rendered:
+        pytest.skip("this markdown form renders as a bare paragraph")
+    with pytest.raises(ContentError, match="is in the rendered page, but not as a paragraph of its own"):
+        render_page(BRIEFING_DIR, content, figures={"FLOW": GOOD_SVG})
+
+
+def test_placeholder_in_a_blockquote_is_spliced(tmp_path, _isolated_home):
+    content = _briefing_content(tmp_path, "> [[DIAGRAM:FLOW]]\n")
+    html = render_page(BRIEFING_DIR, content, figures={"FLOW": GOOD_SVG})
+    assert "<blockquote>" in html and FIGURE_OPEN_TEXT in html
+
+
+FIGURE_OPEN_TEXT = '<figure class="jm-figure" style="contain:paint"><svg'
+
+
+def test_nul_is_normalized_like_a_browser_so_ids_still_collide(tmp_path, _isolated_home):
+    # HTML parsing turns U+0000 into U+FFFD, so these two ids are the same
+    # id in the page although they differ as Python strings.
+    from jimemo.sanitize import sanitize_svg_with_ids
+
+    svg, ids = sanitize_svg_with_ids('<svg><linearGradient id="g\x00"/><text>a\x00b</text></svg>')
+    assert "\x00" not in svg and ids == ["g\ufffd"]
+    with pytest.raises(ContentError, match="both define id"):
+        render_page(
+            BRIEFING_DIR, _briefing_content(tmp_path, "[[DIAGRAM:A]]\n\n[[DIAGRAM:B]]\n"),
+            figures={"A": '<svg><linearGradient id="g\x00"/></svg>',
+                     "B": '<svg><linearGradient id="g\ufffd"/></svg>'},
+        )
