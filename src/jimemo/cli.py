@@ -159,7 +159,58 @@ def cmd_list(args) -> int:
     return 0
 
 
-def _do_render(template_dir: Path, content_path: Path, args) -> int:
+_FIGURE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+_FIGURE_NAME_MAX = 64
+
+
+def _parse_figures(values):
+    """``(figures, paths, error)`` for the raw ``--figure NAME=FILE``
+    values: a dict of placeholder NAME -> the file's SVG text (None when
+    the flag was not given, so render_page runs no figure code at all),
+    the list of FILE paths as given, and a one-line error message or
+    None. The value splits on its FIRST ``=``, so a FILE path may itself
+    contain one. The SVG is read here and only read: render_page
+    sanitizes it (jimemo.sanitize.sanitize_svg). An error echoes at most
+    the first 80 characters of a bad value, so it stays one short line."""
+    if not values:
+        return None, [], None
+    figures = {}
+    paths = []
+    for value in values:
+        shown = repr(value if len(value) <= 80 else value[:80] + "...")
+        name, sep, file_name = value.partition("=")
+        if not sep:
+            return None, [], f"--figure {shown}: expected NAME=FILE"
+        if not _FIGURE_NAME_RE.fullmatch(name) or len(name) > _FIGURE_NAME_MAX:
+            return None, [], (
+                f"--figure {shown}: NAME must be 1-{_FIGURE_NAME_MAX} letters, "
+                "digits, '_' or '-' (it is the NAME in the [[DIAGRAM:NAME]] "
+                "placeholder)"
+            )
+        if not file_name:
+            return None, [], f"--figure {shown}: FILE is empty"
+        if name in figures:
+            return None, [], f"--figure {name} given more than once"
+        # repr(): a FILE name may hold a newline or other control
+        # character, and the error must stay one line.
+        shown_file = repr(file_name if len(file_name) <= 200 else file_name[:200] + "...")
+        try:
+            figures[name] = Path(file_name).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return None, [], f"--figure {name}: {shown_file} is not UTF-8 text"
+        except (OSError, ValueError) as e:
+            # ValueError: an embedded NUL in the path.
+            reason = getattr(e, "strerror", None) or str(e)
+            return None, [], f"--figure {name}: cannot read {shown_file}: {reason}"
+        paths.append(Path(file_name))
+    return figures, paths, None
+
+
+def _do_render(
+    template_dir: Path, content_path: Path, args, figures=None, figure_paths=()
+) -> int:
     from .content import load_content
     from .render import render_page, write_output
 
@@ -202,6 +253,20 @@ def _do_render(template_dir: Path, content_path: Path, args) -> int:
         )
         return 2
 
+    # The same for a --figure source: `-o flow.svg --figure FLOW=flow.svg`
+    # would replace the diagram with the page rendered from it.
+    for target in (out_path, pdf_path):
+        if target is None:
+            continue
+        for figure_path in figure_paths:
+            if target.resolve() == figure_path.resolve():
+                print(
+                    f"output path {target} is a --figure file; refusing "
+                    "to overwrite it",
+                    file=sys.stderr,
+                )
+                return 2
+
     browser = None
     if pdf_path is not None:
         # Resolve the browser BEFORE rendering: a missing browser must
@@ -226,6 +291,7 @@ def _do_render(template_dir: Path, content_path: Path, args) -> int:
             content,
             args.theme,
             base_dir=content_path.resolve().parent,
+            figures=figures,
         )
     except (ManifestError, ContentError) as e:
         print(str(e), file=sys.stderr)
@@ -314,6 +380,15 @@ def _verify_html(html_path: Path, action: str) -> bool:
 
 
 def cmd_render(args) -> int:
+    # --figure is validated first, before template discovery, content
+    # checks and auto-selection: each of those prints its own
+    # diagnostics and can return early, and a malformed flag should be
+    # reported alone rather than after (or masked by) any of them.
+    figures, figure_paths, figure_error = _parse_figures(args.figure)
+    if figure_error:
+        print(figure_error, file=sys.stderr)
+        return 2
+
     content_path = Path(args.content)
     templates = find_templates(default_search_dirs())
     templates_by_name = dict(templates)
@@ -397,7 +472,7 @@ def cmd_render(args) -> int:
             print(f"content file not found: {content_path}", file=sys.stderr)
             return 1
 
-    return _do_render(template_dir, content_path, args)
+    return _do_render(template_dir, content_path, args, figures, figure_paths)
 
 
 def cmd_suggest(args) -> int:
@@ -819,6 +894,17 @@ def main(argv=None) -> int:
         "--theme",
         help="apply a theme override by name (repo toolkit/themes/, or "
         "~/.jimemo/themes/ -- see 'jimemo import-design')",
+    )
+    render_p.add_argument(
+        "--figure", action="append", metavar="NAME=FILE",
+        help="replace the [[DIAGRAM:NAME]] placeholder paragraph in the "
+        "content with the SVG in FILE, sanitized (script, foreignObject, "
+        "event handlers and external references are removed; style "
+        "attributes using var(--jm-*) are kept) and wrapped in a <figure>. "
+        "Repeatable. A NAME with no placeholder in the content is an error. "
+        "Text overflowing the viewBox cannot be detected statically (text "
+        "metrics need a renderer): check every figure with the screenshot "
+        "loop in docs/diagrams.md",
     )
     render_p.add_argument("--open", action="store_true", help="open the result in a browser")
     render_p.add_argument(

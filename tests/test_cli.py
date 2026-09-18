@@ -740,3 +740,205 @@ def test_scaffold_writes_file_and_renders_after_fill(tmp_path, capsys):
 def test_scaffold_unknown_template(capsys):
     assert main(["scaffold", "nope"]) == 1
     assert "unknown template" in capsys.readouterr().err
+
+
+# --- render --figure NAME=FILE (jimemo#4smm) ------------------------------
+
+FIGURE_SVG = (
+    '<svg viewBox="0 0 760 100" role="img" aria-label="A flow." onload="evil()">'
+    '<script>evil()</script>'
+    '<rect width="200" height="60" style="fill:var(--jm-accent)"/></svg>'
+)
+
+
+def _figure_inputs(tmp_path, body="Intro.\n\n[[DIAGRAM:FLOW]]\n\nOutro.\n"):
+    content = tmp_path / "note.md"
+    content.write_text('---\ntitle: "T"\ndate: "18 September 2026"\n---\n' + body)
+    svg = tmp_path / "flow.svg"
+    svg.write_text(FIGURE_SVG)
+    return content, svg
+
+
+def test_render_figure_splices_sanitized_svg(tmp_path, capsys):
+    content, svg = _figure_inputs(tmp_path)
+    out = tmp_path / "note.html"
+
+    assert main(["render", "briefing", str(content), "-o", str(out),
+                 "--figure", f"FLOW={svg}"]) == 0
+
+    html = out.read_text()
+    assert '<figure class="jm-figure" style="contain:paint"><svg viewBox="0 0 760 100"' in html
+    assert 'style="fill:var(--jm-accent)"' in html
+    assert "[[DIAGRAM:" not in html and "evil" not in html
+    # the written page is self-contained: `jimemo check` agrees
+    assert main(["check", str(out)]) == 0
+
+
+def test_render_figure_file_path_may_contain_equals(tmp_path, capsys):
+    content, svg = _figure_inputs(tmp_path)
+    odd = tmp_path / "a=b.svg"
+    odd.write_text(svg.read_text())
+    out = tmp_path / "note.html"
+    assert main(["render", "briefing", str(content), "-o", str(out),
+                 "--figure", f"FLOW={odd}"]) == 0
+    assert "jm-figure" in out.read_text()
+
+
+def test_render_figure_unknown_placeholder_is_an_error_not_a_noop(tmp_path, capsys):
+    content, svg = _figure_inputs(tmp_path)
+    out = tmp_path / "note.html"
+
+    assert main(["render", "briefing", str(content), "-o", str(out),
+                 "--figure", f"FLOW={svg}", "--figure", f"NOPE={svg}"]) == 1
+
+    assert "[[DIAGRAM:NOPE]]" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_render_figure_that_is_not_svg_is_an_error_naming_it(tmp_path, capsys):
+    content, svg = _figure_inputs(tmp_path)
+    svg.write_text("<p>not an svg</p>")
+    out = tmp_path / "note.html"
+    assert main(["render", "briefing", str(content), "-o", str(out),
+                 "--figure", f"FLOW={svg}"]) == 1
+    assert "--figure FLOW: no <svg> root" in capsys.readouterr().err
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("value, needle", [
+    ("FLOW", "expected NAME=FILE"),                 # no "="
+    ("=flow.svg", "NAME must be"),                  # empty NAME
+    ("BAD NAME=flow.svg", "NAME must be"),          # NAME outside [A-Za-z0-9_-]
+    ("FLOW\n=flow.svg", "NAME must be"),            # "$" alone would accept a trailing newline
+    ("N" * 65 + "=flow.svg", "NAME must be 1-64"),  # length cap
+    ("FLOW=", "FILE is empty"),
+    ("FLOW=missing.svg", "cannot read 'missing.svg'"),
+    ("FLOW=.", "cannot read '.'"),                  # a directory
+    ("FLOW=no-such\nfile.svg", "cannot read 'no-such\\nfile.svg'"),  # newline in FILE: still one line
+    ("FLOW=nul\x00.svg", "cannot read"),            # NUL in FILE
+])
+def test_render_figure_malformed_value_exits_2_with_one_line(
+    tmp_path, capsys, monkeypatch, value, needle
+):
+    content, _svg = _figure_inputs(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "note.html"
+
+    assert main(["render", "briefing", str(content), "-o", str(out),
+                 "--figure", value]) == 2
+
+    err = capsys.readouterr().err
+    assert needle in err and "--figure" in err
+    assert len(err.strip().splitlines()) == 1
+    assert not out.exists()
+
+
+def test_render_figure_duplicate_name_exits_2(tmp_path, capsys):
+    content, svg = _figure_inputs(tmp_path)
+    assert main(["render", "briefing", str(content), "-o", str(tmp_path / "o.html"),
+                 "--figure", f"FLOW={svg}", "--figure", f"FLOW={svg}"]) == 2
+    err = capsys.readouterr().err
+    assert "FLOW" in err and "more than once" in err
+    assert len(err.strip().splitlines()) == 1
+
+
+def test_render_figure_non_utf8_file_exits_2(tmp_path, capsys):
+    content, svg = _figure_inputs(tmp_path)
+    svg.write_bytes(b"<svg>\xff\xfe</svg>")
+    assert main(["render", "briefing", str(content), "-o", str(tmp_path / "o.html"),
+                 "--figure", f"FLOW={svg}"]) == 2
+    err = capsys.readouterr().err
+    assert "UTF-8" in err and len(err.strip().splitlines()) == 1
+
+
+@pytest.mark.parametrize("argv_head", [
+    ["render", "auto"],                      # auto-selection prints diagnostics
+    ["render", "no-such-template"],          # unknown template would exit 1
+])
+def test_render_figure_is_validated_before_anything_else(tmp_path, capsys, argv_head):
+    """A malformed --figure is reported alone, first: not after
+    auto-selection chatter, and not masked by an earlier exit-1 check."""
+    content, _svg = _figure_inputs(tmp_path)
+    assert main([*argv_head, str(content), "--figure", "FLOW"]) == 2
+    err = capsys.readouterr().err
+    assert "--figure" in err and len(err.strip().splitlines()) == 1
+
+    assert main([*argv_head, str(tmp_path / "absent.md"), "--figure", "FLOW"]) == 2
+    err = capsys.readouterr().err
+    assert "--figure" in err and len(err.strip().splitlines()) == 1
+
+
+def test_render_help_states_the_viewbox_non_goal(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        main(["render", "--help"])
+    assert exc_info.value.code == 0
+    out = " ".join(capsys.readouterr().out.split())  # argparse re-wraps
+    assert "--figure NAME=FILE" in out
+    assert "[[DIAGRAM:NAME]]" in out and "sanitized" in out
+    assert "viewBox" in out and "cannot be detected" in out
+    assert "docs/diagrams.md" in out
+
+
+def test_render_figure_error_echo_is_bounded(tmp_path, capsys):
+    content, _svg = _figure_inputs(tmp_path)
+    assert main(["render", "briefing", str(content), "--figure", "x" * 200000]) == 2
+    assert len(capsys.readouterr().err) < 400
+
+
+@pytest.mark.parametrize("out_name, extra", [
+    ("flow.svg", []),                       # -o names the figure source
+    ("note.html", ["--pdf=flow.svg.pdf"]),  # control: a different pdf path is fine
+])
+def test_render_refuses_to_overwrite_a_figure_file(tmp_path, monkeypatch, capsys, out_name, extra):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    _fake_pdf_seam(monkeypatch)
+    content, svg = _figure_inputs(tmp_path)
+    before = svg.read_text()
+    code = main(["render", "briefing", str(content), "-o", str(tmp_path / out_name),
+                 "--figure", f"FLOW={svg}", *extra])
+    assert svg.read_text() == before
+    if out_name == "flow.svg":
+        assert code == 2
+        err = capsys.readouterr().err
+        assert "is a --figure file; refusing to overwrite it" in err
+    else:
+        assert code == 0
+
+
+def test_render_figure_pdf_target_equal_to_figure_file_is_refused(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    content, _svg = _figure_inputs(tmp_path)
+    fig = tmp_path / "flow.pdf"           # an SVG file with an unlucky name
+    fig.write_text(FIGURE_SVG)
+    assert main(["render", "briefing", str(content), "-o", str(tmp_path / "n.html"),
+                 f"--pdf={fig}", "--figure", f"FLOW={fig}"]) == 2
+    assert fig.read_text() == FIGURE_SVG and calls == []
+
+
+def test_render_figure_with_pdf_only_output(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
+    calls = _fake_pdf_seam(monkeypatch)
+    content, svg = _figure_inputs(tmp_path)
+    assert main(["render", "briefing", str(content), "-o", str(tmp_path / "n.pdf"),
+                 "--figure", f"FLOW={svg}"]) == 0
+    assert len(calls) == 1
+
+
+def test_render_figure_content_errors_exit_1_and_write_nothing(tmp_path, capsys):
+    body = "[[DIAGRAM:A]]\n\n[[DIAGRAM:B]]\n"
+    content, _svg = _figure_inputs(tmp_path, body)
+    a = tmp_path / "a.svg"
+    a.write_text('<svg><defs><linearGradient id="grad"/></defs></svg>')
+    b = tmp_path / "b.svg"
+    b.write_text('<svg><defs><radialGradient id="grad"/></defs></svg>')
+    out = tmp_path / "o.html"
+    assert main(["render", "briefing", str(content), "-o", str(out),
+                 "--figure", f"A={a}", "--figure", f"B={b}"]) == 1
+    assert "both define id='grad'" in capsys.readouterr().err and not out.exists()
+
+    b.write_text('<svg><defs><g id="sym"/></defs><use href="#sym"/></svg>')  # lint refuses <use href>
+    assert main(["render", "briefing", str(content), "-o", str(out),
+                 "--figure", f"A={a}", "--figure", f"B={b}"]) == 1
+    err = capsys.readouterr().err
+    assert "use href" in err and "this page includes --figure SVG" in err and not out.exists()
