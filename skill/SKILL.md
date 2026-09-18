@@ -110,17 +110,36 @@ refuse on violations (`--no-verify` skips).
 
 Templates have no diagram slot, and markdown slots are sanitized — SVG
 written into a content file will not survive rendering. Diagrams go in
-via the draft loop:
+with `render --figure`:
 
-1. Leave a placeholder paragraph in the content where each diagram
-   belongs: `[[DIAGRAM:NAME]]`.
-2. Render, then replace each `<p>[[DIAGRAM:NAME]]</p>` in the output
-   with a `<figure>` containing hand-written inline SVG.
-3. Re-run `jimemo check out.html`.
+1. Leave a placeholder paragraph of its own in the content where each
+   diagram belongs: `[[DIAGRAM:NAME]]` (NAME: letters, digits, `_`, `-`).
+2. Write each diagram as a standalone file whose root is one `<svg>`.
+3. `jimemo render TEMPLATE content.md -o out.html --figure NAME=file.svg`
+   (repeat `--figure` per diagram). Each placeholder is replaced with the
+   SVG, sanitized, in a `<figure>`; the page is linted after the splice,
+   and re-rendering repeats it. A NAME with no placeholder is an error.
+
+The sanitizer is an allowlist: shapes, text, `defs`/gradients/markers/
+patterns, geometry and presentation attributes and `style` survive;
+`<script>`, `<style>`, `<foreignObject>`, `<image>`, `<a>`, animation,
+`on*` attributes and external references do not. A `style` or
+presentation-attribute value with a backslash, a `/*` or `*/`, or a
+function outside `var(--token)`, `url(#id)`, `rgb()/rgba()/hsl()/hsla()`,
+`color-mix()`, `calc()/min()/max()/clamp()` and the 2D transforms
+(`translate[XY]`, `scale[XY]`, `rotate`, `skewX`, `skewY`, `matrix`) is
+dropped whole, every declaration with it — write `url(#grad)` bare, no
+`oklch()`, and keep comments out of `style`. Of ARIA, `aria-label`,
+`aria-labelledby` and `aria-hidden` survive. Ids share the page namespace: prefix them per figure
+(`baskets-grad`); the same id in two figures is an error. `<use>` does
+not pass the page lint yet — repeat the shape instead. Fallback for a
+one-off: splice the `<figure>` into the rendered HTML by hand and re-run
+`jimemo check out.html` (unsanitized, and lost on re-render).
 
 Make the SVG native to the page: root of
 `<svg viewBox="0 0 760 H" role="img" aria-label="..."
-style="width:100%;height:auto;font-family:var(--jm-font-ui)">` (760 ≈
+style="width:100%;height:auto;font-family:var(--jm-font-ui)">` (no
+`<figure>` wrapper in the file; `--figure` adds it) (760 ≈
 the content column, so viewBox px ≈ screen px); color ONLY with the
 page tokens (`--jm-text/-muted/-accent/-positive/-negative/-border/`
 `-surface/-chart-1..8`) so light/dark both work — and only via `style`
@@ -131,7 +150,8 @@ chart-palette slots fall below 3:1 against white and themes can
 reshuffle them all. On `--jm-accent` fills use
 `var(--jm-accent-contrast)`; white inside a chart-token fill only
 after checking both theme values in the page CSS and a screenshot.
-SVG text never wraps and nothing detects overflow: break long labels
+SVG text never wraps and nothing detects overflow — not `--figure`, not
+`jimemo check`; text metrics need a renderer: break long labels
 into separate `<text>` lines (~90 chars max at 12.5px across a 760
 viewBox) and screenshot the rendered file to check for clipping at the
 right viewBox edge — the common failure. Copy-paste snippets (arrowhead

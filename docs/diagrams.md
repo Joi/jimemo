@@ -3,15 +3,17 @@
 jimemo templates have no diagram slot, and markdown-typed slots pass
 through the allowlist sanitizer — inline SVG written into a content file
 will not survive rendering. That is deliberate: content is untrusted.
-The supported route for diagrams is the draft loop (render, hand-edit the
-output, `jimemo check`), with the patterns below. They were worked out on
-a real page (a tax-mechanics explainer with four diagrams) and are the
-difference between an SVG that fights the page and one that looks native.
+The supported route for diagrams is a placeholder paragraph in the content
+plus `jimemo render --figure`, which splices an SVG file in its place.
+The patterns below were worked out on a real page (a tax-mechanics
+explainer with four diagrams) and are the difference between an SVG that
+fights the page and one that looks native.
 
-## Workflow: placeholder → splice → check
+## Workflow: placeholder → `--figure` → check
 
-1. In the content file, put a one-word placeholder paragraph where each
-   diagram belongs:
+1. In the content file, put a placeholder paragraph where each diagram
+   belongs. It must be a paragraph of its own, in a markdown slot; NAME is
+   letters, digits, `_` or `-`:
 
    ```markdown
    Some prose introducing the figure.
@@ -21,18 +23,81 @@ difference between an SVG that fights the page and one that looks native.
    Prose that refers back to it.
    ```
 
-2. `jimemo render` as usual. Each placeholder comes out as an easy-to-find
-   `<p>[[DIAGRAM:BASKETS]]</p>` in the output HTML.
+2. Write each diagram as a standalone SVG file whose root is one `<svg>`
+   element (rules and snippets below).
 
-3. Replace each placeholder paragraph with a `<figure>` containing
-   hand-written inline SVG (snippets below).
+3. Render with one `--figure NAME=FILE` per diagram:
 
-4. Re-verify: `jimemo check out.html`. Hand-tweaked files must re-pass the
-   self-containment check; inline SVG passes as long as it references no
-   external images or fonts. `publish` and `pdf` re-run the same check.
+   ```
+   jimemo render briefing note.md -o out.html \
+     --figure BASKETS=baskets.svg --figure TIMELINE=timeline.svg
+   ```
 
-Re-rendering the content file overwrites the spliced diagrams — keep the
-SVG in a scratch file (or regenerate it) if you expect to re-render.
+   Each `<p>[[DIAGRAM:NAME]]</p>` in the rendered page is replaced with
+   `<figure class="jm-figure" style="contain:paint">` + the sanitized SVG
+   + `</figure>` (paint containment keeps a figure from drawing outside
+   its own box, whatever its `style` says). The splice happens after markdown sanitization and before the
+   self-containment lint, so the page that is written has already passed
+   `jimemo check`. Re-rendering repeats the splice; nothing is lost.
+
+   Errors, all before anything is written: a NAME with no placeholder in
+   the content (never a silent no-op), a FILE that is not one `<svg>`
+   element, the same `id` defined in two different figures, and a
+   malformed `--figure` value (exit 2).
+
+4. Look at the result (see "Verifying the result"). Nothing detects text
+   that overflows the viewBox: text metrics need a renderer, so the
+   screenshot loop stays the check.
+
+### What the sanitizer removes
+
+The SVG file is treated as untrusted — agents pass generated SVG without
+reading it — and is rebuilt through an allowlist
+(`jimemo.sanitize.sanitize_svg`). What survives: `svg`, `g`, `defs`,
+`title`, `desc`, `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`,
+`polygon`, `text`, `tspan`, `marker`, `pattern`, `linearGradient`,
+`radialGradient`, `stop`, `clipPath`, `use`, with geometry and
+presentation attributes, `id`, `class`, `role`, `aria-label`,
+`aria-labelledby`, `aria-hidden`, and `style`. What does not:
+
+- `<script>`, `<style>`, `<foreignObject>`, `<image>`, `<a>`, the
+  animation elements, and every element not listed above — dropped with
+  everything inside them. `<filter>` and `<mask>` are not on the list.
+- Every `on*` event-handler attribute, and every attribute not on the
+  allowlist.
+- `href` / `xlink:href`, except a same-document `#id` (no spaces) on
+  `<use>`. Note
+  that the self-containment lint still refuses `<use href="#id">` today,
+  so a figure that uses `<use>` fails to render with a lint error; repeat
+  the shape instead.
+- Any `style` or presentation-attribute value (`fill`, `stroke`,
+  `clip-path`, `marker-*`, `font-family`, …) that contains a backslash,
+  a CSS comment delimiter (`/*` or `*/`), or a function other than
+  `var(--token)`, `url(#id)`, `rgb()`, `rgba()`, `hsl()`, `hsla()`,
+  `color-mix()`, `calc()`, `min()`, `max()`, `clamp()`, `translate()`,
+  `translateX()`, `translateY()`, `scale()`, `scaleX()`, `scaleY()`,
+  `rotate()`, `skewX()`, `skewY()` and `matrix()`. So `oklch()`,
+  `skew()` and the 3D transforms are refused. The whole attribute is
+  dropped, not rewritten: one refused function in a `style` loses every
+  declaration in it. Write references bare — `url(#grad)`, not
+  `url("#grad")` — and keep comments out of `style`.
+- Every other ARIA attribute (`aria-describedby`, …).
+- Elements inside `<title>` and `<desc>`; their text is kept.
+- Comments, DOCTYPE, processing instructions, CDATA.
+
+Inline SVG shares the page's one `id` namespace. Two figures that both
+define `id="grad"` are refused; give each figure's ids a distinct prefix
+(`baskets-grad`, `timeline-arrow`), which also keeps them clear of the
+page's own heading anchors.
+
+### Fallback: splice by hand
+
+For a one-off tweak the old draft loop still works: render without
+`--figure`, replace each `<p>[[DIAGRAM:NAME]]</p>` in the output with a
+`<figure>` containing the SVG, and re-verify with `jimemo check out.html`
+(`publish` and `pdf` re-run the same check). A hand splice is not
+sanitized, and re-rendering the content file overwrites it — keep the SVG
+in a file if you expect to re-render, or use `--figure`.
 
 ## Why inline SVG, not `<img>`
 
@@ -47,14 +112,17 @@ the two themes.
 - **Root element.** Fixed `viewBox`, fluid width, page UI font:
 
   ```html
-  <figure style="margin:2.2rem 0">
   <svg viewBox="0 0 760 340" role="img" aria-label="One-sentence description
     of what the diagram shows, for screen readers and PDF text extraction."
     style="width:100%;height:auto;font-family:var(--jm-font-ui)">
     ...
   </svg>
-  </figure>
   ```
+
+  `--figure` adds the `<figure class="jm-figure" …>` wrapper, and the page
+  CSS already gives a figure its vertical margin; the SVG file holds the
+  `<svg>` element only. (When splicing by hand, wrap it in
+  `<figure>…</figure>` yourself.)
 
   760 is close to the rendered content column, so viewBox pixels map
   roughly 1:1 to screen pixels — font sizes behave like page font sizes.
@@ -92,8 +160,8 @@ the two themes.
   labels into separate `<text>` (or `<tspan>`) lines yourself. Budget
   roughly 6 px per character at `font-size:12.5px` in the UI font — about
   90 characters across a 760-wide viewBox. The classic failure is a
-  caption running off the right viewBox edge, and `jimemo check` cannot
-  catch it: verify visually (screenshot the rendered file; crop to the
+  caption running off the right viewBox edge, and neither `--figure` nor
+  `jimemo check` can catch it: verify visually (screenshot the rendered file; crop to the
   figure if the page is long).
 
 - **Keep text ≥ 11.5px** in a 760 viewBox or it turns to dust in the PDF
