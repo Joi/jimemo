@@ -382,12 +382,22 @@ def sanitize_html(html_text: str) -> str:
 # properties cascade into the diagram (docs/diagrams.md). The file is
 # untrusted exactly like markdown content — agents pass machine-
 # generated SVG without reading it — so it is rebuilt through an
-# allowlist parser in the same spirit as _Sanitizer, with two
+# allowlist parser in the same spirit as _Sanitizer, with these
 # SVG-specific rules: an element outside the allowlist is dropped WITH
 # its whole subtree (inside an SVG there is no prose to unwrap — every
-# unrecognized element is assumed payload), and the result must be
-# exactly one root <svg> element or the input is refused outright.
+# unrecognized element is assumed payload); <title> and <desc> are
+# text-only (in a browser they are HTML integration points); `style` is
+# KEPT, because var(--jm-*) theming is the whole point of inline SVG,
+# but it and the paint attributes are judged by _svg_css_value_ok, which
+# refuses rather than rewrites; and the result must be exactly one root
+# <svg> element or the input is refused outright. Entry points:
+# sanitize_svg (markup) and sanitize_svg_with_ids (markup + ids).
 # Nothing here touches the markdown path above: new names only.
+#
+# Everything emitted is rebuilt from parsed tokens and escaped, so a
+# difference between html.parser and a browser's tree construction can
+# change what is DROPPED but never smuggle markup through: no input
+# byte reaches the output unescaped.
 
 # Nothing else survives. Everything not listed — script, style,
 # foreignObject, iframe, object, embed, image, a, the SMIL animation
@@ -440,55 +450,124 @@ _SVG_CAMEL_CASE = {
     "preserveaspectratio": "preserveAspectRatio",
 }
 
-# Attributes whose VALUE is a CSS paint/reference and may therefore
-# carry a url(...) reference: fill, stroke, clip-path, marker-start,
-# marker-mid, marker-end. Only url(#fragment) survives there.
-_SVG_URL_VALUE_ATTRS = frozenset({
+# Presentation attributes whose VALUE a browser parses as CSS (a paint
+# or a reference) and which may therefore carry url(...) or another
+# fetching function: fill, stroke, clip-path, marker-start, marker-mid,
+# marker-end. They get exactly the rules a style value gets
+# (_svg_css_value_ok) — only url(#fragment) survives there.
+_SVG_CSS_VALUE_ATTRS = frozenset({
     "fill", "stroke", "clip-path", "marker-start", "marker-mid", "marker-end",
 })
 
-_SVG_URL_OPEN_RE = re.compile(r"url\(", re.IGNORECASE)
-_SVG_CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-# A CSS escape: backslash + 1-6 hex digits + one optional whitespace,
-# or backslash + any other single character (identity escape).
-_SVG_CSS_ESCAPE_RE = re.compile(
-    r"\\(?:[0-9a-fA-F]{1,6}[ \t\r\n\f]?|.)", re.DOTALL
-)
-_SVG_STYLE_BLOCKED_SUBSTRINGS = (
+# CSS functions a style or paint value may call. None of them fetches:
+# var() reads a page token, the colour and maths functions compute, the
+# transform functions move things, and url( is allowed only as a bare
+# same-document reference, url(#id) (checked separately below).
+# Everything else that opens a parenthesis is refused — image-set(),
+# src(), image(), cross-fade(), element(), attr(), paint(),
+# expression(), ... — so a fetch that needs no url( token (image-set
+# takes a bare string) cannot get through.
+_SVG_CSS_ALLOWED_FUNCTIONS = frozenset({
+    "var", "url",
+    "rgb", "rgba", "hsl", "hsla", "color-mix",
+    "calc", "min", "max", "clamp",
+    "translate", "translatex", "translatey", "scale", "scalex", "scaley",
+    "rotate", "skewx", "skewy", "matrix",
+})
+
+_SVG_CSS_BLOCKED_SUBSTRINGS = (
     "@import", "expression(", "javascript:", "behavior:", "-moz-binding",
 )
 
 
-def _svg_url_value_ok(value: str) -> bool:
-    """True if every ``url(`` in `value` (case-insensitive) is followed
-    by ``#`` — a same-document fragment/paint-server reference such as
-    ``url(#grad)``, which fetches nothing. Any other url( target is a
-    resource the browser would fetch at view time, so the attribute is
-    refused wholesale."""
-    for match in _SVG_URL_OPEN_RE.finditer(value):
-        if value[match.end():match.end() + 1] != "#":
+def _svg_css_ident_char(ch: str) -> bool:
+    """True if `ch` can be part of a CSS identifier: letters and digits
+    of any script, ``-``, ``_``, and every non-ASCII code point (CSS
+    Syntax 3, "ident code point"). Deliberately wide, so the run of
+    characters before a ``(`` is the WHOLE function name a browser would
+    read — ``foo1rgb(`` and ``érgb(`` are not ``rgb(``."""
+    return ch.isalnum() or ch in "-_" or ord(ch) > 0x7F
+
+
+def _svg_css_value_ok(value: str) -> bool:
+    """True if `value` is safe to keep as a ``style`` attribute or as a
+    paint/reference presentation attribute (fill, stroke, clip-path,
+    marker-*). This is the make-or-break allowance for theming —
+    ``fill: var(--jm-accent)`` must come through verbatim — so the value
+    is never rewritten, only judged, and judged to be refused unless
+    every construct in it is one a browser cannot turn into a fetch or
+    script:
+
+      * no backslash at all. A browser decodes CSS escapes BEFORE it
+        tokenizes, so ``u\\72l(`` is a ``url(`` token; matching on the
+        literal text (or on text with escapes deleted) is unsound.
+      * no ``/*`` or ``*/`` at all. Comments are not stripped, because
+        stripping is unsound too: inside an unquoted ``url(`` token a
+        browser reads ``/*`` as URL text, so
+        ``url(/*);background:url(https://e.x/p);/*x*/#g)`` strips to
+        ``url(#g)`` while the browser fetches ``https://e.x/p``.
+      * none of the legacy script/binding markers.
+      * every ``(`` is immediately preceded by a function name in
+        _SVG_CSS_ALLOWED_FUNCTIONS, judged on the whole identifier;
+        ``url(`` must be followed directly by ``#`` (``url(#grad)`` —
+        a same-document paint-server reference, which fetches nothing;
+        a quoted or space-padded form is refused rather than parsed),
+        and ``var(`` must name a custom property (``--``).
+
+    Over-rejection costs one attribute on one element; under-rejection
+    is the failure this function exists to prevent."""
+    if "\\" in value or "/*" in value or "*/" in value:
+        return False
+    lowered = value.lower()
+    for blocked in _SVG_CSS_BLOCKED_SUBSTRINGS:
+        if blocked in lowered:
             return False
+    for index, ch in enumerate(lowered):
+        if ch != "(":
+            continue
+        name_start = index
+        while name_start > 0 and _svg_css_ident_char(lowered[name_start - 1]):
+            name_start -= 1
+        name = lowered[name_start:index]
+        if name not in _SVG_CSS_ALLOWED_FUNCTIONS:
+            return False
+        if name == "url" and not lowered.startswith("#", index + 1):
+            return False
+        if name == "var":
+            arg = index + 1
+            while arg < len(lowered) and lowered[arg] in " \t\n\r\f":
+                arg += 1
+            if not lowered.startswith("--", arg):
+                return False
     return True
 
 
-def _svg_style_ok(value: str) -> bool:
-    """True if `value` is safe to keep as a ``style`` attribute — the
-    make-or-break allowance for theming, since ``fill: var(--jm-*)``
-    must come through verbatim. Judged on the lowercased value with CSS
-    comments and backslash escapes REMOVED, so neither can hide a
-    forbidden token; removal can only over-reject (a deleted escape
-    never introduces characters that were not literally present, and a
-    browser decodes e.g. ``url\\28...\\29`` to an identifier, not a
-    url( function token). Blocked: @import, expression(, javascript:,
-    behavior:, -moz-binding, and any url( whose target is not a
-    ``#fragment`` (see _svg_url_value_ok)."""
-    reduced = _SVG_CSS_ESCAPE_RE.sub(
-        "", _SVG_CSS_COMMENT_RE.sub("", value.lower())
-    )
-    for blocked in _SVG_STYLE_BLOCKED_SUBSTRINGS:
-        if blocked in reduced:
-            return False
-    return _svg_url_value_ok(reduced)
+def _svg_fragment_ref(value: str) -> Optional[str]:
+    """The value to EMIT for a ``<use href>``: `value` with ASCII
+    whitespace and control characters removed and its case preserved
+    (``#Mark`` must keep pointing at ``id="Mark"``), or None if that is
+    not a pure same-document ``#fragment``.
+
+    The judgement is made on exactly the string that is emitted, which
+    is exactly what a browser sees after it decodes the escaped
+    attribute. normalize_url is deliberately NOT the judge here: it
+    entity-decodes a second time, and for an accept-if-it-starts-with
+    test over-decoding errs toward ACCEPTING — ``&amp;#35;a`` would
+    normalize to ``#a`` while the browser reads the relative URL
+    ``&#35;a`` and fetches it."""
+    stripped = "".join(ch for ch in value if ord(ch) > 0x20)
+    if not stripped.startswith("#"):
+        return None
+    return stripped
+
+
+# Text-only elements. In a browser <title> and <desc> are HTML
+# integration points: their children are parsed as HTML, so a child
+# <title /> becomes an HTML <title> (RCDATA — the self-closing slash is
+# ignored) and swallows the rest of the PAGE up to the next </title>.
+# Nothing html.parser reports can see that, so no element is ever
+# emitted inside them; their text is escaped like all other text.
+_SVG_TEXT_ONLY_TAGS = frozenset({"title", "desc"})
 
 
 class _SVGSanitizer(HTMLParser):
@@ -506,10 +585,20 @@ class _SVGSanitizer(HTMLParser):
         # root <svg> is stack[0]. Close tags pop back to the named
         # element so mis-nested input still yields balanced output.
         self._stack: List[str] = []
+        # How many of each name are open, kept in step with _stack, so
+        # "is a <g> open?" is one lookup: scanning the stack for every
+        # stray close tag made `<g>`*n + `</circle>`*n quadratic.
+        self._open_counts = {}  # lowercased tag name -> open count
         # While set, everything (tags and text) is discarded until the
         # matching close tag at the recorded nesting depth.
         self._discard_tag: Optional[str] = None
         self._discard_depth = 0
+        # Values of every `id` attribute that was actually emitted, in
+        # document order — read from parsed attributes, never from the
+        # output text (where <text>id="x"</text> would look like one).
+        # render._splice_figures uses them to refuse two figures that
+        # define the same id.
+        self.ids: List[str] = []
 
     # -- tag emission --------------------------------------------------
 
@@ -517,28 +606,35 @@ class _SVGSanitizer(HTMLParser):
         self, tag: str, attrs: List[Tuple[str, Optional[str]]], self_closing: bool
     ) -> str:
         parts = ["<", _SVG_CAMEL_CASE.get(tag, tag)]
+        seen = set()
         for name, value in attrs:
             name = name.lower()
             if name.startswith("on"):
                 continue  # never, on any element, regardless of allowlists
             if name not in _SVG_ALLOWED_ATTRS:
                 continue
+            if name in seen:
+                # A repeated attribute: a browser keeps the FIRST and
+                # ignores the rest, so only the first is judged/emitted
+                # (and only its id is recorded).
+                continue
+            seen.add(name)
             if value is None:
                 value = ""
             if name in ("href", "xlink:href"):
                 # A reference survives only on <use>, only as a pure
-                # #fragment after entity decoding and whitespace/
-                # control stripping (normalize_url over-decodes only in
-                # the reject direction): same-document reuse, never an
-                # external fetch or a script-scheme URL.
-                if tag != "use" or not normalize_url(value).startswith("#"):
+                # #fragment: same-document reuse, never an external
+                # fetch or a script-scheme URL. The emitted value is the
+                # stripped, case-preserving form (_svg_fragment_ref).
+                fragment = _svg_fragment_ref(value) if tag == "use" else None
+                if fragment is None:
                     continue
-            elif name == "style":
-                if not _svg_style_ok(value):
+                value = fragment
+            elif name == "style" or name in _SVG_CSS_VALUE_ATTRS:
+                if not _svg_css_value_ok(value):
                     continue
-            elif name in _SVG_URL_VALUE_ATTRS:
-                if not _svg_url_value_ok(value):
-                    continue
+            if name == "id":
+                self.ids.append(value)
             parts.append(
                 " {0}=\"{1}\"".format(
                     _SVG_CAMEL_CASE.get(name, name), html.escape(value, quote=True)
@@ -567,11 +663,14 @@ class _SVGSanitizer(HTMLParser):
                 )
             self.root_seen = True
             self.root_open = True
-        elif tag not in _SVG_ALLOWED_TAGS:
+        elif tag not in _SVG_ALLOWED_TAGS or self._stack[-1] in _SVG_TEXT_ONLY_TAGS:
+            # Not on the allowlist, or a child of a text-only element
+            # (title/desc): dropped with its whole subtree.
             self._discard_tag = tag
             self._discard_depth = 1
             return
         self._stack.append(tag)
+        self._open_counts[tag] = self._open_counts.get(tag, 0) + 1
         self.out.append(self._format_tag(tag, attrs, self_closing=False))
 
     def handle_startendtag(self, tag, attrs):
@@ -591,7 +690,7 @@ class _SVGSanitizer(HTMLParser):
             self.root_seen = True
             self.out.append(self._format_tag(tag, attrs, self_closing=True))
             return
-        if tag not in _SVG_ALLOWED_TAGS:
+        if tag not in _SVG_ALLOWED_TAGS or self._stack[-1] in _SVG_TEXT_ONLY_TAGS:
             return
         self.out.append(self._format_tag(tag, attrs, self_closing=True))
 
@@ -602,10 +701,11 @@ class _SVGSanitizer(HTMLParser):
                 if self._discard_depth == 0:
                     self._discard_tag = None
             return
-        if tag not in self._stack:
+        if not self._open_counts.get(tag):
             return  # stray close tag: nothing open by that name
         while self._stack:
             open_tag = self._stack.pop()
+            self._open_counts[open_tag] -= 1
             self.out.append("</{0}>".format(_SVG_CAMEL_CASE.get(open_tag, open_tag)))
             if open_tag == tag:
                 break
@@ -632,23 +732,49 @@ class _SVGSanitizer(HTMLParser):
         pass
 
 
-def sanitize_svg(svg_text: str) -> str:
-    """Rebuild `svg_text` keeping only allowlisted SVG elements,
-    attributes, and #fragment URL references (see the section comment
-    above), returning exactly one root ``<svg>`` element. Raises
-    ValueError when the input has no <svg> root (or nothing survives
-    sanitization), carries more than one root element, or never closes
-    its root — the render pipeline turns those into a ContentError
-    naming the figure (render._splice_figures). An unterminated
-    discard-mode element discards the rest of the document, failing
-    closed like sanitize_html."""
+def sanitize_svg_with_ids(svg_text: str) -> Tuple[str, List[str]]:
+    """``(sanitized_svg, ids)`` for `svg_text`: the rebuilt markup (see
+    sanitize_svg, which returns just that) and the value of every ``id``
+    attribute that survived, in document order. The ids come from parsed
+    start-tag attributes, never from scanning the output text.
+
+    Raises ValueError when the input has no <svg> root (or nothing
+    survives), carries more than one root element, never closes its
+    root, or is malformed enough that html.parser itself raises — some
+    CPython versions raise AssertionError or NotImplementedError on
+    input such as ``<![bogus]>``; every such failure is reported as
+    ValueError so callers have one error to handle. An unterminated
+    discard-mode element discards the rest of the document, which
+    leaves the root unclosed: fail closed, like sanitize_html."""
     parser = _SVGSanitizer()
-    parser.feed(svg_text)
-    parser.close()
+    try:
+        parser.feed(svg_text)
+        parser.close()
+    except ValueError:
+        raise
+    except Exception as e:  # noqa: BLE001 - any parser failure, by design
+        raise ValueError("malformed SVG markup: {0}".format(e)) from e
     if parser.root_open:
         raise ValueError("the <svg> root element is never closed")
     if not parser.root_seen:
         raise ValueError(
             "no <svg> root element found (or nothing survived sanitization)"
         )
-    return "".join(parser.out)
+    return "".join(parser.out), list(parser.ids)
+
+
+def sanitize_svg(svg_text: str) -> str:
+    """Rebuild `svg_text` keeping only allowlisted SVG elements,
+    attributes, CSS values and #fragment references (see the section
+    comment above), returning exactly one root ``<svg>`` element, safe
+    to inline into an HTML page. Raises ValueError for anything that is
+    not one well-formed-enough <svg> root (see sanitize_svg_with_ids for
+    the cases); the render pipeline turns that into a ContentError
+    naming the figure (render._splice_figures).
+
+    Public contract, relied on outside this module: the output contains
+    no element or attribute outside _SVG_ALLOWED_TAGS /
+    _SVG_ALLOWED_ATTRS, no ``on*`` attribute, no href except a
+    ``#fragment`` on <use>, no element inside <title>/<desc>, and no
+    ``style``/paint value that _svg_css_value_ok refuses."""
+    return sanitize_svg_with_ids(svg_text)[0]
