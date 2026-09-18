@@ -815,3 +815,62 @@ def test_nul_is_normalized_like_a_browser_so_ids_still_collide(tmp_path, _isolat
             figures={"A": '<svg><linearGradient id="g\x00"/></svg>',
                      "B": '<svg><linearGradient id="g\ufffd"/></svg>'},
         )
+
+
+# --- pre-handoff review: ids as the browser sees them ----------------------
+
+
+@pytest.mark.parametrize("raw_id", ["g&#13;x", "g&#10;x", "g x", "g&#9;x", "g\r\nx", "\x7fg", ""])
+def test_id_with_whitespace_or_control_is_dropped_not_recorded(raw_id):
+    # Not a valid id, and exactly where Python's and a browser's view of
+    # the value part: a browser turns a literal CR into LF while reading
+    # the page, so id="g\rx" and id="g\nx" would collide unnoticed.
+    from jimemo.sanitize import sanitize_svg_with_ids
+
+    svg, ids = sanitize_svg_with_ids('<svg><linearGradient id="{0}" x1="0"/></svg>'.format(raw_id))
+    assert svg == '<svg><linearGradient x1="0" /></svg>' and ids == []
+
+
+def test_carriage_return_is_serialized_as_a_character_reference():
+    # A literal CR in the page is normalized to LF by the browser; &#13;
+    # is not. Emitting the reference keeps both views of the value equal.
+    out = sanitize_svg('<svg><text aria-label="a&#13;b">x&#13;&#10;y\r\nz</text></svg>')
+    assert "\r" not in out
+    assert out == '<svg><text aria-label="a&#13;b">x&#13;\ny&#13;\nz</text></svg>'
+
+
+def test_figure_id_already_used_by_the_page_is_a_content_error(tmp_path, _isolated_home):
+    # The page's own id comes from the content here (an <a id> anchor, which
+    # sanitize_html allows); a chart canvas id is the case that breaks a
+    # page outright — see the chart test below.
+    body = '<a id="methods"></a>Methods.\n\n[[DIAGRAM:FLOW]]\n'
+    svg = '<svg><rect id="methods" width="1" height="1"/></svg>'
+    with pytest.raises(ContentError, match=r"--figure FLOW defines id='methods', which the page already uses"):
+        render_page(BRIEFING_DIR, _briefing_content(tmp_path, body), figures={"FLOW": svg})
+    # text that merely looks like an id attribute is not one
+    body = 'Write `id="methods"` in your SVG.\n\n[[DIAGRAM:FLOW]]\n'
+    html = render_page(BRIEFING_DIR, _briefing_content(tmp_path, body), figures={"FLOW": svg})
+    assert FIGURE_OPEN_TEXT in html
+
+
+def test_figure_cannot_take_a_chart_canvas_id(tmp_path, _isolated_home):
+    # A figure element with the canvas's id would come first in the
+    # document, so the chart's getElementById would find the SVG element
+    # and the chart would never draw.
+    import re
+
+    chart_dir = BRIEFING_DIR.parent / "chart-dashboard"
+    sample = (chart_dir / "sample" / "content.yaml").read_text()
+    start, end = sample.index("intro: |"), sample.index("chart_data_line:")
+    src = tmp_path / "content.yaml"
+    src.write_text(sample[:start] + "intro: |\n  [[DIAGRAM:A]]\n\n" + sample[end:])
+    content = load_content(src, load_manifest(chart_dir))
+
+    page = render_page(chart_dir, content)
+    canvas_id = re.search(r'<canvas[^>]* id="([^"]+)"', page).group(1)
+    clash = '<svg><rect id="{0}" width="10" height="10"/></svg>'.format(canvas_id)
+    with pytest.raises(ContentError, match="which the page already uses"):
+        render_page(chart_dir, content, figures={"A": clash})
+    # a prefixed id is fine, and the chart page still passes its script lint
+    ok = '<svg><rect id="fig-a-box" width="10" height="10"/></svg>'
+    assert FIGURE_OPEN_TEXT in render_page(chart_dir, content, figures={"A": ok})

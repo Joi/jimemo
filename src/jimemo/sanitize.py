@@ -589,6 +589,15 @@ def _svg_fragment_ref(value: str) -> Optional[str]:
 _SVG_TEXT_ONLY_TAGS = frozenset({"title", "desc"})
 
 
+def _svg_escape(text: str, quote: bool) -> str:
+    """html.escape, plus a carriage return written as ``&#13;``. A
+    browser normalizes a LITERAL CR (and CRLF) in the page source to LF
+    before it tokenizes, but leaves a character reference alone — so
+    this is the serialization under which the browser reads back exactly
+    the string Python holds."""
+    return html.escape(text, quote=quote).replace("\r", "&#13;")
+
+
 class _SVGSanitizer(HTMLParser):
     """Allowlist rebuild of one root <svg> element (see the section
     comment above). Mirrors _Sanitizer's discard-until-matching-close
@@ -656,10 +665,20 @@ class _SVGSanitizer(HTMLParser):
                 if not _svg_css_value_ok(value):
                     continue
             if name == "id":
+                # An id holding whitespace or a control character is not
+                # a valid id, and such characters are where Python's view
+                # of the value and a browser's can part (a browser turns
+                # CR into LF while reading the page), which is how two
+                # ids could compare different here and collide there.
+                # Dropped, so every recorded id is one plain token.
+                if not value or any(
+                    ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in value
+                ):
+                    continue
                 self.ids.append(value)
             parts.append(
                 " {0}=\"{1}\"".format(
-                    _SVG_CAMEL_CASE.get(name, name), html.escape(value, quote=True)
+                    _SVG_CAMEL_CASE.get(name, name), _svg_escape(value, quote=True)
                 )
             )
         parts.append(" />" if self_closing else ">")
@@ -739,7 +758,7 @@ class _SVGSanitizer(HTMLParser):
             return  # discarded, or outside the root: dropped
         # convert_charrefs=True delivered this decoded, so one escape
         # round-trips existing entities without double-escaping.
-        self.out.append(html.escape(data, quote=False))
+        self.out.append(_svg_escape(data, quote=False))
 
     def handle_comment(self, data):
         pass

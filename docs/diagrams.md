@@ -42,8 +42,9 @@ fights the page and one that looks native.
 
    Errors, all before anything is written: a NAME with no placeholder in
    the content (never a silent no-op), a FILE that is not one `<svg>`
-   element, the same `id` defined in two different figures, and a
-   malformed `--figure` value (exit 2).
+   element, an `id` that another figure or the page itself already uses,
+   an output path that is one of the `--figure` files, and a malformed
+   `--figure` value (the last two exit 2).
 
 4. Look at the result (see "Verifying the result"). Nothing detects text
    that overflows the viewBox: text metrics need a renderer, so the
@@ -86,9 +87,11 @@ presentation attributes, `id`, `class`, `role`, `aria-label`,
 - Comments, DOCTYPE, processing instructions, CDATA.
 
 Inline SVG shares the page's one `id` namespace. Two figures that both
-define `id="grad"` are refused; give each figure's ids a distinct prefix
-(`baskets-grad`, `timeline-arrow`), which also keeps them clear of the
-page's own heading anchors.
+define `id="grad"` are refused, and so is a figure id the page already
+uses — a heading anchor, or a chart's canvas, whose script would
+otherwise find the SVG element first and never draw. Give each figure's
+ids a distinct prefix (`baskets-grad`, `timeline-arrow`). An `id`
+containing whitespace or a control character is dropped.
 
 ### Fallback: splice by hand
 

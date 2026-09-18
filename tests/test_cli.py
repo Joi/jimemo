@@ -942,3 +942,30 @@ def test_render_figure_content_errors_exit_1_and_write_nothing(tmp_path, capsys)
                  "--figure", f"A={a}", "--figure", f"B={b}"]) == 1
     err = capsys.readouterr().err
     assert "use href" in err and "this page includes --figure SVG" in err and not out.exists()
+
+
+def test_render_refuses_to_overwrite_a_figure_file_under_another_name(tmp_path, capsys):
+    """File identity, not path spelling: a hard link is the same file, and
+    on a case-insensitive filesystem so is FLOW.SVG."""
+    import os
+
+    content, svg = _figure_inputs(tmp_path)
+    before = svg.read_text()
+    aliases = []
+    link = tmp_path / "alias.svg"
+    try:
+        os.link(svg, link)
+        aliases.append(link)
+    except OSError:
+        pass  # filesystem without hard links
+    upper = tmp_path / "FLOW.SVG"
+    if upper.exists():  # only true on a case-insensitive filesystem
+        aliases.append(upper)
+    if not aliases:
+        pytest.skip("no way to alias a file on this filesystem")
+
+    for alias in aliases:
+        assert main(["render", "briefing", str(content), "-o", str(alias),
+                     "--figure", f"FLOW={svg}"]) == 2
+        assert "refusing to overwrite it" in capsys.readouterr().err
+        assert svg.read_text() == before

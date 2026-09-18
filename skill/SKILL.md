@@ -131,7 +131,8 @@ function outside `var(--token)`, `url(#id)`, `rgb()/rgba()/hsl()/hsla()`,
 dropped whole, every declaration with it — write `url(#grad)` bare, no
 `oklch()`, and keep comments out of `style`. Of ARIA, `aria-label`,
 `aria-labelledby` and `aria-hidden` survive. Ids share the page namespace: prefix them per figure
-(`baskets-grad`); the same id in two figures is an error. `<use>` does
+(`baskets-grad`); an id used by another figure or by the page (a
+heading anchor, a chart canvas) is an error. `<use>` does
 not pass the page lint yet — repeat the shape instead. Fallback for a
 one-off: splice the `<figure>` into the rendered HTML by hand and re-run
 `jimemo check out.html` (unsanitized, and lost on re-render).

@@ -14,6 +14,7 @@ duplicated, or missing. A chartless manifest injects neither name,
 leaving chartless no-script output byte-identical.
 """
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -118,6 +119,37 @@ FIGURE_PLACEHOLDER = "<p>[[DIAGRAM:{name}]]</p>"
 FIGURE_OPEN = '<figure class="jm-figure" style="contain:paint">'
 
 
+class _IdCollector(HTMLParser):
+    """Every ``id`` attribute value in a page, read from parsed start
+    tags (text that merely looks like ``id="x"``, and script bodies, are
+    not attributes and are not collected)."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.ids = set()
+
+    def handle_starttag(self, tag, attrs):
+        for name, value in attrs:
+            if name == "id" and value:
+                self.ids.add(value)
+
+    handle_startendtag = handle_starttag
+
+
+def _page_ids(html: str) -> set:
+    collector = _IdCollector()
+    try:
+        collector.feed(html)
+        collector.close()
+    except Exception as e:  # noqa: BLE001 - older html.parser raises assorted types
+        # Fail closed: without the page's ids the collision check below
+        # would silently not run.
+        raise ContentError(
+            f"--figure: could not read the rendered page's ids: {e}"
+        ) from e
+    return collector.ids
+
+
 def _splice_figures(html: str, figures: Dict[str, str]) -> str:
     """`html` with every ``<p>[[DIAGRAM:NAME]]</p>`` placeholder
     paragraph replaced by FIGURE_OPEN + the sanitized SVG for NAME +
@@ -134,19 +166,30 @@ def _splice_figures(html: str, figures: Dict[str, str]) -> str:
     Raises ContentError, always before any replacement is made, when
     a figure is not acceptable SVG (named), when a NAME has no
     placeholder in the page — never a silent no-op — and when two
-    DIFFERENT figures define the same ``id``: inline <svg> roots share
-    the page's single id namespace, so figure B's ``url(#grad)`` would
-    resolve to figure A's gradient and render wrong without any error.
-    One figure spliced at several placeholders repeats identical
+    DIFFERENT figures define the same ``id``, or a figure defines an id
+    the page already uses: inline <svg> roots share the page's single id
+    namespace, so figure B's ``url(#grad)`` would resolve to figure A's
+    gradient and render wrong without any error — and a figure element
+    that takes a chart canvas's id comes first in the document, so the
+    chart's ``getElementById`` finds the SVG element and the chart never
+    draws. One figure spliced at several placeholders repeats identical
     definitions, which resolve identically; that is allowed."""
     sanitized: Dict[str, str] = {}
     id_owner: Dict[str, str] = {}
+    page_ids = _page_ids(html)
     for name, svg_text in figures.items():
         try:
             svg, ids = sanitize_svg_with_ids(svg_text)
         except ValueError as e:
             raise ContentError(f"--figure {name}: {e}") from e
         for svg_id in ids:
+            if svg_id in page_ids:
+                raise ContentError(
+                    f"--figure {name} defines id={svg_id!r}, which the page "
+                    "already uses (a heading anchor or a chart); inline SVG "
+                    "shares the page's one id namespace — give the figure's "
+                    "ids a distinct prefix"
+                )
             owner = id_owner.setdefault(svg_id, name)
             if owner != name:
                 raise ContentError(

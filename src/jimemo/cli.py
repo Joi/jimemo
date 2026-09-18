@@ -255,11 +255,21 @@ def _do_render(
 
     # The same for a --figure source: `-o flow.svg --figure FLOW=flow.svg`
     # would replace the diagram with the page rendered from it.
+    # File IDENTITY, not path spelling: on a case-insensitive filesystem
+    # FLOW.SVG is flow.svg, and a hard link is the same file under another
+    # name; resolve() equates neither. samefile() needs both to exist, so
+    # a target that does not exist yet falls back to the resolved path.
+    def _same_file(a: Path, b: Path) -> bool:
+        try:
+            return a.samefile(b)
+        except OSError:
+            return a.resolve() == b.resolve()
+
     for target in (out_path, pdf_path):
         if target is None:
             continue
         for figure_path in figure_paths:
-            if target.resolve() == figure_path.resolve():
+            if _same_file(target, figure_path):
                 print(
                     f"output path {target} is a --figure file; refusing "
                     "to overwrite it",
