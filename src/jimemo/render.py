@@ -125,8 +125,7 @@ FIGURE_DROP_WARNINGS_MAX = 20
 
 
 class _IdCollector(HTMLParser):
-    """The ``id`` of every element in a page — the FIRST non-empty ``id``
-    attribute on each, as a browser reads it — taken from parsed start
+    """Every ``id`` attribute value in a page, read from parsed start
     tags (text that merely looks like ``id="x"``, and script bodies, are
     not attributes and are not collected)."""
 
@@ -148,10 +147,10 @@ def _page_ids(html: str) -> set:
         # A browser's HTML tokenizer turns U+0000 into U+FFFD; html.parser
         # passes it through. Normalize before the parse, exactly as
         # sanitize_svg_with_report does for a figure, so an anchor
-        # id="g\x00" and a figure id="g�" compare equal here as they
+        # id="g\x00" and a figure id="g\ufffd" compare equal here as they
         # do in the page. Only the collector's view changes: the rendered
         # page keeps whatever sanitize_html produced.
-        collector.feed(html.replace("\x00", "�"))
+        collector.feed(html.replace("\x00", "\ufffd"))
         collector.close()
     except Exception as e:  # noqa: BLE001 - older html.parser raises assorted types
         # Fail closed: without the page's ids the collision check below
