@@ -45,15 +45,22 @@ _LAUNCHER_PREFIX = "# launcher: "
 # The header lives in the first lines; install.sh's ownership check reads
 # exactly this many, so the two readers agree on where the header ends.
 HEADER_LINES = 10
-_HEADER_BYTES = 4096
+# How much of the file the header may occupy. install.sh reads the same
+# number of CHARACTERS with `read -n` and refuses to write a header longer
+# than half of it in BYTES, so a header the installer wrote always fits both
+# readers whole -- a multibyte path cannot make the two bounds disagree,
+# and a `# launcher:` value is never truncated into "gone".
+HEADER_BYTES = 65536
 
 # One line, exactly five fields: four 1-4 digit ASCII integers around a
 # releaselevel word. The same strictness install.sh applies to its version
 # query -- `3 13 6 final garbage` is refused, not read as 3.13.6. `[0-9]`
 # rather than `\d` (which admits non-ASCII digits), and a width cap on the
-# serial too: int() on a 5000-digit string raises past the 3.11+ limit.
+# serial too: int() on a 5000-digit string raises past the 3.11+ limit. The
+# line must END in exactly one newline, as `print` leaves it -- install.sh
+# refuses an answer with no newline too, and the two readers agree.
 _VERSION_LINE = re.compile(
-    r"\A([0-9]{1,4}) ([0-9]{1,4}) ([0-9]{1,4}) ([A-Za-z]+) ([0-9]{1,4})\n?\Z"
+    r"\A([0-9]{1,4}) ([0-9]{1,4}) ([0-9]{1,4}) ([A-Za-z]+) ([0-9]{1,4})\n\Z"
 )
 _VERSION_QUERY = "import sys; print(*sys.version_info)"
 
@@ -75,8 +82,10 @@ def read_entry_point(path: Path) -> Union[EntryPoint, str]:
     """The entry point at `path`, or a reason string when it is not one that
     install.sh wrote: ``"missing"``, ``"symlink"`` (the old ``ln -s`` install,
     checked before anything else because it is the case that runs the
-    caller's ``python3``), ``"directory"``, ``"unreadable: <strerror>"``,
-    ``"no marker"``, ``"marker without python/launcher lines"``.
+    caller's ``python3``), ``"directory"``, ``"not a regular file"`` (a FIFO
+    or device -- never opened, an open() on a FIFO can block forever),
+    ``"unreadable: <strerror>"``, ``"no marker"``, ``"marker without
+    python/launcher lines"``.
 
     Two more reasons guard what the values may contain, so a caller can
     hand them to ``Path`` and ``subprocess`` without a traceback: ``"header
@@ -107,9 +116,13 @@ def read_entry_point(path: Path) -> Union[EntryPoint, str]:
         return "symlink"
     if stat.S_ISDIR(st.st_mode):
         return "directory"
+    if not stat.S_ISREG(st.st_mode):
+        # A FIFO, socket or device: open() on a FIFO with no writer blocks
+        # forever, and "bounded, never raises" includes "never hangs".
+        return "not a regular file"
     try:
         with open(path, "rb") as handle:
-            raw = handle.read(_HEADER_BYTES)
+            raw = handle.read(HEADER_BYTES)
     except OSError as e:
         return "unreadable: {0}".format(e.strerror or str(e))
     lines = raw.decode("utf-8", errors="replace").split("\n")[:HEADER_LINES]

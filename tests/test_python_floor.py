@@ -249,14 +249,17 @@ def test_launcher_refusal_names_install_sh_when_run_through_the_entry_point():
 
 
 def test_launcher_refusal_keeps_the_path_advice_without_the_entry_point():
-    # ./jimemo run directly from a checkout: today's wording, unchanged.
+    # ./jimemo run directly from a checkout: today's wording, pinned BYTE
+    # FOR BYTE (the executable is the one variable part) -- "./jimemo run
+    # directly keeps today's behaviour" is a contract, not a tendency.
     result = _run_launcher_as((3, 12, 11), ["doctor"])
     assert result.returncode != 0, result.stdout
-    lines = [line for line in result.stderr.splitlines() if line.strip()]
-    assert len(lines) == 1, result.stderr
-    assert "install.sh" not in lines[0], lines[0]
-    assert "PATH" in lines[0], lines[0]
-    assert "3.12.11" in lines[0], lines[0]
+    assert result.stderr == (
+        "jimemo: error: Python {floor} or newer is required, as a final"
+        " release; this interpreter is 3.12.11 ({executable}). Install"
+        " {floor}+ (macOS: brew install python@3.13; Debian/Ubuntu: apt"
+        " install python3.13) and put its python3 first on PATH.\n"
+    ).format(floor=FLOOR_TEXT, executable=sys.executable), result.stderr
 
 
 @pytest.mark.parametrize(

@@ -14,14 +14,15 @@ sys.dont_write_bytecode = True
 # only, os and sys as the only imports (os for one environ read).
 #
 # DECIDED (jimemo#gaga): this launcher does NOT search PATH for a newer
-# python3.13/python3.14 and re-exec into it. install.sh validates the
-# python3 it finds on PATH, so one contract -- "the python3 you run jimemo
-# with must be at or above the floor" -- holds in both places and needs no
-# reconciliation; re-exec would silently substitute an interpreter the user
-# did not name; and a patch-level floor makes the search close to useless,
-# because `python3.13` on PATH says nothing about whether it is 3.13.3 or
-# 3.13.6. Running a specific interpreter is already one command:
-# `python3.13 /path/to/jimemo ...`.
+# python3.13/python3.14 and re-exec into it. Re-exec would silently
+# substitute an interpreter the user did not name, and a patch-level floor
+# makes the search close to useless, because `python3.13` on PATH says
+# nothing about whether it is 3.13.3 or 3.13.6. The one contract is "the
+# interpreter jimemo runs with must be at or above the floor": run directly,
+# that is the python3 you invoked it with (`python3.13 /path/to/jimemo ...`
+# picks one in one command); installed, it is the interpreter install.sh
+# chose, verified by running it, and bound by absolute path into the entry
+# point (jimemo#p0nk) -- searching happens once, at install time, never here.
 _FLOOR = (3, 13, 6)
 _LEVELS = {"alpha": "a", "beta": "b", "candidate": "rc"}
 _RUNNING = ".".join(str(part) for part in sys.version_info[:3])

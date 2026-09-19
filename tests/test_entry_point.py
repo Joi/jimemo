@@ -51,6 +51,34 @@ def _shim(path, body, interpreter="/bin/sh"):
 # --- read_entry_point ------------------------------------------------------
 
 
+def test_a_fifo_is_classified_without_being_opened(tmp_path):
+    # open() on a FIFO with no writer blocks forever; a bounded reader
+    # must decide from lstat alone. (If this test hangs, that is the bug.)
+    fifo = tmp_path / "jimemo"
+    os.mkfifo(fifo)
+    assert read_entry_point(fifo) == "not a regular file"
+
+
+def test_a_long_header_is_read_whole(tmp_path):
+    # Two paths near PATH_MAX each: the header is ~8 KiB, far under the
+    # 64 KiB budget both readers share, so neither value is truncated.
+    python = "/" + "p" * 4000 + "/bin/python3"
+    launcher = "/" + "l" * 4000 + "/jimemo"
+    wrapper = write_wrapper(tmp_path / "jimemo", python, launcher)
+    found = read_entry_point(wrapper)
+    assert isinstance(found, EntryPoint), found
+    assert found.python == python
+    assert found.launcher == launcher
+    assert _entry_point.HEADER_BYTES == 65536
+
+
+def test_version_output_without_a_final_newline_is_refused(tmp_path):
+    # `print` always ends the line; an answer without a newline is not the
+    # answer asked for. install.sh refuses this shape too.
+    shim = _shim(tmp_path / "py", "printf '%s' '3 13 6 final 0'\n")
+    assert interpreter_version(shim) == "printed something other than a version"
+
+
 def test_reads_a_real_wrapper_header(tmp_path):
     wrapper = write_wrapper(
         tmp_path / "jimemo", "/opt/py/bin/python3.13", "/repo/jimemo"

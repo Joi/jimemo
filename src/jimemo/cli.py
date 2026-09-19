@@ -55,8 +55,33 @@ def _doctor_entry_point(running_version, unsupported_interpreter_problem) -> boo
     ep = str(path)
     found = _entry_point.read_entry_point(path)
     if isinstance(found, _entry_point.EntryPoint):
-        version = _entry_point.interpreter_version(found.python)
-        if isinstance(version, tuple):
+        # The wrapper's own `[ -f "$JIMEMO_LAUNCHER" ]` check exits 1 when
+        # the checkout it was installed from is gone, so that is decided
+        # FIRST: an entry point that cannot run never gets an ok line, and
+        # the section still prints exactly one status line for it. The
+        # filesystem calls are guarded: read_entry_point already refused
+        # control characters, but an OSError or ValueError here is "gone",
+        # never a traceback in a doctor line.
+        launcher = Path(found.launcher)
+        try:
+            launcher_present = launcher.is_file()
+            resolved = launcher.resolve() if launcher_present else None
+        except (OSError, ValueError):
+            launcher_present = False
+            resolved = None
+        if not launcher_present:
+            print(
+                f"FAIL entry point {ep}: launcher {found.launcher} is gone "
+                f"(bound interpreter {found.python}) -- re-run install.sh from "
+                "a jimemo checkout"
+            )
+            ok = False
+            version = None
+        else:
+            version = _entry_point.interpreter_version(found.python)
+        if version is None:
+            pass
+        elif isinstance(version, tuple):
             problem = unsupported_interpreter_problem(version)
             if problem is None:
                 print(
@@ -81,25 +106,7 @@ def _doctor_entry_point(running_version, unsupported_interpreter_problem) -> boo
                 f"could not be read: {version} -- re-run install.sh"
             )
             ok = False
-        # The wrapper's own `[ -f "$JIMEMO_LAUNCHER" ]` check exits 1 when
-        # the checkout it was installed from is gone; doctor says so instead
-        # of ok. read_entry_point already refused control characters, but
-        # the filesystem calls are guarded anyway: an OSError or ValueError
-        # here is "gone", never a traceback in a doctor line.
-        launcher = Path(found.launcher)
-        try:
-            launcher_present = launcher.is_file()
-            resolved = launcher.resolve() if launcher_present else None
-        except (OSError, ValueError):
-            launcher_present = False
-            resolved = None
-        if not launcher_present:
-            print(
-                f"FAIL entry point {ep}: launcher {found.launcher} is gone "
-                "-- re-run install.sh from a jimemo checkout"
-            )
-            ok = False
-        else:
+        if launcher_present:
             # Worktree confusion is the common case: the wrapper was
             # installed from one checkout and doctor runs from another.
             here = Path(__file__).resolve().parents[2] / "jimemo"
@@ -120,6 +127,8 @@ def _doctor_entry_point(running_version, unsupported_interpreter_problem) -> boo
         )
     elif found == "directory":
         print(f"WARNING entry point {ep} is a directory, not an entry point")
+    elif found == "not a regular file":
+        print(f"WARNING entry point {ep} is not a regular file, not an entry point")
     elif found.startswith("unreadable: "):
         reason = found[len("unreadable: "):]
         print(f"WARNING entry point {ep} could not be read: {reason}")
@@ -154,7 +163,7 @@ def _header_python(path: Path) -> str:
     from . import _entry_point
 
     try:
-        raw = path.read_bytes()[:4096]
+        raw = path.read_bytes()[: _entry_point.HEADER_BYTES]
     except OSError:
         return ""
     lines = raw.decode("utf-8", errors="replace").split("\n")

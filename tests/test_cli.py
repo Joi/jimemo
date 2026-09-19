@@ -304,17 +304,29 @@ def test_doctor_fails_when_the_bound_interpreter_is_not_executable(
 def test_doctor_fails_when_the_launcher_is_gone(capsys, hermetic_entry_point, tmp_path):
     # The wrapper's own `[ -f "$JIMEMO_LAUNCHER" ]` check exits 1 at runtime
     # for this case; doctor must not say ok about it.
+    # Exactly ONE status line, and it is the FAIL: an entry point that
+    # cannot run never gets an ok line first.
     gone = tmp_path / "old-checkout" / "jimemo"
     _write_entry_point(hermetic_entry_point, sys.executable, str(gone))
     assert main(["doctor"]) == 1
     lines = _entry_point_lines(capsys.readouterr().out)
-    assert len(lines) == 2, lines
-    assert lines[0].startswith(f"ok   entry point {hermetic_entry_point} -> "), lines
-    assert lines[1] == (
+    assert lines == [
         f"FAIL entry point {hermetic_entry_point}: launcher {gone} is gone "
-        "-- re-run install.sh from a jimemo checkout"
-    ), lines
-    assert not any("different checkout" in line for line in lines), lines
+        f"(bound interpreter {sys.executable}) -- re-run install.sh from a "
+        "jimemo checkout"
+    ], lines
+
+
+def test_doctor_warns_when_the_entry_point_is_a_fifo(capsys, hermetic_entry_point):
+    # A FIFO with no writer would block open() forever; the reader
+    # classifies it from lstat and never opens it.
+    os.mkfifo(hermetic_entry_point)
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert lines == [
+        f"WARNING entry point {hermetic_entry_point} is not a regular file, "
+        "not an entry point"
+    ], lines
 
 
 def test_doctor_warns_on_a_header_value_with_a_control_character(

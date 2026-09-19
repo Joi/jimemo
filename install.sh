@@ -493,21 +493,28 @@ sq() {
     printf "'%s'" "$_o"
 }
 
-# read_entry_point_header FILE -- sets ENTRY_HEADER to FILE's first 4096
-# characters; 1 when FILE holds a NUL byte in that span, i.e. a binary and
-# not a script this installer wrote. Plain bash, no grep/head/python:
-# `--uninstall` must work on a minimal PATH and on a machine whose python3
-# is below the floor. `read -d ''` stops at a NUL and `-n` bounds the read,
-# so a huge unterminated line costs 4 KiB, and bash's habit of silently
-# DROPPING NUL bytes on an ordinary `read` cannot turn a binary that
-# happens to contain the marker text into our file. Measured on bash 3.2:
-# status 0 with fewer than 4096 characters means a NUL stopped the read;
-# status 1 means EOF came first with no NUL; status 0 at exactly 4096 is a
-# full, clean header.
+# The header budget. Readers (this one in characters, `jimemo doctor`'s in
+# bytes -- src/jimemo/_entry_point.py HEADER_BYTES) take this much of the
+# file; the writer refuses a header longer than HALF of it in bytes, so a
+# header this script wrote always fits both readers whole, whatever the
+# locale, and a `# launcher:` value is never truncated into "not ours".
+ENTRY_HEADER_LIMIT=65536
+
+# read_entry_point_header FILE -- sets ENTRY_HEADER to FILE's first
+# ENTRY_HEADER_LIMIT characters; 1 when FILE holds a NUL byte in that span,
+# i.e. a binary and not a script this installer wrote. Plain bash, no
+# grep/head/python: `--uninstall` must work on a minimal PATH and on a
+# machine whose python3 is below the floor. `read -d ''` stops at a NUL and
+# `-n` bounds the read, so a huge unterminated line costs 64 KiB, and
+# bash's habit of silently DROPPING NUL bytes on an ordinary `read` cannot
+# turn a binary that happens to contain the marker text into our file.
+# Measured on bash 3.2: status 0 with fewer than the limit means a NUL
+# stopped the read; status 1 means EOF came first with no NUL; status 0 at
+# exactly the limit is a full, clean header.
 read_entry_point_header() {
     ENTRY_HEADER=''
-    if IFS= read -r -d '' -n 4096 ENTRY_HEADER < "$1"; then
-        if [ "${#ENTRY_HEADER}" -ne 4096 ]; then
+    if IFS= read -r -d '' -n "$ENTRY_HEADER_LIMIT" ENTRY_HEADER < "$1"; then
+        if [ "${#ENTRY_HEADER}" -ne "$ENTRY_HEADER_LIMIT" ]; then
             return 1
         fi
     fi
@@ -576,6 +583,19 @@ write_entry_point() {
                 "'$CLI_SOURCE')." >&2
             exit 1 ;;
     esac
+    # And the header must fit both readers whole (see ENTRY_HEADER_LIMIT):
+    # measured in BYTES, under LC_ALL=C in a subshell so a multibyte path
+    # counts the way the byte-mode reader sees it. Paths are bounded by
+    # PATH_MAX, so this cannot fire on a real system; it makes the
+    # "uninstall removes exactly what it wrote" contract exact rather than
+    # probable.
+    _header_bytes="$(LC_ALL=C; _h="# python: $BOUND_PYTHON$NL# launcher: $CLI_SOURCE$NL"; echo "${#_h}")"
+    if [ "$_header_bytes" -gt $((ENTRY_HEADER_LIMIT / 2)) ]; then
+        echo "install.sh: error: refusing to write an entry point: the" \
+            "interpreter and checkout paths are too long to record" \
+            "($_header_bytes bytes; the limit is $((ENTRY_HEADER_LIMIT / 2)))." >&2
+        exit 1
+    fi
 
     if [ "$DRY_RUN" = "1" ]; then
         if [ ! -d "$parent" ]; then
