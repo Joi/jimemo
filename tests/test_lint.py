@@ -1067,6 +1067,20 @@ def test_style_attribute_terminated_references_are_fine(monkeypatch):
         '<p style="font-family:&quot;Iowan&quot;,serif;content:&quot;a&amp;b&quot;">x</p>'
     )
     assert errors == []
+    # Longer complete references that merely START with a legacy name
+    # (&ltri; is a triangle, not &lt + "ri;") decode identically in every
+    # parser; judging the prefix alone rejected them on Python 3.9.
+    for ref in ("&ltri;", "&gtrsim;", "&ltimes;", "&amp;"):
+        errors, _ = _lint("<p style=\"--marker:'%s';color:red\">x</p>" % ref)
+        assert errors == [], (ref, errors)
+
+
+def test_style_attribute_legacy_prefix_of_unknown_run_still_fails(monkeypatch):
+    # ... while a run that is NOT a complete reference falls back to its
+    # legacy prefix in the old decoder, which a browser does not do.
+    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+    errors, _ = _lint("<p style=\"--marker:'&ltrix;';color:red\">x</p>")
+    assert any("'&lt' without ';'" in e for e in errors)
 
 
 # Real theme CSS is full of legitimate comments (the seed templates carry

@@ -107,6 +107,7 @@ import re
 from functools import lru_cache
 from html import parser as _html_parser
 from html import unescape
+from html.entities import html5 as _HTML5_ENTITIES
 from html.parser import HTMLParser
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
@@ -219,8 +220,8 @@ def _shorten(text: str) -> str:
 # decodes to a real character and never trips this.
 _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
 # A legacy named reference that decodes to ASCII -- ``&quot``, ``&amp``,
-# ``&lt``, ``&gt``, either case -- with no ``;`` and a letter, digit or
-# ``=`` after it. Inside an attribute a browser keeps that text literal
+# ``&lt``, ``&gt``, either case -- used as the PREFIX of a longer run,
+# with a letter, digit or ``=`` right after it. Inside an attribute a browser keeps that text literal
 # (the HTML "historical reasons" rule); html.parser before Python 3.13
 # decodes it (see _parser_decodes_unterminated_attr_refs). In a style
 # attribute that changes what the CSS comment scan reads (jimemo#y9p8):
@@ -233,9 +234,35 @@ _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
 # point, which only ever joins an ident the browser also keeps whole,
 # so at worst it trips the scan's fail-closed stop at a name ending in
 # ``url``.
-_AMBIGUOUS_LEGACY_REF_RE = re.compile(
-    r"&(?:quot|QUOT|amp|AMP|lt|LT|gt|GT)(?=[A-Za-z0-9=])"
-)
+_ASCII_LEGACY_REFS = frozenset({"quot", "QUOT", "amp", "AMP", "lt", "LT", "gt", "GT"})
+# The named-reference candidate html.unescape matches (Python < 3.13,
+# the decoder html.parser applies to attribute values there).
+_NAMED_CHARREF_RE = re.compile(r"&([^\t\n\f <&#;]{1,32};?)")
+
+
+def _ambiguous_legacy_reference(text: str) -> Optional[str]:
+    """The first reference in `text` that html.parser before Python
+    3.13 decodes but a browser keeps literal inside an attribute, if it
+    is one of _ASCII_LEGACY_REFS; else None. Replays html.unescape's own
+    decision rather than matching a prefix: a run that is itself a
+    complete reference (``&ltri;``, ``&amp;``) decodes identically
+    everywhere, and only a run whose longest known PREFIX is a legacy
+    name decodes differently -- and only when a letter, digit or ``=``
+    follows that prefix (``&ltrix``, ``&gturl(``, ``&amp=``)."""
+    for match in _NAMED_CHARREF_RE.finditer(text):
+        name = match.group(1)
+        if name in _HTML5_ENTITIES:
+            continue
+        for end in range(len(name) - 1, 1, -1):
+            if name[:end] not in _HTML5_ENTITIES:
+                continue
+            following = name[end]
+            if name[:end] in _ASCII_LEGACY_REFS and (
+                following == "=" or (following.isascii() and following.isalnum())
+            ):
+                return "&" + name[:end]
+            break
+    return None
 
 
 class _AttrRefProbe(HTMLParser):
@@ -286,7 +313,7 @@ def _raw_style_values(raw_tag: str) -> Optional[List[Optional[str]]]:
 
 
 def _ambiguous_style_reference(raw_tag: str, style_count: int) -> Optional[str]:
-    """The first reference _AMBIGUOUS_LEGACY_REF_RE finds in the raw
+    """The first reference _ambiguous_legacy_reference finds in the raw
     text of `raw_tag`'s style attributes, or None. A reference in some
     OTHER attribute (``href="?base=EUR&quote=USD"``) cannot move a CSS
     boundary, so it is not judged here. When the tag cannot be split
@@ -299,9 +326,9 @@ def _ambiguous_style_reference(raw_tag: str, style_count: int) -> Optional[str]:
     else:
         haystacks = [value for value in raw_values if value]
     for text in haystacks:
-        match = _AMBIGUOUS_LEGACY_REF_RE.search(text)
-        if match is not None:
-            return match.group(0)
+        found = _ambiguous_legacy_reference(text)
+        if found is not None:
+            return found
     return None
 
 
