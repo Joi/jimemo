@@ -1245,9 +1245,9 @@ def test_page_id_with_nul_collides_with_a_figure_id_like_a_browser(tmp_path, _is
 # The three vectors the issue names, in one name: ESC (the ANSI
 # introducer), U+009B (CSI — a terminal reads it as ESC-[ on its own) and
 # U+202E (right-to-left override, which reorders the rest of the line).
-HOSTILE_NAME = "FL\x1b[31mOW\x9b2K‮"
+HOSTILE_NAME = "FL\x1b[31mOW\x9b2K\u202e"
 HOSTILE_LABEL = "FL?[31mOW?2K?"
-UNSAFE_CODE_POINTS = ("\x1b", "\x9b", "‮")
+UNSAFE_CODE_POINTS = ("\x1b", "\x9b", "\u202e")
 
 
 def _assert_terminal_safe(message: str):
@@ -1283,14 +1283,14 @@ def test_two_figure_id_collision_message_filters_the_names_and_the_url_id(
     # An id may hold U+009B or U+202E: the sanitizer's id check drops only
     # code points <= 0x20 and 0x7F. Both figures are refused before any
     # placeholder lookup, so the page needs no placeholder for either name.
-    hostile_id = "g\x9b2K‮"
+    hostile_id = "g\x9b2K\u202e"
     a = '<svg><linearGradient id="{0}"/></svg>'.format(hostile_id)
     b = '<svg><radialGradient id="{0}"/></svg>'.format(hostile_id)
     with pytest.raises(ContentError) as exc_info:
         render_page(
             BRIEFING_DIR,
             _briefing_content(tmp_path, BODY),
-            figures={"A\x1b[31m": a, "B‮": b},
+            figures={"A\x1b[31m": a, "B\u202e": b},
         )
     message = str(exc_info.value)
     _assert_terminal_safe(message)
@@ -1317,7 +1317,7 @@ def test_missing_placeholder_message_filters_the_figure_name(tmp_path, _isolated
 def test_not_a_paragraph_message_filters_the_figure_name(tmp_path, _isolated_home):
     # A name whose raw form survives markdown as plain text, so the
     # "in the page but not a paragraph" branch is the one that fires.
-    name = "FLOW\x9b2K‮"
+    name = "FLOW\x9b2K\u202e"
     body = "Before [[DIAGRAM:{0}]] inline.\n".format(name)
     with pytest.raises(ContentError) as exc_info:
         render_page(BRIEFING_DIR, _briefing_content(tmp_path, body), figures={name: PLAIN_SVG})
