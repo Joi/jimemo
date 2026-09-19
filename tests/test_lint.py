@@ -1,4 +1,3 @@
-import collections
 import sys
 from html.entities import html5 as html5_entities
 from html.parser import HTMLParser
@@ -8,17 +7,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jimemo import PYTHON_FLOOR, lint
+from jimemo import lint
 from jimemo._paths import CHARTJS_BUNDLE
 from jimemo.charts import chart_lib_inline_text
 from jimemo.lint import MAX_OUTPUT_BYTES, lint_html, lint_standalone
-
-
-def _faked_version_info(major, minor, micro):
-    version_info = collections.namedtuple(
-        "version_info", "major minor micro releaselevel serial"
-    )
-    return version_info(major, minor, micro, "final", 0)
 
 
 def test_clean_html_has_no_errors_or_warnings():
@@ -1056,54 +1048,6 @@ def test_floor_parser_still_decodes_terminated_references():
     # legitimate escaping is untouched by the floor.
     assert _first_style_value("<p style='&quot;'>x</p>") == '"'
     assert _first_style_value("<p style='&amp;'>x</p>") == "&"
-
-
-# --- the import-time floor assertion -------------------------------------
-
-
-def test_parser_faithfulness_assertion_passes_on_this_interpreter():
-    lint._browser_faithfulness_problem.cache_clear()
-    lint._assert_parser_is_browser_faithful()
-
-
-@pytest.mark.parametrize("probe_name", [name for name, _ in lint._PARSER_PROBES])
-def test_lint_refuses_a_parser_that_fails_any_probe(probe_name, monkeypatch):
-    # Each probe guards one browser disagreement the floor exists to rule
-    # out; failing any of them means lint would judge different markup
-    # than the browser renders, so the module refuses to provide lint at
-    # all rather than answer a weaker question (jimemo#gaga).
-    patched = tuple(
-        (name, (lambda: False) if name == probe_name else probe)
-        for name, probe in lint._PARSER_PROBES
-    )
-    monkeypatch.setattr(lint, "_PARSER_PROBES", patched)
-    lint._browser_faithfulness_problem.cache_clear()
-    try:
-        with pytest.raises(RuntimeError) as excinfo:
-            lint._assert_parser_is_browser_faithful()
-    finally:
-        lint._browser_faithfulness_problem.cache_clear()
-    message = str(excinfo.value)
-    assert repr(probe_name) in message, message
-    assert ".".join(str(part) for part in PYTHON_FLOOR) in message, message
-
-
-def test_lint_refuses_an_interpreter_below_the_floor(monkeypatch):
-    # The numeric floor is checked too, not only the probes: 3.13.4 and
-    # 3.13.5 pass the 'refs' and 'style' probes but split attributes the
-    # way a browser does not, and a backport could produce any other
-    # combination. Below the floor, lint does not run.
-    faked = _faked_version_info(3, 13, 5)
-    monkeypatch.setattr(lint.sys, "version_info", faked)
-    lint._browser_faithfulness_problem.cache_clear()
-    try:
-        with pytest.raises(RuntimeError) as excinfo:
-            lint._assert_parser_is_browser_faithful()
-    finally:
-        lint._browser_faithfulness_problem.cache_clear()
-    message = str(excinfo.value)
-    assert "3.13.5" in message, message
-    assert ".".join(str(part) for part in PYTHON_FLOOR) in message, message
 
 
 # --- the rest of the y9p8 vectors, with the guard gone -------------------

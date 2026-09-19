@@ -258,6 +258,45 @@ def _fake_bin_with_python3(tmp_path, python3_target=None):
     return fake_bin
 
 
+def _fake_python3_reporting(fake_bin, version):
+    """A `python3` on PATH that reports `version`, whatever the real
+    interpreter is. install.sh asks three `python3 -c` questions about the
+    version and one `platform.python_version()`; this answers all four.
+
+    This makes the MICRO boundary (3.13.5 refused, 3.13.6 accepted) a
+    mandatory test everywhere, including CI, instead of depending on the
+    machine happening to have an old build installed. An opportunistic
+    sub-floor interpreter usually only exercises the major/minor half of
+    the comparison (jimemo#gaga).
+    """
+    dotted = ".".join(str(part) for part in version)
+    shim = fake_bin / "python3"
+    shim.write_text(
+        "#!{real}\n"
+        "import collections, sys\n"
+        "version_info = collections.namedtuple(\n"
+        "    'version_info', 'major minor micro releaselevel serial'\n"
+        ")\n"
+        "sys.version_info = version_info({major}, {minor}, {micro}, 'final', 0)\n"
+        "import platform\n"
+        "platform.python_version = lambda: {dotted!r}\n"
+        "args = sys.argv[1:]\n"
+        "if args and args[0] == '-c':\n"
+        "    exec(compile(args[1], '<faked>', 'exec'), {{'__name__': '__main__'}})\n"
+        "else:\n"
+        "    raise SystemExit('faked python3 only answers -c')\n".format(
+            real=sys.executable,
+            major=version[0],
+            minor=version[1],
+            micro=version[2],
+            dotted=dotted,
+        ),
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    return shim
+
+
 def _isolated_env(tmp_path, fake_bin):
     env = dict(os.environ)
     env["HOME"] = str(tmp_path)
@@ -314,6 +353,65 @@ def test_sub_floor_python3_is_refused(version, executable, dry_run, tmp_path):
     assert ".".join(str(part) for part in version) in result.stderr, result.stderr
     assert "Traceback" not in result.stderr
     assert_nothing_installed(tmp_path)
+
+
+SUB_FLOOR_VERSIONS = [(3, 9, 6), (3, 12, 11), (3, 13, 0), (3, 13, 3), (3, 13, 5)]
+
+
+@pytest.mark.parametrize(
+    "version", SUB_FLOOR_VERSIONS, ids=lambda v: ".".join(str(p) for p in v)
+)
+def test_install_refuses_every_version_below_the_floor(version, tmp_path):
+    # Mandatory, machine-independent coverage of the version comparison,
+    # including 3.13.5 -- one release below the floor, and the case a
+    # major/minor comparison would wrongly accept. A real run, not
+    # --dry-run: with --dry-run nothing is created either way, so "nothing
+    # was installed" would also hold if the check ran after the install.
+    fake_bin = _fake_bin_with_python3(tmp_path, None)
+    _fake_python3_reporting(fake_bin, version)
+
+    result = subprocess.run(
+        ["/bin/bash", str(INSTALL_SH)],
+        cwd=str(tmp_path),
+        env=_isolated_env(tmp_path, fake_bin),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    dotted = ".".join(str(part) for part in version)
+    floor_text = ".".join(str(part) for part in PYTHON_FLOOR)
+    assert result.returncode != 0, result.stdout
+    assert dotted in result.stderr, result.stderr
+    assert floor_text in result.stderr, result.stderr
+    assert "Traceback" not in result.stderr
+    assert_nothing_installed(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "version",
+    [PYTHON_FLOOR, (PYTHON_FLOOR[0], PYTHON_FLOOR[1], PYTHON_FLOOR[2] + 1)],
+    ids=lambda v: ".".join(str(p) for p in v),
+)
+def test_install_accepts_the_floor_and_above(version, tmp_path):
+    # The other half of the boundary: at the floor exactly, and one micro
+    # above it, install.sh gets past the version check and installs. Without
+    # this, a check that refused EVERYTHING would pass the refusal tests.
+    fake_bin = _fake_bin_with_python3(tmp_path, None)
+    _fake_python3_reporting(fake_bin, version)
+
+    result = subprocess.run(
+        ["/bin/bash", str(INSTALL_SH)],
+        cwd=str(tmp_path),
+        env=_isolated_env(tmp_path, fake_bin),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "requires Python" not in result.stderr, result.stderr
+    assert_symlink_to(cli_target(tmp_path), REPO_ROOT / "jimemo")
 
 
 @pytest.mark.skipif(

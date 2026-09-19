@@ -104,13 +104,13 @@ pass means the page actually renders the charts it declares.
 """
 import json
 import re
-import sys
-from functools import lru_cache
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
-from . import PYTHON_FLOOR
+from ._parser_floor import (
+    assert_parser_is_browser_faithful as _assert_parser_is_browser_faithful,
+)
 from ._paths import CHARTJS_BUNDLE
 from .charts import chart_lib_inline_text, parse_chart_init_js
 from .errors import ContentError
@@ -226,129 +226,19 @@ _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
 # boundaries and can hide a live url() behind an apparent comment. Joi
 # ruled (jimemo#gaga) that the floor rises instead, so the guard is gone.
 #
-# What replaces it is not a version comparison. A version number is the
-# contract a human installs against (the launcher, install.sh and
-# `jimemo doctor` all check it); it cannot see a distro that backported
-# one of these fixes into an older release, or shipped a current release
-# with one reverted. And a direct caller -- `from jimemo.lint import
-# lint_html` -- never passes the launcher or doctor at all. So this module
-# MEASURES the running parser against the three browser behaviours the
-# floor exists to guarantee, once at import, and refuses to load if any of
-# them is wrong. Cost: three parser feeds per process. If one of these
-# ever fails on a supported interpreter, the y9p8 guard has to come back.
-#
-#   refs   a semicolonless legacy reference in an attribute stays literal
-#          (CPython gh-69426, fixed in 3.13.4)
-#   style  the text of an unclosed <style> still reaches handle_data
-#          (CPython gh-86155, fixed in 3.13.4)
-#   attrs  <div title==""id id=grad> splits the way a browser splits it
-#          (fixed in 3.13.6 -- the component that sets the floor)
-
-
-class _AttrProbe(HTMLParser):
-    """Records the attributes of the one start tag it is fed."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.attrs: List[Tuple[str, Optional[str]]] = []
-
-    def handle_starttag(self, tag, attrs):
-        self.attrs = list(attrs)
-
-
-class _DataProbe(HTMLParser):
-    """Records the character data of the one document it is fed."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.data: List[str] = []
-
-    def handle_data(self, data):
-        self.data.append(data)
-
-
-def _parser_keeps_semicolonless_attr_refs() -> bool:
-    """True when ``&ampx`` inside an attribute survives as written, as a
-    browser keeps it (the HTML "historical reasons" rule). False on
-    CPython below 3.13.4, where html.parser decodes it to ``&x``."""
-    probe = _AttrProbe()
-    probe.feed("<p a='&ampx'>")
-    probe.close()
-    return probe.attrs == [("a", "&ampx")]
-
-
-def _parser_keeps_unclosed_style_text() -> bool:
-    """True when the text of a ``<style>`` with no closing tag still
-    reaches ``handle_data``, as a browser applies it to the end of the
-    document. False on CPython below 3.13.4, which drops it at close()
-    and so hides any url() it contains from the scan."""
-    probe = _DataProbe()
-    probe.feed("<!doctype html><html><body><style>.x{color:red}")
-    probe.close()
-    return any(".x{color:red}" in chunk for chunk in probe.data)
-
-
-def _parser_splits_attributes_like_a_browser() -> bool:
-    """True when ``<div title==""id id=grad>`` splits into the two
-    attributes a browser reads -- an unquoted ``title`` value of ``=""id``
-    and ``id=grad``. False on CPython below 3.13.6, which reports an empty
-    ``title``, a phantom valueless ``id`` and then ``id=grad``, so lint can
-    judge a different attribute value than the browser uses."""
-    probe = _AttrProbe()
-    probe.feed('<div title==""id id=grad>')
-    probe.close()
-    return probe.attrs == [("title", '=""id'), ("id", "grad")]
-
-
-_PARSER_PROBES = (
-    ("refs", _parser_keeps_semicolonless_attr_refs),
-    ("style", _parser_keeps_unclosed_style_text),
-    ("attrs", _parser_splits_attributes_like_a_browser),
-)
-
-
-@lru_cache(maxsize=None)
-def _browser_faithfulness_problem() -> Optional[str]:
-    """The first way this interpreter's html.parser disagrees with a
-    browser, as a message, or None when all three probes pass."""
-    running = ".".join(str(part) for part in sys.version_info[:3])
-    floor = ".".join(str(part) for part in PYTHON_FLOOR)
-    if tuple(sys.version_info[:3]) < PYTHON_FLOOR:
-        return (
-            "Python {running} is below jimemo's floor of {floor}".format(
-                running=running, floor=floor
-            )
-        )
-    for name, probe in _PARSER_PROBES:
-        if not probe():
-            return (
-                "this Python's html.parser fails the {name!r} check: it reads "
-                "HTML differently than a browser does, so lint cannot judge a "
-                "page the way the browser renders it (running {running}; "
-                "jimemo's floor is {floor})".format(
-                    name=name, running=running, floor=floor
-                )
-            )
-    return None
-
-
-def _assert_parser_is_browser_faithful() -> None:
-    """Refuse to provide lint at all on a parser that would answer a
-    different question than the browser asks. Fail-closed on purpose: the
-    alternative is a self-containment check that silently passes a page a
-    browser would fetch from (jimemo#y9p8, jimemo#gaga)."""
-    problem = _browser_faithfulness_problem()
-    if problem is not None:
-        raise RuntimeError(
-            "jimemo.lint cannot run here: "
-            + problem
-            + ". Install Python "
-            + ".".join(str(part) for part in PYTHON_FLOOR)
-            + " or newer and run jimemo with it."
-        )
-
-
+# _parser_floor is what makes its absence safe: it checks the numeric floor
+# AND measures the running parser against the three browser behaviours the
+# floor exists to guarantee (refs, style, attrs), and raises here at import
+# rather than letting lint answer a weaker question than the browser asks.
+# It is called at import, not per call, so a direct caller --
+# `from jimemo.lint import lint_html`, which is how y9p8's own repro is
+# written -- cannot reach any lint entry point without crossing it. That
+# module's docstring states the contract and the per-release measurement.
+# If the 318-case test in tests/test_lint.py ever fails, the floor has been
+# undercut and the y9p8 guard has to come back.
 _assert_parser_is_browser_faithful()
+
+
 # --- CSS references -------------------------------------------------------
 # CSS fetches on its own: a url(...) in any property (background,
 # cursor, @font-face src, ...) and an @import both load their target at
