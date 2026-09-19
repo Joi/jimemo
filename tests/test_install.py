@@ -464,7 +464,7 @@ def test_ownership_check_does_not_mistake_a_binary_for_its_own_file(tmp_path):
 
 def test_ownership_check_is_bounded_on_a_huge_unterminated_line(tmp_path):
     # 8 MiB with no newline and the marker text at the very end: the
-    # header read is capped at 4 KiB, so this costs nothing and is not ours.
+    # header read is capped at 64 KiB, so this costs nothing and is not ours.
     foreign = cli_target(tmp_path)
     foreign.parent.mkdir(parents=True)
     foreign.write_bytes(b"x" * (8 * 1024 * 1024) + MARKER.encode() + b" 1\n")
@@ -477,6 +477,52 @@ def test_ownership_check_is_bounded_on_a_huge_unterminated_line(tmp_path):
     result = run_install(["--uninstall"], tmp_path)
     assert result.returncode == 0, result.stderr
     assert foreign.exists()
+
+
+def test_uninstall_reads_a_long_header_whole(tmp_path):
+    # The bash reader's budget is 64 KiB of characters; a header with two
+    # paths near PATH_MAX (~8 KiB) must be read WHOLE, or the recorded
+    # launcher is truncated, never equals CLI_SOURCE, and --uninstall
+    # refuses to remove the installer's own file. A 4 KiB cap fails here.
+    long_python = "/" + "p" * 5000 + "/bin/python3"
+    target = cli_target(tmp_path)
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "#!/bin/sh\n"
+        "# jimemo entry point, written by install.sh. Re-run install.sh to change it.\n"
+        f"{MARKER} 1\n"
+        f"# python: {long_python}\n"
+        f"# launcher: {LAUNCHER}\n"
+        f"JIMEMO_PYTHON='{long_python}'\n"
+        f"JIMEMO_LAUNCHER='{LAUNCHER}'\n"
+        'exec "$JIMEMO_PYTHON" "$JIMEMO_LAUNCHER" "$@"\n',
+        encoding="utf-8",
+    )
+    target.chmod(0o755)
+
+    result = run_install(["--uninstall"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert not target.exists(), result.stderr
+    assert "removed" in result.stdout
+
+
+def test_header_budget_is_shared_with_the_python_reader():
+    # One budget, two readers: install.sh reads ENTRY_HEADER_LIMIT
+    # characters, jimemo._entry_point reads HEADER_BYTES bytes, and the
+    # writer refuses a header longer than half the budget in bytes (counted
+    # under LC_ALL=C) so what one writes the other always reads whole.
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from jimemo import _entry_point
+
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    limit = re.search(r"^ENTRY_HEADER_LIMIT=([0-9]+)$", text, re.M)
+    assert limit, "install.sh lost ENTRY_HEADER_LIMIT"
+    assert int(limit.group(1)) == _entry_point.HEADER_BYTES
+    # The reader is bounded by that budget ...
+    assert 'read -r -d \'\' -n "$ENTRY_HEADER_LIMIT" ENTRY_HEADER' in text
+    # ... and the writer enforces half of it in bytes.
+    assert "LC_ALL=C;" in text and "ENTRY_HEADER_LIMIT / 2" in text, text
 
 
 def test_install_does_not_write_through_a_symlink_at_its_temp_name(tmp_path):
