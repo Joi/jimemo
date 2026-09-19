@@ -4,9 +4,17 @@ Orientation for contributors. The module map and layout below is the
 authoritative reference; each module's docstring documents its own
 contract in detail.
 
-- `jimemo` (repo root) — CLI entry point; puts `src/` and `vendor/` on
-  `sys.path`. Users never pip-install anything.
+- `jimemo` (repo root) — the launcher; checks the Python floor, then puts
+  `src/` and `vendor/` on `sys.path`. Users never pip-install anything.
+  `install.sh` installs `~/.local/bin/jimemo` as a small shell script that
+  runs this launcher with one interpreter bound at install time
+  (jimemo#p0nk); the launcher reads `JIMEMO_ENTRY_POINT` from that script
+  only to word its refusal.
 - `src/jimemo/` — CLI implementation:
+  - `_entry_point.py` — reads the installed entry point's header (bound
+    interpreter, launcher) and asks that interpreter for its version;
+    stdlib only, imports on Python 3.9, never raises. Backs the entry-point
+    line of `doctor`.
   - `cli.py` — argparse entry point; wires the `doctor`, `list`,
     `render`, `info`, `suggest`, `scaffold`, `new-template`, `check`,
     `pdf`, `publish`, and `import-design` subcommands to the modules

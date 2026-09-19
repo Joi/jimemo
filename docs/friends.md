@@ -18,16 +18,26 @@ release candidate -- and nothing else. That is newer
 than the `python3` macOS ships (`/usr/bin/python3` is 3.9.6) and newer than
 most distro defaults, so you may need to install one first -- macOS:
 `brew install python@3.13`; Debian/Ubuntu: `apt install python3.13` -- and
-put it first on your `PATH`. The floor is that high because `jimemo check`
-has to read a page's HTML as closely as it can to the way a browser reads
-it, and Python's `html.parser` only stopped disagreeing with browsers about
+either put it first on your `PATH` or tell the installer where it is:
+`./install.sh --python /path/to/python3.13`. The floor is that high
+because `jimemo check` has to read a page's HTML as closely as it can to
+the way a browser reads it, and Python's `html.parser` only stopped
+disagreeing with browsers about
 attribute character references, attribute splitting and unclosed `<style>`
 elements in 3.13.4/3.13.6. `install.sh` and `./jimemo` both refuse an
-older interpreter with one line, rather than running with a weaker check,
-and neither hunts for a newer interpreter on your `PATH` -- they check the
-`python3` you ran them with. It symlinks the `jimemo` CLI onto
-`~/.local/bin` and registers the agent skill with whatever harness it
-finds on the machine (Claude Code/Cowork, Codex, Amplifier) -- see
+older interpreter with one line rather than running with a weaker check.
+`./jimemo` checks the `python3` you ran it with and never hunts for
+another on your `PATH`. `install.sh` tries `python3`, `python3.13` and
+`python3.14` in that order, runs each to check its version, and binds the
+first that qualifies (or the one you named with `--python`), printing
+which one it took and why it rejected the ones tried before it. It writes
+`~/.local/bin/jimemo` as a small shell script that runs that interpreter
+by absolute path, so the installed `jimemo` does not depend on which
+`python3` your shell finds later; if that interpreter is removed or
+replaced by an older one, `jimemo` says so in one line and asks you to
+re-run `./install.sh`, which binds another. It also registers the agent
+skill with whatever harness it finds on the machine (Claude Code/Cowork,
+Codex, Amplifier) -- see
 `AGENTS.md` if you're wiring it into something else. If `~/.local/bin`
 isn't already on `PATH`, the installer says so and prints the line to
 add to your shell rc.
@@ -38,8 +48,9 @@ Confirm the install:
 jimemo doctor
 ```
 
-`--uninstall` removes exactly the symlinks `install.sh` created and
-leaves the clone itself untouched:
+`--uninstall` removes exactly what `install.sh` created -- the `jimemo`
+entry point and the skill symlinks -- and leaves the clone itself
+untouched:
 
 ```
 ./install.sh --uninstall

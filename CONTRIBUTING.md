@@ -9,8 +9,11 @@ side:
    disagreeing about attribute character references, attribute splitting and
    unclosed `<style>` text in 3.13.4/3.13.6 (see `src/jimemo/__init__.py`;
    `src/jimemo/_parser_floor.py` records what is and is not guaranteed).
-   `./jimemo` and `install.sh` both refuse an older interpreter with one
-   line; neither looks for a newer one on `PATH`.
+   `./jimemo` checks the interpreter it is run with and refuses an older
+   one with one line; it never looks for a newer one on `PATH`. The
+   installed entry point is bound to the interpreter `install.sh` chose
+   and verified (`python3`, `python3.13`, `python3.14` in that order, or
+   `--python PATH`); the install refuses when none qualifies.
 2. Run the tests: `python3 -m pip install pytest`, then
    `python3 -m pytest tests -q` (and `./jimemo doctor`) — pytest is the
    suite runner and the repo's only development dependency.

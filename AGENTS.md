@@ -21,9 +21,16 @@ cd jimemo
 ./install.sh
 ```
 
-`install.sh` symlinks the `jimemo` executable onto `PATH` and registers
+`install.sh` writes `~/.local/bin/jimemo` as a small shell script bound
+to one Python interpreter, chosen at install time and verified by running
+it (candidates `python3`, `python3.13`, `python3.14` in that order;
+override with `--python PATH` or `JIMEMO_PYTHON=PATH`), and registers
 this skill (`skill/`) with any harness it finds installed (Claude Code,
-Codex, ...). Idempotent, and `./install.sh --uninstall` reverses it. One
+Codex, ...). The installed `jimemo` runs that interpreter by absolute
+path whatever the caller's `PATH` holds; if it is later removed or drops
+below the floor, `jimemo` prints one line telling you to re-run
+`./install.sh`, and `jimemo doctor` reports the binding. Idempotent, and
+`./install.sh --uninstall` removes exactly what it wrote. One
 clone; `git pull` updates every harness that points at it. Requires
 Python >= 3.13.6, and a final release rather than a pre-release (3.14.0b1
 sorts above the floor but still has the old parser). The floor is
@@ -33,10 +40,12 @@ attribute splitting and unclosed `<style>` text in 3.13.4/3.13.6, and
 `jimemo check` depends on that — see `src/jimemo/__init__.py`, and
 `src/jimemo/_parser_floor.py` for what the floor does and does not
 guarantee). A stock Mac's `/usr/bin/python3` is
-3.9.6; `brew install python@3.13` and put it first on `PATH`.
+3.9.6; `brew install python@3.13` and either put it first on `PATH` or
+pass it to `install.sh --python`.
 
 Without `install.sh`, the manual equivalent is a symlink:
-`ln -s $(pwd)/jimemo ~/.local/bin/jimemo`.
+`ln -s $(pwd)/jimemo ~/.local/bin/jimemo`. It binds no interpreter: it
+runs whatever `python3` the calling shell resolves.
 
 ## Commands
 

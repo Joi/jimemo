@@ -23,7 +23,8 @@ nothing else: stdlib plus vendored dependencies only, nothing to
 `pip install`. A stock Mac's
 `/usr/bin/python3` is 3.9.6, which is below the floor: install a current
 Python (macOS: `brew install python@3.13`; Debian/Ubuntu: `apt install
-python3.13`) and put its `python3` first on `PATH`. The floor is 3.13.6
+python3.13`) and either put its `python3` first on `PATH` or point
+`install.sh` at it with `--python` (below). The floor is 3.13.6
 rather than 3.9 because `jimemo check`'s self-containment scan has to read
 a page's HTML as closely as possible to the way a browser reads it, and
 `html.parser` only stopped disagreeing with a browser about attribute
@@ -31,22 +32,45 @@ character references, attribute splitting and unclosed `<style>` elements
 in 3.13.4/3.13.6 (`jimemo.PYTHON_FLOOR` records the measurement). Those
 are the specific disagreements jimemo hit, not a guarantee that the two
 parsers agree in general — `src/jimemo/_parser_floor.py` lists a known
-remaining divergence. Neither `./jimemo` nor `install.sh` looks for another
-interpreter on `PATH`: they check the `python3` you ran them with and stop,
-because `python3.13` on `PATH` says nothing about whether it is 3.13.3 or
-3.13.6. To use a specific one without changing `PATH`, invoke it directly:
-`python3.13 /path/to/jimemo render ...`.
+remaining divergence. `./jimemo` run from the checkout checks the
+interpreter it was run with and refuses below the floor with one line; it
+never searches `PATH`. To run it with a specific interpreter, invoke it
+directly: `python3.13 /path/to/jimemo render ...`.
 
-It's one clone: `install.sh` symlinks everything back to it, so `git pull`
-updates every harness at once. The script is idempotent, refuses to clobber a real file/dir that
-isn't its own symlink, and `./install.sh --uninstall` reverses exactly
-what it created, leaving the clone untouched. `--dry-run` prints the plan
-without touching anything.
+`install.sh` binds the installed `jimemo` to one interpreter, chosen when
+you run it. It tries `python3`, `python3.13` and `python3.14` in that
+order and takes the first that qualifies -- verified by running it, since
+a name says nothing about whether `python3.13` is 3.13.3 or 3.13.6 -- and
+prints which one it bound and why it rejected the ones it tried before
+it. To choose
+yourself: `./install.sh --python /path/to/python3.13` (or `--python=PATH`),
+or `JIMEMO_PYTHON=/path/to/python3.13 ./install.sh`. The flag wins over
+the variable; with either, only that interpreter is tried and the install
+refuses if it does not qualify. The bound path is the interpreter's own
+`sys.executable`, so a version-manager shim binds the interpreter it
+currently selects rather than the shim.
+
+It's one clone: `install.sh` writes `~/.local/bin/jimemo` as a small
+shell script (the entry point) that runs the bound interpreter by absolute
+path against this clone's launcher, and symlinks the skill back to the
+clone, so `git pull` updates every harness at once and the installed
+`jimemo` no longer depends on which `python3` the calling shell finds. If
+that interpreter is later removed or replaced by one below the floor,
+`jimemo` prints one line saying so and telling you to re-run
+`./install.sh`, which binds another; it never falls back to a different
+interpreter. `jimemo doctor` reports the entry point and the interpreter
+and version it is bound to. The script is idempotent, replaces an older
+symlink-style install, refuses to clobber a file or directory it did not
+write, and `./install.sh --uninstall` removes exactly what it created --
+the entry point (recognised by its marker line, and only when it was
+written from this clone) and the skill symlinks -- leaving the clone
+untouched. `--dry-run` prints the plan without writing anything.
 
 `install.sh` creates:
 
-- `~/.local/bin/jimemo` -> the CLI (add `~/.local/bin` to your `PATH` if
-  it isn't already).
+- `~/.local/bin/jimemo`, the entry point: a shell script bound to the
+  interpreter chosen above (add `~/.local/bin` to your `PATH` if it isn't
+  already).
 - the agent skill (`skill/`) symlinked into each harness skills directory
   that applies (see the table).
 
@@ -77,6 +101,9 @@ ln -s /path/to/jimemo/skill    ~/.claude/skills/jimemo    # Claude Code (and pi)
 ln -s /path/to/jimemo/skill    ~/.codex/skills/jimemo     # Codex
 ln -s /path/to/jimemo/skill    ~/.amplifier/skills/jimemo # Amplifier
 ```
+
+The CLI symlink binds no interpreter: it runs whatever `python3` the
+calling shell resolves, so that `python3` has to meet the floor.
 
 ## Usage
 
@@ -289,12 +316,14 @@ $ jimemo new-template zine
 created /Users/you/.jimemo/templates/zine
 ```
 
-Check the environment (vendor checksums, Python version, stale suitability
-labels, PDF browser availability):
+Check the environment (Python version, the installed entry point and the
+interpreter it is bound to, vendor checksums, stale suitability labels,
+PDF browser availability):
 
 ```
 $ jimemo doctor
 ok   python 3.14.6
+ok   entry point /Users/you/.local/bin/jimemo -> /usr/local/bin/python3.14 (3.14.6)
 ok   vendor checksums (/path/to/jimemo/vendor)
 ok   charts vendored (chart.js 4.5.1)
 ok   vendored imports (jinja2, markdown, yaml, tomli)
