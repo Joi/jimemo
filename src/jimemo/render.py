@@ -125,32 +125,19 @@ FIGURE_OPEN = '<figure class="jm-figure" style="contain:paint">'
 FIGURE_DROP_WARNINGS_MAX = 20
 
 
-# A start tag whose attribute boundaries html.parser and a browser are
-# guaranteed to agree on: ASCII names, each attribute either bare or with
-# a double- or single-quoted value (no whitespace around "="), separated
-# by HTML whitespace. Some html.parser versions split attributes where a
-# browser does not — on regex `\s`, which also matches U+000B, U+0085,
-# U+00A0 and other non-HTML spaces, and after `=+` — and so can report a
-# phantom valueless `id` AHEAD of the element's real one: in
-# `<div title=x id id=grad>` or `<div title==""id id=grad>`, 3.9.6
-# sees ids [None, "grad"] where a browser sees the one id "grad". Deny-
-# listing those differences one by one cannot be shown complete; this is
-# an allowlist, and a tag outside it keeps the collect-every-id rule.
-_PLAIN_START_TAG = re.compile(
-    r"<[A-Za-z][A-Za-z0-9-]*"
-    r"(?:[ \t\n\f\r]+[A-Za-z_:][A-Za-z0-9_:.-]*(?:=\"[^\"]*\"|='[^']*')?)*"
-    r"[ \t\n\f\r]*/?>\Z"
-)
+# Characters Python's regex `\s` matches but HTML does not treat as
+# whitespace: U+000B, U+001C-U+001F, U+0085, U+00A0 and the other Unicode
+# spaces. html.parser before 3.13 splits attributes on `\s`, so in
+# `<div title=x id id=grad>` it reports a phantom valueless `id`
+# ahead of the real one, where a browser keeps "x id" as the title.
+_NON_HTML_WHITESPACE = re.compile(r"[^\S\t\n\f\r ]")
 
 
 class _IdCollector(HTMLParser):
-    """The ``id`` of every element in a page, taken from parsed start
-    tags (text that merely looks like ``id="x"``, and script bodies, are
-    not attributes and are not collected). For an element with several
-    ``id`` attributes, only the first counts — as in a browser — when the
-    tag is plainly tokenized (_PLAIN_START_TAG); otherwise every non-empty
-    one is recorded, since html.parser's view of which comes first may be
-    wrong. An empty id is never recorded."""
+    """The ``id`` of every element in a page — its first ``id`` attribute,
+    recorded only when non-empty, as a browser reads it — taken from
+    parsed start tags (text that merely looks like ``id="x"``, and script
+    bodies, are not attributes and are not collected)."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -160,11 +147,11 @@ class _IdCollector(HTMLParser):
         ids = [value for name, value in attrs if name == "id"]
         if len(ids) > 1:
             raw = self.get_starttag_text()
-            if raw is None or not _PLAIN_START_TAG.match(raw):
+            if raw is None or _NON_HTML_WHITESPACE.search(raw):
                 # html.parser may have split this tag where a browser
-                # does not, so which id is the element's is uncertain.
-                # Record every one, as before jimemo#1gs5: the cost is a
-                # false refusal, never a missed collision.
+                # does not (see _NON_HTML_WHITESPACE), so which id is the
+                # element's is uncertain. Record every one, as before:
+                # the cost is a false refusal, never a missed collision.
                 self.ids.update(value for value in ids if value)
                 return
         # A browser keeps an element's FIRST id attribute and ignores the
