@@ -18,8 +18,15 @@ cd jimemo
 jimemo doctor
 ```
 
-Requires Python >= 3.9 and nothing else -- stdlib plus vendored
-dependencies only, nothing to `pip install`. It's one clone: `install.sh`
+Requires Python >= 3.13.6 and nothing else -- stdlib plus vendored
+dependencies only, nothing to `pip install`. A stock Mac's
+`/usr/bin/python3` is 3.9.6, which is below the floor: install a current
+Python (macOS: `brew install python@3.13`; Debian/Ubuntu: `apt install
+python3.13`) and put its `python3` first on `PATH`. The floor is 3.13.6
+rather than 3.9 because `jimemo check`'s self-containment scan has to read
+a page's HTML the way a browser reads it, and `html.parser` only stopped
+disagreeing with a browser about attribute character references and
+unclosed `<style>` elements in 3.13.4/3.13.6. It's one clone: `install.sh`
 symlinks everything back to it, so `git pull` updates every harness at
 once. The script is idempotent, refuses to clobber a real file/dir that
 isn't its own symlink, and `./install.sh --uninstall` reverses exactly

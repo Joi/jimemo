@@ -16,9 +16,11 @@ Schema::
     [pdf]                             # optional; all keys optional
     browser = "/path/to/chromium"     # else jimemo pdf auto-detects
 
-Parsed with the vendored ``tomli`` reader (see ``_vendor.py``): jimemo's
-Python floor is 3.9, and the stdlib ``tomllib`` module only ships from
-3.11 onward.
+Parsed with the vendored ``tomli`` reader (see ``_vendor.py``). jimemo's
+Python floor is 3.13.6 (see ``jimemo.PYTHON_FLOOR``), so the stdlib
+``tomllib`` is now always available; ``tomli`` is kept for the moment
+because dropping a vendored dependency changes ``vendor/SHA256SUMS`` and
+its checksum tests, which is its own change.
 
 SECURITY: this file NEVER holds secrets. It stores only non-secret
 identifiers -- a command name, or a Cloudflare project/account/KV-namespace

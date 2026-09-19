@@ -10,9 +10,11 @@ command. That makes this skill portable across any harness that can run a
 subprocess (Claude Code, Codex, Cowork, Amplifier); nothing here depends on
 being inside Claude Code specifically.
 
-Requires `jimemo` on `PATH` (see the repo's `install.sh` / README). If it's
-missing, run `jimemo doctor` after installing to confirm the environment is
-sane before doing anything else.
+Requires `jimemo` on `PATH` (see the repo's `install.sh` / README) and
+Python >= 3.13.6 — an older interpreter is refused with one line on stderr,
+not a weaker check. If it's missing, run `jimemo doctor` after installing to
+confirm the environment is sane before doing anything else; doctor's first
+line is the interpreter version and it fails below the floor.
 
 ## Workflow
 

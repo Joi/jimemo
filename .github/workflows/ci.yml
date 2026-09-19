@@ -8,12 +8,12 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.9", "3.13"]
-        exclude:
-          # setup-python cannot provide a working 3.9 on the arm64
-          # macos-latest runners
-          - os: macos-latest
-            python-version: "3.9"
+        # The exact floor (3.13.6, the oldest interpreter whose html.parser
+        # agrees with a browser -- see src/jimemo/__init__.py) plus what the
+        # fleet actually runs. Pinned to the exact patch, not "3.13": a
+        # floating 3.13 would silently stop testing the floor boundary the
+        # moment setup-python's 3.13 moved, and 3.13.0-3.13.5 are below it.
+        python-version: ["3.13.6", "3.14"]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0

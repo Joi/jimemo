@@ -203,22 +203,39 @@ uninstall_all() {
     fi
 }
 
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "install.sh: error: python3 not found on PATH. jimemo requires Python >= 3.9." >&2
-    exit 1
-fi
-
-PY_MAJOR="$(python3 -c 'import sys; print(sys.version_info[0])')"
-PY_MINOR="$(python3 -c 'import sys; print(sys.version_info[1])')"
-PY_VER="$(python3 -c 'import platform; print(platform.python_version())')"
-
-if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 9 ]; }; then
-    echo "install.sh: error: python3 is $PY_VER; jimemo requires Python >= 3.9." >&2
-    exit 1
-fi
-
+# Uninstall is dispatched BEFORE the Python check on purpose. It only
+# removes symlinks this script created -- no python3 is involved -- and
+# gating it on the floor would trap the exact user the floor affects: a
+# stock Mac (python3 = 3.9.6) that pulls this change could no longer run
+# `./install.sh --uninstall` to get its symlinks back out. Raising a floor
+# must never take away the way out (jimemo#gaga).
 if [ "$UNINSTALL" = "1" ]; then
     uninstall_all
-else
-    install_all
+    exit 0
 fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "install.sh: error: python3 not found on PATH. jimemo requires Python >= 3.13.6." >&2
+    exit 1
+fi
+
+# The floor has a MICRO component: what lint needs from html.parser landed
+# in 3.13.4 and 3.13.6, so a major/minor check would accept a 3.13.3 that
+# still reads attributes differently than a browser (jimemo#gaga; the
+# per-release measurement is in src/jimemo/__init__.py). Kept in the bash
+# 3.2 style the rest of this file uses: no arrays, plain -lt.
+PY_MAJOR="$(python3 -c 'import sys; print(sys.version_info[0])')"
+PY_MINOR="$(python3 -c 'import sys; print(sys.version_info[1])')"
+PY_MICRO="$(python3 -c 'import sys; print(sys.version_info[2])')"
+PY_VER="$(python3 -c 'import platform; print(platform.python_version())')"
+
+if [ "$PY_MAJOR" -lt 3 ] \
+    || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 13 ]; } \
+    || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -eq 13 ] && [ "$PY_MICRO" -lt 6 ]; }; then
+    echo "install.sh: error: python3 is $PY_VER; jimemo requires Python >= 3.13.6." \
+        "Install it (macOS: brew install python@3.13; Debian/Ubuntu: apt install" \
+        "python3.13), put its python3 first on PATH, then re-run ./install.sh." >&2
+    exit 1
+fi
+
+install_all

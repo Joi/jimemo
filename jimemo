@@ -1,6 +1,30 @@
 #!/usr/bin/env python3
 import sys
 sys.dont_write_bytecode = True
+
+# Python floor, checked BEFORE sys.path is touched and before anything from
+# the package is imported, so a sub-floor interpreter gets one line and a
+# non-zero exit instead of a traceback or -- worse -- a silent run with a
+# lint check that reads different markup than the browser does (jimemo#gaga;
+# the reasons for each component are in src/jimemo/__init__.py). The literal
+# is duplicated from jimemo.PYTHON_FLOOR because this file runs before src/
+# is importable; tests/test_python_floor.py pins the two together. Written
+# so it cannot itself fail on an old interpreter: no f-strings, str.format
+# only, sys as the only import.
+_FLOOR = (3, 13, 6)
+if sys.version_info[:3] < _FLOOR:
+    sys.stderr.write(
+        "jimemo: error: Python {floor} or newer is required; this interpreter"
+        " is {running} ({executable}). Install {floor}+ (macOS: brew install"
+        " python@3.13; Debian/Ubuntu: apt install python3.13) and put its"
+        " python3 first on PATH.\n".format(
+            floor=".".join(str(part) for part in _FLOOR),
+            running=".".join(str(part) for part in sys.version_info[:3]),
+            executable=sys.executable or "unknown",
+        )
+    )
+    raise SystemExit(1)
+
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))

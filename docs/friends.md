@@ -13,8 +13,17 @@ cd jimemo
 ./install.sh
 ```
 
-`install.sh` needs `python3` >= 3.9 (already on macOS and most Linux
-installs) and nothing else. It symlinks the `jimemo` CLI onto
+`install.sh` needs `python3` >= 3.13.6 and nothing else. That is newer
+than the `python3` macOS ships (`/usr/bin/python3` is 3.9.6) and newer than
+most distro defaults, so you may need to install one first -- macOS:
+`brew install python@3.13`; Debian/Ubuntu: `apt install python3.13` -- and
+put it first on your `PATH`. The floor is that high because `jimemo check`
+has to read a page's HTML the way a browser reads it, and Python's
+`html.parser` only stopped disagreeing with browsers about attribute
+character references and unclosed `<style>` elements in 3.13.4/3.13.6.
+`install.sh` and `./jimemo` both refuse an older interpreter with one
+line, rather than running with a weaker check. It symlinks the `jimemo`
+CLI onto
 `~/.local/bin` and registers the agent skill with whatever harness it
 finds on the machine (Claude Code/Cowork, Codex, Amplifier) -- see
 `AGENTS.md` if you're wiring it into something else. If `~/.local/bin`
@@ -119,7 +128,7 @@ directory, so it's safe to point at an export you didn't write yourself.
 
 | Step | Needs |
 | --- | --- |
-| Install, render, suggest, info, list, doctor, new-template, import-design | Python >= 3.9 only |
+| Install, render, suggest, info, list, doctor, new-template, import-design | Python >= 3.13.6 only |
 | Publish (either backend) | The `command` backend needs whatever CLI you already point it at; the `cloudflare` backend needs Node (`npx wrangler`), curl >= 8.3, a Cloudflare account, and `CLOUDFLARE_API_TOKEN` exported in your shell |
 
 Everything in the first row works with nothing installed beyond Python

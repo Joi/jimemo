@@ -16,6 +16,13 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SH = REPO_ROOT / "install.sh"
 
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from jimemo import PYTHON_FLOOR  # noqa: E402
+
+# Discovered once in conftest.py, which owns the reasoning.
+from conftest import SUB_FLOOR_PYTHONS  # noqa: E402
+
 
 def run_install(args, home: Path, extra_env=None):
     env = dict(os.environ)
@@ -235,6 +242,141 @@ def test_missing_python3_errors_clearly(tmp_path):
     )
     assert result.returncode != 0
     assert "python3" in result.stderr
+
+
+def _fake_bin_with_python3(tmp_path, python3_target=None):
+    """A PATH directory holding the coreutils install.sh needs, and
+    optionally a `python3` pointing at a specific interpreter."""
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for name in ("dirname", "readlink", "mkdir", "ln", "rm", "cat", "basename"):
+        real = shutil.which(name)
+        if real:
+            (fake_bin / name).symlink_to(real)
+    if python3_target is not None:
+        (fake_bin / "python3").symlink_to(python3_target)
+    return fake_bin
+
+
+def _isolated_env(tmp_path, fake_bin):
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path)
+    env.pop("AMPLIFIER_SKILLS_DIR", None)
+    env["PATH"] = str(fake_bin)
+    return env
+
+
+ALL_TARGETS = (
+    (".local", "bin", "jimemo"),
+    (".claude", "skills", "jimemo"),
+    (".codex", "skills", "jimemo"),
+    (".amplifier", "skills", "jimemo"),
+)
+
+
+def assert_nothing_installed(home: Path):
+    for parts in ALL_TARGETS:
+        target = home.joinpath(*parts)
+        assert not target.exists() and not target.is_symlink(), target
+
+
+@pytest.mark.skipif(
+    not SUB_FLOOR_PYTHONS,
+    reason="this machine has no Python below the floor to test the refusal with",
+)
+@pytest.mark.parametrize("dry_run", [False, True], ids=["real", "dry-run"])
+@pytest.mark.parametrize(
+    "version, executable", SUB_FLOOR_PYTHONS, ids=lambda value: str(value)
+)
+def test_sub_floor_python3_is_refused(version, executable, dry_run, tmp_path):
+    # Same fake-PATH technique as test_missing_python3_errors_clearly, but
+    # with a python3 that EXISTS and is too old (jimemo#gaga).
+    #
+    # The REAL run (no --dry-run) is the one that proves anything: with
+    # --dry-run, install.sh creates nothing regardless, so "nothing was
+    # installed" would also hold if the floor check ran AFTER the install
+    # actions. Both are parametrised so the dry-run path is covered too.
+    fake_bin = _fake_bin_with_python3(tmp_path, executable)
+    args = ["--dry-run"] if dry_run else []
+
+    result = subprocess.run(
+        ["/bin/bash", str(INSTALL_SH), *args],
+        cwd=str(tmp_path),
+        env=_isolated_env(tmp_path, fake_bin),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode != 0, result.stdout
+    floor_text = ".".join(str(part) for part in PYTHON_FLOOR)
+    assert floor_text in result.stderr, result.stderr
+    assert ".".join(str(part) for part in version) in result.stderr, result.stderr
+    assert "Traceback" not in result.stderr
+    assert_nothing_installed(tmp_path)
+
+
+@pytest.mark.skipif(
+    not SUB_FLOOR_PYTHONS,
+    reason="this machine has no Python below the floor to uninstall with",
+)
+@pytest.mark.parametrize(
+    "version, executable", SUB_FLOOR_PYTHONS[:1], ids=lambda value: str(value)
+)
+def test_uninstall_works_below_the_floor(version, executable, tmp_path):
+    # Raising the floor must not take away the way out: a machine whose
+    # python3 is too old to INSTALL must still be able to remove the
+    # symlinks a previous install left behind, or the user is stuck with
+    # dangling links and no supported command to clear them (jimemo#gaga).
+    # Uninstall touches no python3 at all.
+    fake_bin = _fake_bin_with_python3(tmp_path, executable)
+    env = _isolated_env(tmp_path, fake_bin)
+
+    # Plant exactly what a previous install would have left.
+    planted = []
+    for parts in ALL_TARGETS:
+        target = tmp_path.joinpath(*parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source = REPO_ROOT / "jimemo" if parts[0] == ".local" else REPO_ROOT / "skill"
+        target.symlink_to(source)
+        planted.append(target)
+    # ... plus a file install.sh does not own, which must survive.
+    bystander = tmp_path / ".claude" / "skills" / "somebody-elses"
+    bystander.write_text("keep me", encoding="utf-8")
+
+    result = subprocess.run(
+        ["/bin/bash", str(INSTALL_SH), "--uninstall"],
+        cwd=str(tmp_path),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    for target in planted:
+        assert not target.is_symlink(), target
+    assert bystander.read_text(encoding="utf-8") == "keep me"
+
+
+def test_uninstall_works_with_no_python3_at_all(tmp_path):
+    # Same rule, harsher case: no python3 anywhere on PATH.
+    fake_bin = _fake_bin_with_python3(tmp_path, None)
+    cli = tmp_path / ".local" / "bin" / "jimemo"
+    cli.parent.mkdir(parents=True, exist_ok=True)
+    cli.symlink_to(REPO_ROOT / "jimemo")
+
+    result = subprocess.run(
+        ["/bin/bash", str(INSTALL_SH), "--uninstall"],
+        cwd=str(tmp_path),
+        env=_isolated_env(tmp_path, fake_bin),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not cli.is_symlink()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="bash script, POSIX only")

@@ -38,8 +38,10 @@ def markdown_extensions() -> list:
     installed entry points BEFORE trying the dotted import
     (vendor/markdown/core.py), and on Python < 3.10 that scan imports
     the importlib_metadata backport, which jimemo does not vendor.
-    Stock macOS Python 3.9.6 (the documented floor) crashed on first
-    render exactly there. Objects skip name resolution entirely.
+    Stock macOS Python 3.9.6 -- the documented floor until jimemo#gaga
+    raised it to 3.13.6 -- crashed on first render exactly there. Objects
+    skip name resolution entirely, which is the right thing to pass
+    regardless of version, so this stays.
     Fresh instances per call: Extension objects carry per-run config
     and are not documented as reuse-safe across Markdown instances."""
     return [TableExtension(), FencedCodeExtension()]
