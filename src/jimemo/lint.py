@@ -104,6 +104,7 @@ pass means the page actually renders the charts it declares.
 """
 import json
 import re
+from functools import lru_cache
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
@@ -216,17 +217,45 @@ def _shorten(text: str) -> str:
 # fails closed. Legitimate escaping (&amp;, &#39;, &#x27;, ...) always
 # decodes to a real character and never trips this.
 _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
-# ``&quot`` without its ``;`` before a letter, digit or ``=``. Inside an
-# attribute a browser keeps that text literal (the HTML "historical
-# reasons" rule), but html.parser before Python 3.13 decodes it to a
-# ``"`` -- and a quote the browser never sees shifts every CSS string
-# boundary in a style attribute, which is enough to hide a live url()
-# behind an apparent comment (jimemo#y9p8). ``quot``/``QUOT`` are the
-# only legacy no-semicolon names that decode to a character the CSS
-# comment scan reacts to: ``amp``/``gt``/``lt`` give ``&``/``>``/``<``,
-# which change no string or comment state, and every other legacy name
-# decodes to a non-ASCII ident code point.
-_AMBIGUOUS_QUOT_REF_RE = re.compile(r"&(?:quot|QUOT)(?=[A-Za-z0-9=])")
+# A legacy named reference that decodes to ASCII -- ``&quot``, ``&amp``,
+# ``&lt``, ``&gt``, either case -- with no ``;`` and a letter, digit or
+# ``=`` after it. Inside an attribute a browser keeps that text literal
+# (the HTML "historical reasons" rule); html.parser before Python 3.13
+# decodes it (see _parser_decodes_unterminated_attr_refs). In a style
+# attribute that changes what the CSS comment scan reads (jimemo#y9p8):
+# ``&quot`` adds a quote the browser never sees, shifting every string
+# boundary, and all four REMOVE the reference name, which the browser
+# reads as ident code points glued to what follows -- ``&gturl(`` is the
+# function ``gturl(`` to a browser but ``>url(``, a real url token, to
+# the scan. Either desync can hide a live url() behind an apparent
+# comment. The other legacy names decode to a non-ASCII ident code
+# point, which only ever joins an ident the browser also keeps whole,
+# so at worst it trips the scan's fail-closed stop at a name ending in
+# ``url``.
+_AMBIGUOUS_LEGACY_REF_RE = re.compile(
+    r"&(?:quot|QUOT|amp|AMP|lt|LT|gt|GT)(?=[A-Za-z0-9=])"
+)
+
+
+class _AttrRefProbe(HTMLParser):
+    """Records the one attribute value of the one tag it is fed."""
+
+    value: Optional[str] = None
+
+    def handle_starttag(self, tag, attrs):
+        self.value = attrs[0][1] if attrs else None
+
+
+@lru_cache(maxsize=None)
+def _parser_decodes_unterminated_attr_refs() -> bool:
+    """True if this Python's html.parser decodes ``&ampx`` in an
+    attribute value to ``&x``, where a browser keeps ``&ampx``. Measured,
+    not inferred from the version number, so a security backport either
+    way is seen as it is: 3.9.6 and 3.10 decode, 3.13 and 3.14 do not."""
+    probe = _AttrRefProbe(convert_charrefs=True)
+    probe.feed("<p a='&ampx'>")
+    probe.close()
+    return probe.value != "&ampx"
 
 
 # --- CSS references -------------------------------------------------------
@@ -989,13 +1018,15 @@ class _Linter(HTMLParser):
                 )
                 continue
             if name == "style" and value:
-                if _AMBIGUOUS_QUOT_REF_RE.search(raw_tag):
+                ambiguous = _AMBIGUOUS_LEGACY_REF_RE.search(raw_tag)
+                if ambiguous and _parser_decodes_unterminated_attr_refs():
                     self.errors.append(
                         f"in style attribute on <{tag}>: <{tag}> contains "
-                        "'&quot' without ';' before a letter, digit or '=' "
-                        "— a browser keeps it literal in an attribute but "
-                        "this parser may decode it to a quote, so the CSS "
-                        "string boundaries cannot be trusted as written"
+                        f"{ambiguous.group(0)!r} without ';' before a letter, "
+                        "digit or '=' — a browser keeps that literal in an "
+                        "attribute but this Python's html.parser decodes it, "
+                        "so the style attribute's CSS cannot be read as the "
+                        "browser reads it (write the reference with its ';')"
                     )
                 for problem in css_reference_errors(value):
                     self.errors.append(

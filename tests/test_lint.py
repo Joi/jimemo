@@ -1,10 +1,12 @@
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from jimemo import lint
 from jimemo._paths import CHARTJS_BUNDLE
 from jimemo.charts import chart_lib_inline_text
 from jimemo.lint import MAX_OUTPUT_BYTES, lint_html, lint_standalone
@@ -953,24 +955,71 @@ def test_style_attribute_carries_the_same_scan():
     assert any("evil.example" in e and "style attribute" in e for e in errors)
 
 
-@pytest.mark.parametrize("ref", ["&quotx", "&QUOT1", "&quot="])
-def test_style_attribute_ambiguous_quot_reference_fails_closed(ref):
-    # In an attribute, a browser keeps &quot literal when no ; follows and
-    # the next character is a letter, digit or =; html.parser before
-    # Python 3.13 decodes it to a quote instead. That phantom quote opens
-    # a CSS string the browser never sees, and the real "/*" after it
-    # becomes a "comment" that swallows the live url() (found by the code
-    # review of this fix on Python 3.9 and 3.10). The guard reads the RAW
-    # tag, so it fires on every Python version, not just the old ones.
+# In an attribute, a browser keeps a legacy named reference literal when
+# no ; follows and the next character is a letter, digit or =; html.parser
+# before Python 3.13 decodes it anyway. In a style attribute that desyncs
+# the comment scan: &quot adds a quote the browser never sees, and every
+# one of these removes the reference NAME, which the browser reads as
+# ident code points glued to what follows (&gturl( is the function
+# gturl( to a browser, a url token to the scan). Found by the code review
+# of this fix on Python 3.9 and 3.10; each payload below returned
+# ([], []) there. The guard only fires where the running parser really
+# decodes, so these tests force each answer instead of depending on the
+# interpreter CI happens to run.
+QUOT_PAYLOAD = "<p style='a:%s \"/*\";background:url(%s);z:\"*/\"'>x</p>"
+NAME_PAYLOAD = (
+    "<p style='a:%surl(#a/*)\"*/ ); x:\"/*\"; background:url(%s); z:\"*/\"'>x</p>"
+)
+LEGACY_REF_CASES = [
+    (QUOT_PAYLOAD, "&quotx"),
+    (QUOT_PAYLOAD, "&QUOT1"),
+    (QUOT_PAYLOAD, "&quot="),
+] + [(NAME_PAYLOAD, ref) for ref in ("&gt", "&GT", "&lt", "&LT", "&amp", "&AMP")]
+
+
+@pytest.mark.parametrize("payload, ref", LEGACY_REF_CASES)
+def test_style_attribute_legacy_reference_fails_closed_on_old_parsers(
+    payload, ref, monkeypatch
+):
+    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+    errors, _ = _lint(payload % (ref, REMOTE))
+    assert any("without ';'" in e and "style attribute" in e for e in errors)
+
+
+@pytest.mark.parametrize("payload, ref", LEGACY_REF_CASES)
+def test_style_attribute_legacy_reference_is_plain_text_on_new_parsers(
+    payload, ref, monkeypatch
+):
+    # Where html.parser already keeps the reference literal, as a browser
+    # does, there is nothing to guard: no extra error, and an ordinary
+    # query-string style & (``?x&amplitude=3``) is left alone.
+    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: False)
+    errors, _ = _lint(payload % (ref, REMOTE))
+    assert not any("without ';'" in e for e in errors)
+
+
+def test_parser_probe_matches_this_interpreter():
+    # The probe measures the running html.parser rather than trusting a
+    # version number; check it against a direct parse of the same input.
+    class Capture(HTMLParser):
+        value = None
+
+        def handle_starttag(self, tag, attrs):
+            self.value = attrs[0][1]
+
+    capture = Capture(convert_charrefs=True)
+    capture.feed("<p a='&ampx'>")
+    capture.close()
+    decodes = capture.value != "&ampx"
+    assert lint._parser_decodes_unterminated_attr_refs() is decodes
+
+
+def test_style_attribute_terminated_references_are_fine(monkeypatch):
+    # With the ; present every parser decodes the same way, old or new.
+    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
     errors, _ = _lint(
-        "<p style='a:%s \"/*\";background:url(%s);z:\"*/\"'>x</p>" % (ref, REMOTE)
+        '<p style="font-family:&quot;Iowan&quot;,serif;content:&quot;a&amp;b&quot;">x</p>'
     )
-    assert any("'&quot' without ';'" in e for e in errors)
-
-
-def test_style_attribute_terminated_quot_reference_is_fine():
-    # &quot; with its semicolon decodes the same way everywhere.
-    errors, _ = _lint('<p style="font-family:&quot;Iowan&quot;,serif">x</p>')
     assert errors == []
 
 
