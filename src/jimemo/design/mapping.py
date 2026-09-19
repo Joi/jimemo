@@ -141,6 +141,22 @@ _GENERIC_FAMILY_RE = re.compile(
 _PRIMARY_FONT_TOKEN_RE = re.compile(r"^--[\w-]+-font$")
 
 
+def _primary_first(names: List[str]) -> List[str]:
+    """`names` with the primary-family token names (`--<ns>-font`, no
+    suffix) moved ahead of the variants, order preserved within each
+    group.
+
+    The fallback stack a font role inherits comes from the first of these
+    names whose token value ends in a generic family, so a manifest that
+    lists a variant before the primary token -- `--ct-font-pixel`
+    (monospace) ahead of `--ct-font` -- gave prose and ui the variant's
+    voice. Preferring primary-looking names is the same preference
+    `_pick_primary_font` already applies when SELECTING the brand font.
+    `sorted` is stable, so names within a group keep manifest order and
+    an export with no primary-looking name maps exactly as before."""
+    return sorted(names, key=lambda tn: _PRIMARY_FONT_TOKEN_RE.match(tn) is None)
+
+
 def _generic_family_of(value: str) -> Optional[str]:
     """The trailing generic CSS family (serif/sans-serif/system-ui/
     monospace) a font-stack token value ends in, or None if it ends in
@@ -156,6 +172,11 @@ def _pick_primary_font(export: DesignExport) -> Optional[BrandFont]:
     by family name for determinism. Families the export marked
     unreferenced/unknown are never picked -- a brand font that the export
     itself flagged as unused is not a confident signal.
+
+    Referencing names are the LIVE ones: read_export keeps only names
+    that resolve to a token in the same export, so a manifest naming
+    stale or fabricated tokens neither inflates the reference count nor
+    earns the `--*-font` tie-break here.
 
     Returns the SELECTED BrandFont object (not just its family), so the
     caller uses exactly the entry chosen here -- already guaranteed
@@ -200,10 +221,16 @@ def _font_declaration(export: DesignExport) -> Optional[Tuple[str, str, str]]:
         # _pick_primary_font only returns a brand with a non-empty
         # referencing_token_names, so [0] is always safe -- no re-find by
         # family (which could land on a token-less duplicate) and no
-        # IndexError.
-        source_token = brand.referencing_token_names[0]
-        for tn in brand.referencing_token_names:
+        # IndexError. Reordering does not change that: _primary_first
+        # permutes the list, it never empties it.
+        names = _primary_first(brand.referencing_token_names)
+        source_token = names[0]
+        for tn in names:
             t = tokens_by_name.get(tn)
+            # read_export drops names that resolve to no token, so this
+            # only fires for a DesignExport built by hand (which bypasses
+            # the reader): its dangling names cannot supply a generic
+            # family either.
             if t is None:
                 continue
             found = _generic_family_of(t.value)

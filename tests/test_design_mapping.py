@@ -1,3 +1,4 @@
+import json
 import re
 import sys
 from pathlib import Path
@@ -158,6 +159,192 @@ def test_duplicate_brand_fonts_same_family_no_indexerror():
     # header records the referenced token as the source, not a crash
     assert "--brand-font -> --jm-font-prose" in css
     assert not theme_structure_errors(css)
+
+
+# -- dangling brandFonts references ---------------------------------------
+#
+# A manifest may name a referencing token the export does not define
+# (stale after a rename, or fabricated). read_export drops those names --
+# referential integrity belongs at the read boundary, where both lists are
+# in hand -- so these tests come through the reader rather than building a
+# DesignExport by hand, which is what a real import does anyway.
+
+
+def _export_from_manifest(tmp_path, tokens, brand_fonts):
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    manifest = {
+        "namespace": "Fixture",
+        "tokens": tokens,
+        "fonts": [],
+        "brandFonts": brand_fonts,
+        "globalCssPaths": [],
+        "themes": [],
+    }
+    (export_dir / "_ds_manifest.json").write_text(json.dumps(manifest))
+    return read_export(export_dir)
+
+
+def _role_value(css, role="--jm-font-prose"):
+    m = re.search(re.escape(role) + r":\s*([^;]+);", css)
+    return m.group(1) if m else None
+
+
+def test_brand_font_with_dangling_refs_loses_to_one_with_live_refs(tmp_path):
+    # "Ghost" is referenced by three names -- a primary-looking one among
+    # them -- none of which is a token in this export, so by the old
+    # ranking (primary-token tie-break, then reference count) it outranked
+    # a genuinely referenced family. It references nothing: it must lose,
+    # and must not supply the header's source_token.
+    export = _export_from_manifest(
+        tmp_path,
+        [{"name": "--real-font-label", "value": '"Realist", serif', "kind": "font"}],
+        [
+            {
+                "family": "Ghost",
+                "status": "ok",
+                "tokens": ["--ghost-font", "--ghost-font-a", "--ghost-font-b"],
+            },
+            {"family": "Realist", "status": "ok", "tokens": ["--real-font-label"]},
+        ],
+    )
+    css = build_theme(export, "dangling")
+    value = _role_value(css)
+    assert value and '"Realist"' in value
+    # the serif stack from the LIVE token's value, not the default
+    assert "Iowan Old Style" in value
+    assert "--real-font-label -> --jm-font-prose" in css
+    assert "Ghost" not in css
+    assert not theme_structure_errors(css)
+
+
+def test_dangling_primary_looking_ref_earns_no_ranking_bonus(tmp_path):
+    # Both families have live references; the only thing that used to
+    # separate them was "Aurora"'s `--a-font`, which names no token. With
+    # that name discounted, neither has a primary-token bonus and the
+    # count decides -- "Borealis", with two live references.
+    export = _export_from_manifest(
+        tmp_path,
+        [
+            {"name": "--a-font-label", "value": '"Aurora", serif', "kind": "font"},
+            {"name": "--b-font-label", "value": '"Borealis", serif', "kind": "font"},
+            {"name": "--b-font-caption", "value": '"Borealis", serif', "kind": "font"},
+        ],
+        [
+            {"family": "Aurora", "status": "ok", "tokens": ["--a-font", "--a-font-label"]},
+            {
+                "family": "Borealis",
+                "status": "ok",
+                "tokens": ["--b-font-label", "--b-font-caption"],
+            },
+        ],
+    )
+    css = build_theme(export, "bonus")
+    value = _role_value(css)
+    assert value and '"Borealis"' in value
+    assert "Aurora" not in value
+    assert "--b-font-label -> --jm-font-prose" in css
+    assert "--a-font ->" not in css
+
+
+def test_brand_font_with_only_dangling_refs_falls_through_to_inference(tmp_path):
+    # Nothing in the export references "Ghost", so it is no more confident
+    # a signal than a brandFonts entry with an empty tokens list: the
+    # `status == "ok" and referencing_token_names` guard must not treat it
+    # as one and block the --*-font token inference.
+    export = _export_from_manifest(
+        tmp_path,
+        [{"name": "--x-font", "value": '"Custom", sans-serif', "kind": "font"}],
+        [{"family": "Ghost", "status": "ok", "tokens": ["--ghost-font"]}],
+    )
+    css = build_theme(export, "ghost")
+    value = _role_value(css)
+    assert value and '"Custom"' in value
+    assert "Ghost" not in css
+
+
+def test_dangling_only_brand_font_gets_no_also_ok_review_note(tmp_path):
+    # The header's "also an ok brand font" note runs off the same guard;
+    # a family the export never actually references is not an alternative
+    # worth offering the reader.
+    export = _export_from_manifest(
+        tmp_path,
+        [{"name": "--real-font", "value": '"Realist", sans-serif', "kind": "font"}],
+        [
+            {"family": "Realist", "status": "ok", "tokens": ["--real-font"]},
+            {"family": "Ghost", "status": "ok", "tokens": ["--ghost-font"]},
+        ],
+    )
+    css = build_theme(export, "note")
+    assert '"Realist"' in (_role_value(css) or "")
+    assert "Ghost" not in css
+    assert "also an \"ok\" brand font" not in css
+
+
+# -- fallback stack when a variant token precedes the primary -------------
+
+
+def test_variant_token_before_primary_uses_the_primary_generic_stack():
+    # The recorded case: the manifest lists `--ct-font-pixel` (monospace)
+    # before `--ct-font` (the primary family token), and the generic
+    # family was taken from whichever came first -- so prose and ui
+    # inherited a monospace fallback stack from a variant. Primary-looking
+    # names are tried first now, which is the preference _pick_primary_font
+    # already applies when SELECTING the brand font.
+    export = DesignExport(
+        tokens=[
+            Token(name="--ct-font-pixel", value='"Ct Pixel", monospace', kind="font"),
+            Token(
+                name="--ct-font",
+                value='"Ct Sans", -apple-system, Helvetica, Arial, sans-serif',
+                kind="font",
+            ),
+        ],
+        fonts=[],
+        brand_fonts=[
+            BrandFont(
+                family="Ct Sans",
+                referencing_token_names=["--ct-font-pixel", "--ct-font"],
+                status="ok",
+            )
+        ],
+        namespace="",
+    )
+    css = build_theme(export, "variant")
+    for role in ("--jm-font-prose", "--jm-font-ui"):
+        value = _role_value(css, role)
+        assert value and '"Ct Sans"' in value
+        assert "sans-serif" in value
+        assert "ui-monospace" not in value
+        assert "SF Mono" not in value
+    assert "--ct-font -> --jm-font-prose" in css
+    assert "--ct-font-pixel ->" not in css
+    assert not theme_structure_errors(css)
+
+
+def test_variant_first_ordering_is_stable_within_each_group():
+    # Two variant tokens, no primary-looking name at all: the generic
+    # still comes from the FIRST listed name that yields one, so an export
+    # without a `--<ns>-font` token maps exactly as it does today.
+    export = DesignExport(
+        tokens=[
+            Token(name="--ct-font-pixel", value='"Ct Pixel", monospace', kind="font"),
+            Token(name="--ct-font-note", value='"Ct Note", serif', kind="font"),
+        ],
+        fonts=[],
+        brand_fonts=[
+            BrandFont(
+                family="Ct Pixel",
+                referencing_token_names=["--ct-font-pixel", "--ct-font-note"],
+                status="ok",
+            )
+        ],
+        namespace="",
+    )
+    css = build_theme(export, "stable")
+    value = _role_value(css)
+    assert value and "ui-monospace" in value
+    assert "--ct-font-pixel -> --jm-font-prose" in css
 
 
 def test_empty_quoted_family_in_token_value_falls_through():
