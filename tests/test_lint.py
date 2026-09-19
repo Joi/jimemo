@@ -1,4 +1,6 @@
+import collections
 import sys
+from html.entities import html5 as html5_entities
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -6,10 +8,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from jimemo import lint
+from jimemo import PYTHON_FLOOR, lint
 from jimemo._paths import CHARTJS_BUNDLE
 from jimemo.charts import chart_lib_inline_text
 from jimemo.lint import MAX_OUTPUT_BYTES, lint_html, lint_standalone
+
+
+def _faked_version_info(major, minor, micro):
+    version_info = collections.namedtuple(
+        "version_info", "major minor micro releaselevel serial"
+    )
+    return version_info(major, minor, micro, "final", 0)
 
 
 def test_clean_html_has_no_errors_or_warnings():
@@ -957,17 +966,22 @@ def test_style_attribute_carries_the_same_scan():
     assert any("evil.example" in e and "style attribute" in e for e in errors)
 
 
-# In an attribute, a browser keeps a legacy named reference literal when
-# no ; follows and the next character is a letter, digit or =; html.parser
-# before Python 3.13 decodes it anyway. In a style attribute that desyncs
-# the comment scan: &quot adds a quote the browser never sees, and every
-# one of these removes the reference NAME, which the browser reads as
-# ident code points glued to what follows (&gturl( is the function
-# gturl( to a browser, a url token to the scan). Found by the code review
-# of this fix on Python 3.9 and 3.10; each payload below returned
-# ([], []) there. The guard only fires where the running parser really
-# decodes, so these tests force each answer instead of depending on the
-# interpreter CI happens to run.
+# --- the Python floor is what retired jimemo#y9p8's old-parser guard ------
+#
+# In an attribute, a browser keeps a legacy named reference literal when no
+# ';' follows and the next character is a letter, digit or '='. html.parser
+# below CPython 3.13.4 decodes it anyway. In a style attribute that desyncs
+# the CSS comment scan: &quot adds a quote the browser never sees, and every
+# one of these removes the reference NAME, which the browser reads as ident
+# code points glued to what follows (&gturl( is the function gturl( to a
+# browser, a url token to the scan). Each payload below returned ([], [])
+# on 3.9 and 3.10, which is why y9p8 added a fail-closed guard.
+#
+# jimemo#gaga raised the floor to 3.13.6 and deleted that guard. So these
+# tests no longer force an answer with monkeypatch -- they measure the real
+# parser, and assert the payloads are read the way a browser reads them:
+# the reference stays literal, so the live url() the payload was built to
+# hide is plainly visible to the scan and IS reported.
 QUOT_PAYLOAD = "<p style='a:%s \"/*\";background:url(%s);z:\"*/\"'>x</p>"
 NAME_PAYLOAD = (
     "<p style='a:%surl(#a/*)\"*/ ); x:\"/*\"; background:url(%s); z:\"*/\"'>x</p>"
@@ -980,46 +994,124 @@ LEGACY_REF_CASES = [
 
 
 @pytest.mark.parametrize("payload, ref", LEGACY_REF_CASES)
-def test_style_attribute_legacy_reference_fails_closed_on_old_parsers(
-    payload, ref, monkeypatch
-):
-    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
-    errors, _ = _lint(payload % (ref, REMOTE))
-    assert any("without ';'" in e and "style attribute" in e for e in errors)
+def test_legacy_reference_payloads_are_read_as_the_browser_reads_them(payload, ref):
+    markup = payload % (ref, REMOTE)
+    # 1. the parser keeps the reference exactly as written ...
+    assert ref in _first_style_value(markup)
+    # 2. ... so the remote url() is reported, not hidden behind a phantom
+    #    comment, and no old-parser guard error is needed to catch it.
+    errors, _ = _lint(markup)
+    assert any("evil.example" in e and "style attribute" in e for e in errors), errors
+    assert not any("without ';'" in e for e in errors), errors
 
 
-@pytest.mark.parametrize("payload, ref", LEGACY_REF_CASES)
-def test_style_attribute_legacy_reference_is_plain_text_on_new_parsers(
-    payload, ref, monkeypatch
-):
-    # Where html.parser already keeps the reference literal, as a browser
-    # does, there is nothing to guard: no extra error, and an ordinary
-    # query-string style & (``?x&amplitude=3``) is left alone.
-    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: False)
-    errors, _ = _lint(payload % (ref, REMOTE))
-    assert not any("without ';'" in e for e in errors)
+def _first_style_value(markup):
+    """The style attribute value html.parser hands the linter for the
+    first start tag in `markup`."""
 
-
-def test_parser_probe_matches_this_interpreter():
-    # The probe measures the running html.parser rather than trusting a
-    # version number; check it against a direct parse of the same input.
     class Capture(HTMLParser):
         value = None
 
         def handle_starttag(self, tag, attrs):
-            self.value = attrs[0][1]
+            if self.value is None:
+                for name, value in attrs:
+                    if name.lower() == "style":
+                        self.value = value or ""
+                        return
 
     capture = Capture(convert_charrefs=True)
-    capture.feed("<p a='&ampx'>")
+    capture.feed(markup)
     capture.close()
-    decodes = capture.value != "&ampx"
-    assert lint._parser_decodes_unterminated_attr_refs() is decodes
+    assert capture.value is not None, markup
+    return capture.value
 
 
-def test_style_attribute_reference_in_another_attribute_is_fine(monkeypatch):
-    # Only the style attribute's own raw text is judged: a query string in
-    # an href cannot move a CSS boundary, even where the parser decodes it.
-    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+# Every legacy (semicolonless) name in the HTML5 entity table, not just the
+# four that decode to ASCII: this is the whole input class y9p8's guard
+# covered, measured against the real parser rather than assumed from a
+# version number. Measured 2026-09-19: 0 of 318 kept literal on 3.9.6,
+# 3.10.21, 3.12.11, 3.13.0 and 3.13.3; all 318 kept on 3.13.4, 3.13.6,
+# 3.13.15, 3.14.0 and 3.14.7. If this test ever fails, the floor has been
+# undercut and the y9p8 guard has to come back -- it is the canary for the
+# deletion, so do not weaken it to a sample.
+LEGACY_ENTITY_NAMES = sorted(
+    name for name in html5_entities if not name.endswith(";")
+)
+
+
+def test_floor_parser_keeps_every_legacy_reference_literal_in_attribute():
+    assert len(LEGACY_ENTITY_NAMES) > 100, LEGACY_ENTITY_NAMES
+    mismatches = []
+    for name in LEGACY_ENTITY_NAMES:
+        for following in ("x", "1", "="):
+            raw = "&" + name + following
+            got = _first_style_value("<p style='%s'>x</p>" % raw)
+            if got != raw:
+                mismatches.append((raw, got))
+    assert mismatches == [], mismatches[:10]
+
+
+def test_floor_parser_still_decodes_terminated_references():
+    # The flip side: a reference WITH its ';' decodes on every version, so
+    # legitimate escaping is untouched by the floor.
+    assert _first_style_value("<p style='&quot;'>x</p>") == '"'
+    assert _first_style_value("<p style='&amp;'>x</p>") == "&"
+
+
+# --- the import-time floor assertion -------------------------------------
+
+
+def test_parser_faithfulness_assertion_passes_on_this_interpreter():
+    lint._browser_faithfulness_problem.cache_clear()
+    lint._assert_parser_is_browser_faithful()
+
+
+@pytest.mark.parametrize("probe_name", [name for name, _ in lint._PARSER_PROBES])
+def test_lint_refuses_a_parser_that_fails_any_probe(probe_name, monkeypatch):
+    # Each probe guards one browser disagreement the floor exists to rule
+    # out; failing any of them means lint would judge different markup
+    # than the browser renders, so the module refuses to provide lint at
+    # all rather than answer a weaker question (jimemo#gaga).
+    patched = tuple(
+        (name, (lambda: False) if name == probe_name else probe)
+        for name, probe in lint._PARSER_PROBES
+    )
+    monkeypatch.setattr(lint, "_PARSER_PROBES", patched)
+    lint._browser_faithfulness_problem.cache_clear()
+    try:
+        with pytest.raises(RuntimeError) as excinfo:
+            lint._assert_parser_is_browser_faithful()
+    finally:
+        lint._browser_faithfulness_problem.cache_clear()
+    message = str(excinfo.value)
+    assert repr(probe_name) in message, message
+    assert ".".join(str(part) for part in PYTHON_FLOOR) in message, message
+
+
+def test_lint_refuses_an_interpreter_below_the_floor(monkeypatch):
+    # The numeric floor is checked too, not only the probes: 3.13.4 and
+    # 3.13.5 pass the 'refs' and 'style' probes but split attributes the
+    # way a browser does not, and a backport could produce any other
+    # combination. Below the floor, lint does not run.
+    faked = _faked_version_info(3, 13, 5)
+    monkeypatch.setattr(lint.sys, "version_info", faked)
+    lint._browser_faithfulness_problem.cache_clear()
+    try:
+        with pytest.raises(RuntimeError) as excinfo:
+            lint._assert_parser_is_browser_faithful()
+    finally:
+        lint._browser_faithfulness_problem.cache_clear()
+    message = str(excinfo.value)
+    assert "3.13.5" in message, message
+    assert ".".join(str(part) for part in PYTHON_FLOOR) in message, message
+
+
+# --- the rest of the y9p8 vectors, with the guard gone -------------------
+
+
+def test_style_attribute_reference_in_another_attribute_is_fine():
+    # A query string in an href never could move a CSS boundary, and on
+    # the floor it is not decoded either.
     errors, _ = _lint(
         '<a href="https://example.com/?base=EUR&quote=USD&gte=5&amplitude=3" '
         'style="color:red">rate</a>'
@@ -1027,60 +1119,54 @@ def test_style_attribute_reference_in_another_attribute_is_fine(monkeypatch):
     assert errors == []
 
 
-def test_style_attribute_reference_next_to_another_attribute_still_fails(monkeypatch):
-    # ... while the same reference INSIDE the style value still fails,
-    # whatever attributes sit around it.
-    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+def test_style_attribute_reference_next_to_another_attribute_is_still_caught():
+    # The same reference INSIDE the style value: on the floor it stays
+    # literal, so the live background:url() is reported by the ordinary
+    # scan, whatever attributes sit around it.
     errors, _ = _lint(
         '<a href="https://example.com/?a=1&amp;b=2" title="x" '
         "style='a:&gturl(#a/*)\"*/ ); x:\"/*\"; background:url(%s); z:\"*/\"'>"
         "x</a>" % REMOTE
     )
-    assert any("'&gt' without ';'" in e for e in errors)
+    assert any("evil.example" in e for e in errors), errors
 
 
-def test_style_attribute_unsplittable_tag_is_judged_whole(monkeypatch):
-    # If the tag cannot be split the way html.parser split it, the guard
-    # judges the whole raw tag rather than guess which text is the style.
-    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
-    monkeypatch.setattr(lint, "_raw_style_values", lambda raw_tag: None)
-    errors, _ = _lint('<a href="?base=EUR&quote=USD" style="color:red">x</a>')
-    assert any("'&quot' without ';'" in e for e in errors)
-
-
-def test_style_attribute_guard_is_linear_in_repeated_attributes(monkeypatch):
-    # The guard runs once per tag. Judging the raw tag once per style
-    # attribute made 40 000 duplicates take ~4 s (quadratic); linear, a
-    # 100 000-attribute tag is well under a second.
+def test_repeated_style_attributes_stay_linear():
+    # y9p8's guard judged the raw tag once per style attribute, which made
+    # 40 000 duplicates take ~4 s (quadratic). The guard is gone, but the
+    # per-tag cost is still worth pinning: a 100 000-attribute tag must
+    # stay well under a second.
     import time
-    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
     markup = "<p" + " style=x" * 100_000 + ">x</p>"
     started = time.monotonic()
     _lint(markup)
     assert time.monotonic() - started < 5.0
 
 
-def test_style_attribute_terminated_references_are_fine(monkeypatch):
-    # With the ; present every parser decodes the same way, old or new.
-    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+def test_style_attribute_terminated_references_are_fine():
+    # With the ';' present every parser decodes the same way.
     errors, _ = _lint(
         '<p style="font-family:&quot;Iowan&quot;,serif;content:&quot;a&amp;b&quot;">x</p>'
     )
     assert errors == []
     # Longer complete references that merely START with a legacy name
     # (&ltri; is a triangle, not &lt + "ri;") decode identically in every
-    # parser; judging the prefix alone rejected them on Python 3.9.
+    # parser; y9p8's first attempt at the guard rejected them on 3.9.
     for ref in ("&ltri;", "&gtrsim;", "&ltimes;", "&amp;"):
         errors, _ = _lint("<p style=\"--marker:'%s';color:red\">x</p>" % ref)
         assert errors == [], (ref, errors)
 
 
-def test_style_attribute_legacy_prefix_of_unknown_run_still_fails(monkeypatch):
-    # ... while a run that is NOT a complete reference falls back to its
-    # legacy prefix in the old decoder, which a browser does not do.
-    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+def test_style_attribute_legacy_prefix_of_unknown_run_is_literal_on_the_floor():
+    # A run that is NOT a complete reference fell back to its legacy
+    # prefix in the old decoder, which a browser does not do; y9p8 had to
+    # fail closed on it. On the floor the parser keeps it literal, like a
+    # browser, and there is nothing to report.
+    assert _first_style_value("<p style=\"--marker:'&ltrix;';color:red\">x</p>") == (
+        "--marker:'&ltrix;';color:red"
+    )
     errors, _ = _lint("<p style=\"--marker:'&ltrix;';color:red\">x</p>")
-    assert any("'&lt' without ';'" in e for e in errors)
+    assert errors == []
 
 
 # Real theme CSS is full of legitimate comments (the seed templates carry

@@ -104,13 +104,13 @@ pass means the page actually renders the charts it declares.
 """
 import json
 import re
+import sys
 from functools import lru_cache
-from html import parser as _html_parser
 from html import unescape
-from html.entities import html5 as _HTML5_ENTITIES
 from html.parser import HTMLParser
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
+from . import PYTHON_FLOOR
 from ._paths import CHARTJS_BUNDLE
 from .charts import chart_lib_inline_text, parse_chart_init_js
 from .errors import ContentError
@@ -219,119 +219,136 @@ def _shorten(text: str) -> str:
 # fails closed. Legitimate escaping (&amp;, &#39;, &#x27;, ...) always
 # decodes to a real character and never trips this.
 _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
-# A legacy named reference that decodes to ASCII -- ``&quot``, ``&amp``,
-# ``&lt``, ``&gt``, either case -- used as the PREFIX of a longer run,
-# with a letter, digit or ``=`` right after it. Inside an attribute a browser keeps that text literal
-# (the HTML "historical reasons" rule); html.parser before Python 3.13
-# decodes it (see _parser_decodes_unterminated_attr_refs). In a style
-# attribute that changes what the CSS comment scan reads (jimemo#y9p8):
-# ``&quot`` adds a quote the browser never sees, shifting every string
-# boundary, and all four REMOVE the reference name, which the browser
-# reads as ident code points glued to what follows -- ``&gturl(`` is the
-# function ``gturl(`` to a browser but ``>url(``, a real url token, to
-# the scan. Either desync can hide a live url() behind an apparent
-# comment. The other legacy names decode to a non-ASCII ident code
-# point, which only ever joins an ident the browser also keeps whole,
-# so at worst it trips the scan's fail-closed stop at a name ending in
-# ``url``.
-_ASCII_LEGACY_REFS = frozenset({"quot", "QUOT", "amp", "AMP", "lt", "LT", "gt", "GT"})
-# The named-reference candidate html.unescape matches (Python < 3.13,
-# the decoder html.parser applies to attribute values there).
-_NAMED_CHARREF_RE = re.compile(r"&([^\t\n\f <&#;]{1,32};?)")
+# --- Python floor, enforced where the guard used to be --------------------
+# jimemo#y9p8 carried a fail-closed guard here because html.parser before
+# CPython 3.13.4 decodes a semicolonless character reference inside an
+# attribute where a browser keeps it literal, which moves CSS string
+# boundaries and can hide a live url() behind an apparent comment. Joi
+# ruled (jimemo#gaga) that the floor rises instead, so the guard is gone.
+#
+# What replaces it is not a version comparison. A version number is the
+# contract a human installs against (the launcher, install.sh and
+# `jimemo doctor` all check it); it cannot see a distro that backported
+# one of these fixes into an older release, or shipped a current release
+# with one reverted. And a direct caller -- `from jimemo.lint import
+# lint_html` -- never passes the launcher or doctor at all. So this module
+# MEASURES the running parser against the three browser behaviours the
+# floor exists to guarantee, once at import, and refuses to load if any of
+# them is wrong. Cost: three parser feeds per process. If one of these
+# ever fails on a supported interpreter, the y9p8 guard has to come back.
+#
+#   refs   a semicolonless legacy reference in an attribute stays literal
+#          (CPython gh-69426, fixed in 3.13.4)
+#   style  the text of an unclosed <style> still reaches handle_data
+#          (CPython gh-86155, fixed in 3.13.4)
+#   attrs  <div title==""id id=grad> splits the way a browser splits it
+#          (fixed in 3.13.6 -- the component that sets the floor)
 
 
-def _ambiguous_legacy_reference(text: str) -> Optional[str]:
-    """The first reference in `text` that html.parser before Python
-    3.13 decodes but a browser keeps literal inside an attribute, if it
-    is one of _ASCII_LEGACY_REFS; else None. Replays html.unescape's own
-    decision rather than matching a prefix: a run that is itself a
-    complete reference (``&ltri;``, ``&amp;``) decodes identically
-    everywhere, and only a run whose longest known PREFIX is a legacy
-    name decodes differently -- and only when a letter, digit or ``=``
-    follows that prefix (``&ltrix``, ``&gturl(``, ``&amp=``)."""
-    for match in _NAMED_CHARREF_RE.finditer(text):
-        name = match.group(1)
-        if name in _HTML5_ENTITIES:
-            continue
-        for end in range(len(name) - 1, 1, -1):
-            if name[:end] not in _HTML5_ENTITIES:
-                continue
-            following = name[end]
-            if name[:end] in _ASCII_LEGACY_REFS and (
-                following == "=" or (following.isascii() and following.isalnum())
-            ):
-                return "&" + name[:end]
-            break
-    return None
+class _AttrProbe(HTMLParser):
+    """Records the attributes of the one start tag it is fed."""
 
-
-class _AttrRefProbe(HTMLParser):
-    """Records the one attribute value of the one tag it is fed."""
-
-    value: Optional[str] = None
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.attrs: List[Tuple[str, Optional[str]]] = []
 
     def handle_starttag(self, tag, attrs):
-        self.value = attrs[0][1] if attrs else None
+        self.attrs = list(attrs)
+
+
+class _DataProbe(HTMLParser):
+    """Records the character data of the one document it is fed."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.data: List[str] = []
+
+    def handle_data(self, data):
+        self.data.append(data)
+
+
+def _parser_keeps_semicolonless_attr_refs() -> bool:
+    """True when ``&ampx`` inside an attribute survives as written, as a
+    browser keeps it (the HTML "historical reasons" rule). False on
+    CPython below 3.13.4, where html.parser decodes it to ``&x``."""
+    probe = _AttrProbe()
+    probe.feed("<p a='&ampx'>")
+    probe.close()
+    return probe.attrs == [("a", "&ampx")]
+
+
+def _parser_keeps_unclosed_style_text() -> bool:
+    """True when the text of a ``<style>`` with no closing tag still
+    reaches ``handle_data``, as a browser applies it to the end of the
+    document. False on CPython below 3.13.4, which drops it at close()
+    and so hides any url() it contains from the scan."""
+    probe = _DataProbe()
+    probe.feed("<!doctype html><html><body><style>.x{color:red}")
+    probe.close()
+    return any(".x{color:red}" in chunk for chunk in probe.data)
+
+
+def _parser_splits_attributes_like_a_browser() -> bool:
+    """True when ``<div title==""id id=grad>`` splits into the two
+    attributes a browser reads -- an unquoted ``title`` value of ``=""id``
+    and ``id=grad``. False on CPython below 3.13.6, which reports an empty
+    ``title``, a phantom valueless ``id`` and then ``id=grad``, so lint can
+    judge a different attribute value than the browser uses."""
+    probe = _AttrProbe()
+    probe.feed('<div title==""id id=grad>')
+    probe.close()
+    return probe.attrs == [("title", '=""id'), ("id", "grad")]
+
+
+_PARSER_PROBES = (
+    ("refs", _parser_keeps_semicolonless_attr_refs),
+    ("style", _parser_keeps_unclosed_style_text),
+    ("attrs", _parser_splits_attributes_like_a_browser),
+)
 
 
 @lru_cache(maxsize=None)
-def _parser_decodes_unterminated_attr_refs() -> bool:
-    """True if this Python's html.parser decodes ``&ampx`` in an
-    attribute value to ``&x``, where a browser keeps ``&ampx``. Measured,
-    not inferred from the version number, so a security backport either
-    way is seen as it is: 3.9.6 and 3.10 decode, 3.13 and 3.14 do not."""
-    probe = _AttrRefProbe(convert_charrefs=True)
-    probe.feed("<p a='&ampx'>")
-    probe.close()
-    return probe.value != "&ampx"
-
-
-def _raw_style_values(raw_tag: str) -> Optional[List[Optional[str]]]:
-    """The undecoded value of every style attribute in `raw_tag`, one
-    entry per attribute (None for a valueless one), split with
-    html.parser's OWN tag and attribute patterns so the boundaries are
-    the ones the parser used -- a hand-rolled split could be steered
-    into judging the wrong text. None if those patterns are missing."""
-    tagfind = getattr(_html_parser, "tagfind_tolerant", None)
-    attrfind = getattr(_html_parser, "attrfind_tolerant", None)
-    if tagfind is None or attrfind is None:
-        return None
-    match = tagfind.match(raw_tag, 1)
-    if match is None:
-        return None
-    values: List[Optional[str]] = []
-    position = match.end()
-    while position < len(raw_tag):
-        attr = attrfind.match(raw_tag, position)
-        if attr is None or attr.end() == position:
-            break
-        name, rest, value = attr.group(1, 2, 3)
-        if name.lower() == "style":
-            values.append(value if rest else None)
-        position = attr.end()
-    return values
-
-
-def _ambiguous_style_reference(raw_tag: str, style_count: int) -> Optional[str]:
-    """The first reference _ambiguous_legacy_reference finds in the raw
-    text of `raw_tag`'s style attributes, or None. A reference in some
-    OTHER attribute (``href="?base=EUR&quote=USD"``) cannot move a CSS
-    boundary, so it is not judged here. When the tag cannot be split
-    the way the parser split it -- the patterns are gone, or they find a
-    different number of style attributes than the parser reported --
-    the whole raw tag is judged instead: over-rejection, not a guess."""
-    raw_values = _raw_style_values(raw_tag)
-    if raw_values is None or len(raw_values) != style_count:
-        haystacks = [raw_tag]
-    else:
-        haystacks = [value for value in raw_values if value]
-    for text in haystacks:
-        found = _ambiguous_legacy_reference(text)
-        if found is not None:
-            return found
+def _browser_faithfulness_problem() -> Optional[str]:
+    """The first way this interpreter's html.parser disagrees with a
+    browser, as a message, or None when all three probes pass."""
+    running = ".".join(str(part) for part in sys.version_info[:3])
+    floor = ".".join(str(part) for part in PYTHON_FLOOR)
+    if tuple(sys.version_info[:3]) < PYTHON_FLOOR:
+        return (
+            "Python {running} is below jimemo's floor of {floor}".format(
+                running=running, floor=floor
+            )
+        )
+    for name, probe in _PARSER_PROBES:
+        if not probe():
+            return (
+                "this Python's html.parser fails the {name!r} check: it reads "
+                "HTML differently than a browser does, so lint cannot judge a "
+                "page the way the browser renders it (running {running}; "
+                "jimemo's floor is {floor})".format(
+                    name=name, running=running, floor=floor
+                )
+            )
     return None
 
 
+def _assert_parser_is_browser_faithful() -> None:
+    """Refuse to provide lint at all on a parser that would answer a
+    different question than the browser asks. Fail-closed on purpose: the
+    alternative is a self-containment check that silently passes a page a
+    browser would fetch from (jimemo#y9p8, jimemo#gaga)."""
+    problem = _browser_faithfulness_problem()
+    if problem is not None:
+        raise RuntimeError(
+            "jimemo.lint cannot run here: "
+            + problem
+            + ". Install Python "
+            + ".".join(str(part) for part in PYTHON_FLOOR)
+            + " or newer and run jimemo with it."
+        )
+
+
+_assert_parser_is_browser_faithful()
 # --- CSS references -------------------------------------------------------
 # CSS fetches on its own: a url(...) in any property (background,
 # cursor, @font-face src, ...) and an @import both load their target at
@@ -1010,20 +1027,12 @@ class _Linter(HTMLParser):
                 )
                 break
 
-        # Once per tag, however many style attributes it repeats: judging
-        # the raw text per attribute made a tag of n duplicates cost n^2.
-        style_count = sum(1 for name, _value in attrs if name.lower() == "style")
-        if style_count and _parser_decodes_unterminated_attr_refs():
-            ambiguous = _ambiguous_style_reference(raw_tag, style_count)
-            if ambiguous is not None:
-                self.errors.append(
-                    f"in style attribute on <{tag}>: {ambiguous!r} without "
-                    "';' before a letter, digit or '=' — a browser keeps "
-                    "that literal in an attribute but this Python's "
-                    "html.parser decodes it, so the CSS cannot be read as "
-                    "the browser reads it (write the reference with its ';')"
-                )
-
+        # jimemo#y9p8's fail-closed check on semicolonless legacy
+        # references in a style attribute used to run here. It is gone
+        # (jimemo#gaga): on the 3.13.6 floor the parser keeps those
+        # references literal, exactly as a browser does, so the CSS scan
+        # below already reads what the browser applies. The floor is
+        # enforced by _assert_parser_is_browser_faithful() at import.
         reason = _BANNED_TAGS.get(tag)
         if reason is not None:
             self.errors.append(
