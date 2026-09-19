@@ -6,7 +6,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import __version__
+from . import PYTHON_FLOOR, __version__
 from ._paths import CHARTS_VENDOR_DIR
 from ._vendor import VENDOR_DIR, add_vendor_to_path
 from .checksums import verify_checksums
@@ -20,8 +20,6 @@ from .scaffold import create_template
 # --version and list) must be able to run with zero vendored imports until
 # after verify_checksums has passed. Each command handler that actually
 # needs one of them imports it locally instead.
-
-PYTHON_FLOOR = (3, 9)
 
 _CHARTJS_VERSION_RE = re.compile(r"Chart\.js v([0-9]+\.[0-9]+\.[0-9]+)")
 
@@ -39,12 +37,19 @@ def _chartjs_version(charts_vendor_dir: Path) -> str:
 def cmd_doctor(args) -> int:
     ok = True
 
+    # Compared on all THREE components: the floor is patch-level, because
+    # html.parser only stopped disagreeing with a browser in 3.13.4/3.13.6
+    # and jimemo's self-containment check depends on it (see
+    # jimemo.PYTHON_FLOOR). A major/minor comparison would report a 3.13.3
+    # as ok.
     v = sys.version_info
-    if v >= PYTHON_FLOOR:
-        print(f"ok   python {v.major}.{v.minor}.{v.micro}")
+    floor = ".".join(str(part) for part in PYTHON_FLOOR)
+    running = f"{v.major}.{v.minor}.{v.micro}"
+    if tuple(v[:3]) >= PYTHON_FLOOR:
+        print(f"ok   python {running}")
     else:
-        print(f"FAIL python {v.major}.{v.minor} < required "
-              f"{PYTHON_FLOOR[0]}.{PYTHON_FLOOR[1]}")
+        print(f"FAIL python {running} < required {floor} — install Python "
+              f"{floor}+ and run jimemo with it")
         ok = False
 
     problems = verify_checksums(VENDOR_DIR)

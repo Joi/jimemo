@@ -1,3 +1,4 @@
+import collections
 import hashlib
 import subprocess
 import sys
@@ -9,6 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import jimemo
+from jimemo import PYTHON_FLOOR
+from jimemo import cli
 from jimemo.cli import main
 
 
@@ -26,6 +29,51 @@ def test_doctor_on_clean_repo(capsys):
     assert "vendor" in out.lower()
     assert "ok   vendored imports (jinja2, markdown, yaml, tomli)" in out
     assert "ok   charts vendored (chart.js 4.5.1)" in out
+
+
+def _faked_version_info(major, minor, micro):
+    # sys.version_info is a structseq; a namedtuple with the same fields
+    # compares against a tuple the same way and answers .major/.minor/
+    # .micro, which is all cmd_doctor reads.
+    version_info = collections.namedtuple(
+        "version_info", "major minor micro releaselevel serial"
+    )
+    return version_info(major, minor, micro, "final", 0)
+
+
+@pytest.mark.parametrize(
+    "version",
+    [(3, 9, 6), (3, 12, 11), (3, 13, 0), (3, 13, 3), (3, 13, 5)],
+    ids=lambda value: ".".join(str(part) for part in value),
+)
+def test_doctor_fails_below_the_python_floor(version, capsys, monkeypatch):
+    # 3.13.5 is the case a major/minor comparison would call ok: its
+    # html.parser still splits attributes where a browser does not
+    # (jimemo#gaga). 3.13.0/3.13.3 also still decode semicolonless
+    # attribute references and drop unclosed <style> text.
+    monkeypatch.setattr(cli.sys, "version_info", _faked_version_info(*version))
+    assert main(["doctor"]) != 0
+    out = capsys.readouterr().out
+    running = ".".join(str(part) for part in version)
+    floor = ".".join(str(part) for part in PYTHON_FLOOR)
+    assert f"FAIL python {running} < required {floor}" in out, out
+    # The interpreter line is still the FIRST thing doctor prints.
+    assert out.splitlines()[0].startswith("FAIL python "), out
+
+
+def test_doctor_passes_at_the_exact_floor(capsys, monkeypatch):
+    monkeypatch.setattr(cli.sys, "version_info", _faked_version_info(*PYTHON_FLOOR))
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    floor = ".".join(str(part) for part in PYTHON_FLOOR)
+    assert out.splitlines()[0] == f"ok   python {floor}", out
+
+
+def test_doctor_reports_the_running_interpreter_version(capsys):
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    v = sys.version_info
+    assert out.splitlines()[0] == f"ok   python {v.major}.{v.minor}.{v.micro}", out
 
 
 def test_no_args_shows_help(capsys):
