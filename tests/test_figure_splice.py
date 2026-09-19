@@ -883,7 +883,10 @@ def test_figure_cannot_take_a_chart_canvas_id(tmp_path, _isolated_home):
 # sanitize_svg_with_report all call one implementation, so comparing them
 # with each other proves only that the wrappers agree; and most vector tests
 # above assert on substrings, which an escaping, ordering or serialization
-# regression would survive. This battery is what pins the VALUES.
+# regression would survive. This battery is what pins the VALUES. Every
+# vector must parse the same on every supported Python: no markup inside
+# <title>, which 3.13+ reads as RCDATA and 3.9-3.12 does not (the
+# version-aware title tests above cover that case).
 FROZEN_VECTORS = [
     (
         '<svg viewBox="0 0 10 10"><rect style="fill: var(--jm-accent); stroke: var(--jm-ink)" width="4" height="4"/></svg>',
@@ -932,8 +935,8 @@ FROZEN_VECTORS = [
     ),
     (
         '<svg><linearGradient id="g\x00"/><text>a\x00b</text></svg>',
-        '<svg><linearGradient id="g�" /><text>a�b</text></svg>',
-        ['g�'],
+        '<svg><linearGradient id="g\ufffd" /><text>a\ufffdb</text></svg>',
+        ['g\ufffd'],
     ),
     (
         '<svg><rect id="keep-me" width="1" height="1"/><circle id="a b" r="1"/><ellipse id="" rx="1"/></svg>',
@@ -946,8 +949,8 @@ FROZEN_VECTORS = [
         ['a\xa0b', 'a\x85b'],
     ),
     (
-        '<svg><desc><g><rect width="1" height="1"/></g>kept text</desc><title><g/>t</title></svg>',
-        '<svg><desc>kept text</desc><title>&lt;g/&gt;t</title></svg>',
+        '<svg><desc><g><rect width="1" height="1"/></g>kept text</desc></svg>',
+        '<svg><desc>kept text</desc></svg>',
         [],
     ),
     (
@@ -1114,8 +1117,8 @@ def test_an_id_above_u007f_is_still_kept_and_recorded():
     # U+00A0 and U+0085 survive today and must keep surviving.
     from jimemo.sanitize import sanitize_svg_with_report
 
-    result = sanitize_svg_with_report('<svg><rect id="a b"/><circle id="a\u0085b"/></svg>')
-    assert result.ids == ["a b", "a\u0085b"]
+    result = sanitize_svg_with_report('<svg><rect id="a\u00a0b"/><circle id="a\u0085b"/></svg>')
+    assert result.ids == ["a\u00a0b", "a\u0085b"]
     assert result.drops == []
 
 
@@ -1143,7 +1146,7 @@ def test_drop_label_filters_every_unsafe_code_point():
     # filter removed.
     from jimemo.sanitize import _svg_drop_label
 
-    for name in ["a\x1b[31mb", "a\x07b", "a\nb", "a\rb", "a‮b", "a\x7fb",
+    for name in ["a\x1b[31mb", "a\x07b", "a\nb", "a\rb", "a\u202eb", "a\x7fb",
                  "héllo", "a b", "a\x00b"]:
         label = _svg_drop_label(name)
         assert all(0x21 <= ord(ch) <= 0x7E for ch in label), (name, label)
@@ -1205,6 +1208,11 @@ def test_many_distinct_drops_are_capped(tmp_path, _isolated_home, capsys):
     lines = [l for l in capsys.readouterr().err.splitlines() if l.startswith("warning: figure")]
     assert len(lines) == 20 and "not shown" not in lines[-1]
 
+    render_page(BRIEFING_DIR, content, figures={"FLOW": figure(21)})
+    lines = [l for l in capsys.readouterr().err.splitlines() if l.startswith("warning: figure")]
+    assert len(lines) == 21
+    assert lines[20] == "warning: figure FLOW: 1 more distinct drop not shown"
+
 
 def test_warning_figure_name_is_filtered():
     from jimemo.render import _figure_drop_warnings
@@ -1224,7 +1232,7 @@ def test_page_id_with_nul_collides_with_a_figure_id_like_a_browser(tmp_path, _is
     body = '<a id="g\x00"></a>Anchor.\n\n[[DIAGRAM:FLOW]]\n'
     content = _briefing_content(tmp_path, body)
     assert 'id="g\x00"' in render_page(BRIEFING_DIR, content)  # the page keeps NUL
-    clash = '<svg><linearGradient id="g�"/></svg>'
+    clash = '<svg><linearGradient id="g\ufffd"/></svg>'
     with pytest.raises(ContentError, match="which the page already uses"):
         render_page(BRIEFING_DIR, content, figures={"FLOW": clash})
     # control: without the NUL there is nothing to collide with

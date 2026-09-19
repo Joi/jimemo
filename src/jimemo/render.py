@@ -125,7 +125,8 @@ FIGURE_DROP_WARNINGS_MAX = 20
 
 
 class _IdCollector(HTMLParser):
-    """Every ``id`` attribute value in a page, read from parsed start
+    """The ``id`` of every element in a page — the FIRST non-empty ``id``
+    attribute on each, as a browser reads it — taken from parsed start
     tags (text that merely looks like ``id="x"``, and script bodies, are
     not attributes and are not collected)."""
 
@@ -182,7 +183,8 @@ def _figure_drop_warnings(name: str, drops: List[SvgDrop]) -> List[str]:
     ]
     hidden = len(drops) - FIGURE_DROP_WARNINGS_MAX
     if hidden > 0:
-        lines.append(f"figure {label}: {hidden} more distinct drops not shown")
+        noun = "drop" if hidden == 1 else "drops"
+        lines.append(f"figure {label}: {hidden} more distinct {noun} not shown")
     return lines
 
 
