@@ -16,7 +16,7 @@ leaving chartless no-script output byte-identical.
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ._paths import CHARTJS_BUNDLE, REPO_ROOT
 from ._vendor import add_vendor_to_path
@@ -30,7 +30,7 @@ from .errors import ContentError
 from .inline import assemble_css, inline_images
 from .lint import lint_html
 from .manifest import load_manifest
-from .sanitize import sanitize_svg_with_ids
+from .sanitize import SvgDrop, _svg_drop_label, sanitize_svg_with_report
 
 add_vendor_to_path()
 from jinja2 import (  # noqa: E402
@@ -118,6 +118,11 @@ FIGURE_PLACEHOLDER = "<p>[[DIAGRAM:{name}]]</p>"
 # byte-identical.
 FIGURE_OPEN = '<figure class="jm-figure" style="contain:paint">'
 
+# Detail warning lines per figure before the rest is summarized in one
+# line: a hostile figure with thousands of distinct unknown element names
+# must not fill the author's terminal.
+FIGURE_DROP_WARNINGS_MAX = 20
+
 
 class _IdCollector(HTMLParser):
     """Every ``id`` attribute value in a page, read from parsed start
@@ -150,7 +155,25 @@ def _page_ids(html: str) -> set:
     return collector.ids
 
 
-def _splice_figures(html: str, figures: Dict[str, str]) -> str:
+def _figure_drop_warnings(name: str, drops: List[SvgDrop]) -> List[str]:
+    """The stderr warning lines for one figure's sanitizer drops: one per
+    distinct drop, at most FIGURE_DROP_WARNINGS_MAX, then one summary line
+    if more remain. The figure NAME goes through the same display filter as
+    the dropped names (sanitize._svg_drop_label): it is CLI input an agent
+    writes, and it shares the line with them. No dropped VALUE appears —
+    the report does not carry one."""
+    label = _svg_drop_label(name)
+    lines = [
+        f"figure {label}: dropped {d.kind} {d.name} ({d.reason})"
+        for d in drops[:FIGURE_DROP_WARNINGS_MAX]
+    ]
+    hidden = len(drops) - FIGURE_DROP_WARNINGS_MAX
+    if hidden > 0:
+        lines.append(f"figure {label}: {hidden} more distinct drops not shown")
+    return lines
+
+
+def _splice_figures(html: str, figures: Dict[str, str]) -> Tuple[str, List[str]]:
     """`html` with every ``<p>[[DIAGRAM:NAME]]</p>`` placeholder
     paragraph replaced by FIGURE_OPEN + the sanitized SVG for NAME +
     ``</figure>`` (`jimemo render --figure NAME=file.svg`;
@@ -173,15 +196,22 @@ def _splice_figures(html: str, figures: Dict[str, str]) -> str:
     that takes a chart canvas's id comes first in the document, so the
     chart's ``getElementById`` finds the SVG element and the chart never
     draws. One figure spliced at several placeholders repeats identical
-    definitions, which resolve identically; that is allowed."""
+    definitions, which resolve identically; that is allowed.
+
+    Returns ``(html, warnings)``: `warnings` holds one line per distinct
+    element or attribute the sanitizer dropped (_figure_drop_warnings), for
+    render_page to print — the drops are silent otherwise, and a refused
+    style shows up only as a wrongly painted shape."""
     sanitized: Dict[str, str] = {}
     id_owner: Dict[str, str] = {}
+    warnings: List[str] = []
     page_ids = _page_ids(html)
     for name, svg_text in figures.items():
         try:
-            svg, ids = sanitize_svg_with_ids(svg_text)
+            svg, ids, drops = sanitize_svg_with_report(svg_text)
         except ValueError as e:
             raise ContentError(f"--figure {name}: {e}") from e
+        warnings.extend(_figure_drop_warnings(name, drops))
         for svg_id in ids:
             if svg_id in page_ids:
                 raise ContentError(
@@ -227,7 +257,7 @@ def _splice_figures(html: str, figures: Dict[str, str]) -> str:
             FIGURE_PLACEHOLDER.format(name=name),
             FIGURE_OPEN + svg + "</figure>",
         )
-    return html
+    return html, warnings
 
 
 def render_page(
@@ -246,7 +276,9 @@ def render_page(
     `figures` maps a ``[[DIAGRAM:NAME]]`` placeholder NAME to raw SVG
     text to splice in its place, sanitized (see _splice_figures); None
     or empty runs no figure code at all, so such pages are byte-for-byte
-    what they were before the parameter existed.
+    what they were before the parameter existed. Whatever the sanitizer
+    drops from a figure is reported as ``warning: figure NAME: …`` lines
+    on stderr, with the other warnings.
 
     Raises ContentError if lint finds a hard error (any resource
     reference outside lint's self-contained allowlist, script tags where
@@ -318,8 +350,11 @@ def render_page(
 
     html, img_warnings = inline_images(html, Path(base_dir) if base_dir else Path.cwd())
 
+    # Defined on both paths: a page without --figure runs no figure code
+    # and prints exactly the warnings it printed before.
+    figure_warnings: List[str] = []
     if figures:
-        html = _splice_figures(html, figures)
+        html, figure_warnings = _splice_figures(html, figures)
 
     errors, warnings = lint_html(html, manifest, allowed_scripts=allowed_scripts)
     if errors:
@@ -333,7 +368,7 @@ def render_page(
             )
         raise ContentError(message)
 
-    for w in [*img_warnings, *warnings]:
+    for w in [*img_warnings, *figure_warnings, *warnings]:
         print(f"warning: {w}", file=sys.stderr)
 
     return html

@@ -874,3 +874,340 @@ def test_figure_cannot_take_a_chart_canvas_id(tmp_path, _isolated_home):
     # a prefixed id is fine, and the chart page still passes its script lint
     ok = '<svg><rect id="fig-a-box" width="10" height="10"/></svg>'
     assert FIGURE_OPEN_TEXT in render_page(chart_dir, content, figures={"A": ok})
+
+
+# --- jimemo#86jn: the sanitizer reports what it dropped --------------------
+
+# Output frozen from the implementation at dd62d75, BEFORE the drop report
+# existed: (source, markup, ids). sanitize_svg, sanitize_svg_with_ids and
+# sanitize_svg_with_report all call one implementation, so comparing them
+# with each other proves only that the wrappers agree; and most vector tests
+# above assert on substrings, which an escaping, ordering or serialization
+# regression would survive. This battery is what pins the VALUES.
+FROZEN_VECTORS = [
+    (
+        '<svg viewBox="0 0 10 10"><rect style="fill: var(--jm-accent); stroke: var(--jm-ink)" width="4" height="4"/></svg>',
+        '<svg viewBox="0 0 10 10"><rect style="fill: var(--jm-accent); stroke: var(--jm-ink)" width="4" height="4" /></svg>',
+        [],
+    ),
+    (
+        '<svg><rect style="fill:u\\72l(https://e.example/x)" width="4" height="4"/></svg>',
+        '<svg><rect width="4" height="4" /></svg>',
+        [],
+    ),
+    (
+        '<svg><rect style="fill:url(/*);background:url(https://e.example/p);/*x*/#g)" width="1" height="1"/></svg>',
+        '<svg><rect width="1" height="1" /></svg>',
+        [],
+    ),
+    (
+        '<svg><rect fill="url(#grad)" width="1" height="1"/><circle fill="url(https://e.example/x)" r="1"/></svg>',
+        '<svg><rect fill="url(#grad)" width="1" height="1" /><circle r="1" /></svg>',
+        [],
+    ),
+    (
+        '<svg><use href="#sym"/><use href="https://e.example/x.svg#a"/><use xlink:href="other.svg#x"/></svg>',
+        '<svg><use href="#sym" /><use /><use /></svg>',
+        [],
+    ),
+    (
+        '<svg><rect href="#a" width="1" height="1"/></svg>',
+        '<svg><rect width="1" height="1" /></svg>',
+        [],
+    ),
+    (
+        '<svg viewBox="0 0 8 8"><defs><linearGradient id="g" gradientUnits="userSpaceOnUse"><stop offset="0"/></linearGradient><clipPath id="c"><rect width="1" height="1"/></clipPath></defs><marker markerWidth="4" markerHeight="4" refX="2" refY="2" markerUnits="strokeWidth"/></svg>',
+        '<svg viewBox="0 0 8 8"><defs><linearGradient id="g" gradientUnits="userSpaceOnUse"><stop offset="0" /></linearGradient><clipPath id="c"><rect width="1" height="1" /></clipPath></defs><marker markerWidth="4" markerHeight="4" refX="2" refY="2" markerUnits="strokeWidth" /></svg>',
+        ['g', 'c'],
+    ),
+    (
+        '<svg><text>Flow &amp; more &lt;x&gt;</text></svg>',
+        '<svg><text>Flow &amp; more &lt;x&gt;</text></svg>',
+        [],
+    ),
+    (
+        '<svg><text aria-label="a&#13;b">x&#13;&#10;y\r\nz</text></svg>',
+        '<svg><text aria-label="a&#13;b">x&#13;\ny&#13;\nz</text></svg>',
+        [],
+    ),
+    (
+        '<svg><linearGradient id="g\x00"/><text>a\x00b</text></svg>',
+        '<svg><linearGradient id="g�" /><text>a�b</text></svg>',
+        ['g�'],
+    ),
+    (
+        '<svg><rect id="keep-me" width="1" height="1"/><circle id="a b" r="1"/><ellipse id="" rx="1"/></svg>',
+        '<svg><rect id="keep-me" width="1" height="1" /><circle r="1" /><ellipse rx="1" /></svg>',
+        ['keep-me'],
+    ),
+    (
+        '<svg><rect id="a\xa0b" width="1" height="1"/><circle id="a\x85b" r="1"/></svg>',
+        '<svg><rect id="a\xa0b" width="1" height="1" /><circle id="a\x85b" r="1" /></svg>',
+        ['a\xa0b', 'a\x85b'],
+    ),
+    (
+        '<svg><desc><g><rect width="1" height="1"/></g>kept text</desc><title><g/>t</title></svg>',
+        '<svg><desc>kept text</desc><title>&lt;g/&gt;t</title></svg>',
+        [],
+    ),
+    (
+        '<svg><script>alert(1)</script><blink><rect width="9" height="9"/></blink><rect id="ok" width="4" height="4"/></svg>',
+        '<svg><rect id="ok" width="4" height="4" /></svg>',
+        ['ok'],
+    ),
+    (
+        '<svg onload="x()"><rect onclick="y()" data-x="1" width="1" height="1"/></svg>',
+        '<svg><rect width="1" height="1" /></svg>',
+        [],
+    ),
+    (
+        '<svg viewBox="0 0 2 2"/>',
+        '<svg viewBox="0 0 2 2" />',
+        [],
+    ),
+    (
+        '<svg><rect style="fill:var(--jm-a)" style="fill:red" id="a" id="b" width="1" height="1"/></svg>',
+        '<svg><rect style="fill:var(--jm-a)" id="a" width="1" height="1" /></svg>',
+        ['a'],
+    ),
+    (
+        '<p>before</p><svg><rect width="1" height="1"/></svg><g/>after',
+        '<svg><rect width="1" height="1" /></svg>',
+        [],
+    ),
+    (
+        '<svg><path d="M0 0 L10 10" aria-label="Revenue (2024)"/></svg>',
+        '<svg><path d="M0 0 L10 10" aria-label="Revenue (2024)" /></svg>',
+        [],
+    ),
+]
+
+
+def test_sanitizer_output_is_frozen_at_dd62d75():
+    from jimemo.sanitize import sanitize_svg_with_ids
+
+    for src, markup, ids in FROZEN_VECTORS:
+        assert sanitize_svg(src) == markup, src
+        assert sanitize_svg_with_ids(src) == (markup, ids), src
+
+
+def _drops(src):
+    from jimemo.sanitize import sanitize_svg_with_report
+
+    return sanitize_svg_with_report(src).drops
+
+
+def _drop(kind, name, reason):
+    from jimemo.sanitize import SvgDrop
+
+    return SvgDrop(kind, name, reason)
+
+
+def test_report_siblings_agree_and_keep_their_signatures():
+    # Wrapper consistency only; the frozen battery above pins the values.
+    from jimemo.sanitize import sanitize_svg_with_ids, sanitize_svg_with_report
+
+    for src, _markup, _ids in FROZEN_VECTORS:
+        result = sanitize_svg_with_report(src)
+        pair = sanitize_svg_with_ids(src)
+        assert type(pair) is tuple and len(pair) == 2
+        assert isinstance(pair[0], str) and isinstance(pair[1], list)
+        assert result.markup == sanitize_svg(src) == pair[0]
+        assert result.ids == pair[1]
+
+
+def test_a_clean_figure_reports_no_drops():
+    assert _drops(GOOD_SVG) == []
+
+
+def test_dropped_elements_are_reported_with_a_reason():
+    drops = _drops(
+        "<svg><script>alert(1)<g/></script><blink><rect/><foo/></blink>"
+        + SIBLING + "</svg>"
+    )
+    # Only the outermost element of each discarded subtree is reported.
+    assert drops == [
+        _drop("element", "script", "not allowlisted"),
+        _drop("element", "blink", "not allowlisted"),
+    ]
+
+
+def test_dropped_self_closing_element_is_reported():
+    assert _drops("<svg><image/><rect/></svg>") == [
+        _drop("element", "image", "not allowlisted"),
+    ]
+
+
+def test_dropped_attributes_are_reported_with_a_reason():
+    drops = _drops('<svg onload="x()"><rect data-x="1" ONCLICK="y()" width="1"/></svg>')
+    assert drops == [
+        _drop("attribute", "onload", "not allowlisted"),
+        _drop("attribute", "data-x", "not allowlisted"),
+        _drop("attribute", "onclick", "not allowlisted"),
+    ]
+
+
+def test_refused_css_value_is_reported_without_the_value():
+    from jimemo.render import _figure_drop_warnings
+
+    secret = "SECRET-VALUE-https://e.example/x"
+    drops = _drops(
+        '<svg><rect style="fill:u\\72l({0})" fill="url({0})" width="1"/></svg>'.format(secret)
+    )
+    assert drops == [
+        _drop("attribute", "style", "css value refused"),
+        _drop("attribute", "fill", "css value refused"),
+    ]
+    lines = _figure_drop_warnings("FLOW", drops)
+    assert lines == [
+        "figure FLOW: dropped attribute style (css value refused)",
+        "figure FLOW: dropped attribute fill (css value refused)",
+    ]
+    assert not any("SECRET" in line or "e.example" in line for line in lines)
+
+
+def test_refused_href_is_reported():
+    drops = _drops(
+        '<svg><use href="https://e.example/x#a"/><use xlink:href="o.svg#x"/>'
+        '<rect href="#a" width="1"/></svg>'
+    )
+    assert drops == [
+        _drop("attribute", "href", "href not a same-document #fragment"),
+        _drop("attribute", "xlink:href", "href not a same-document #fragment"),
+    ]
+
+
+def test_element_inside_desc_is_reported_as_such():
+    # <desc>, not <title>: html.parser on 3.13+ reads <title> content as
+    # RCDATA, so an element written there never reaches a start-tag
+    # callback (see test_title_desc_malformed_nesting_never_emits_a_child_
+    # element) and a <title> test would pass without testing anything.
+    assert _drops("<svg><desc><g><rect/></g>text</desc></svg>") == [
+        _drop("element", "g", "child of <title>/<desc>"),
+    ]
+    assert _drops("<svg><desc>a<rect/>b</desc></svg>") == [
+        _drop("element", "rect", "child of <title>/<desc>"),
+    ]
+
+
+def test_reason_precedence_allowlist_before_text_only():
+    assert _drops("<svg><desc><script>x</script></desc></svg>") == [
+        _drop("element", "script", "not allowlisted"),
+    ]
+
+
+def test_element_outside_the_root_is_reported_as_such():
+    assert _drops("<p>before</p><svg></svg><g/>") == [
+        _drop("element", "p", "outside the <svg> root"),
+        _drop("element", "g", "outside the <svg> root"),
+    ]
+
+
+def test_dropped_id_is_reported():
+    assert _drops('<svg><rect id="a b"/><circle id=""/></svg>') == [
+        _drop("attribute", "id", "id is not a plain token"),
+    ]
+
+
+def test_an_id_above_u007f_is_still_kept_and_recorded():
+    # The id predicate is ord <= 0x20 or == 0x7F, NOT Unicode whitespace:
+    # U+00A0 and U+0085 survive today and must keep surviving.
+    from jimemo.sanitize import sanitize_svg_with_report
+
+    result = sanitize_svg_with_report('<svg><rect id="a b"/><circle id="a\u0085b"/></svg>')
+    assert result.ids == ["a b", "a\u0085b"]
+    assert result.drops == []
+
+
+def test_a_repeated_attribute_is_not_reported():
+    # A browser keeps the first too: nothing the page shows differs from
+    # what the author wrote, so there is nothing to warn about.
+    src = '<svg><rect style="fill:var(--jm-a)" style="fill:red" id="a" id="b"/></svg>'
+    assert _drops(src) == []
+
+
+def test_drops_are_deduplicated_in_first_seen_order():
+    drops = _drops(
+        '<svg><script/><rect style="a:b(1)"/><script>x</script>'
+        '<circle style="c:d(2)"/><script/></svg>'
+    )
+    assert drops == [
+        _drop("element", "script", "not allowlisted"),
+        _drop("attribute", "style", "css value refused"),
+    ]
+
+
+def test_drop_label_filters_every_unsafe_code_point():
+    # Direct: html.parser never delivers a newline inside a tag or
+    # attribute name, so a markup-driven newline test would pass with the
+    # filter removed.
+    from jimemo.sanitize import _svg_drop_label
+
+    for name in ["a\x1b[31mb", "a\x07b", "a\nb", "a\rb", "a‮b", "a\x7fb",
+                 "héllo", "a b", "a\x00b"]:
+        label = _svg_drop_label(name)
+        assert all(0x21 <= ord(ch) <= 0x7E for ch in label), (name, label)
+        assert label.startswith("a") or label.startswith("h")
+    assert _svg_drop_label("a\x1b[31mb") == "a?[31mb"
+    assert _svg_drop_label("") == "?"
+    long = _svg_drop_label("x" * 200)
+    assert len(long) == 40 and long == "x" * 37 + "..."
+    assert _svg_drop_label("x" * 40) == "x" * 40
+
+
+def test_drop_labels_from_real_markup_are_filtered():
+    drops = _drops('<svg><a\x1b[31mb><rect/></a\x1b[31mb><rect da\x07ta="1"/></svg>')
+    assert [d.kind for d in drops] == ["element", "attribute"]
+    for d in drops:
+        assert all(0x21 <= ord(ch) <= 0x7E for ch in d.name), d
+
+
+def test_render_warns_once_per_distinct_drop(tmp_path, _isolated_home, capsys):
+    svg = (
+        '<svg><rect style="fill:u\\72l(https://e.example/leak)" width="1"/>'
+        "<script>alert(1)</script>"
+        '<circle style="fill:image-set(\'https://e.example/leak\' 1x)" r="1"/>'
+        '<ellipse style="x:y(1)" rx="1"/></svg>'
+    )
+    html = render_page(BRIEFING_DIR, _briefing_content(tmp_path, BODY), figures={"FLOW": svg})
+    assert FIGURE_OPEN_TEXT in html
+    err = capsys.readouterr().err
+    figure_lines = [line for line in err.splitlines() if line.startswith("warning: figure")]
+    assert figure_lines == [
+        "warning: figure FLOW: dropped attribute style (css value refused)",
+        "warning: figure FLOW: dropped element script (not allowlisted)",
+    ]
+    assert "leak" not in err and "e.example" not in err
+
+
+def test_a_clean_figure_warns_nothing(tmp_path, _isolated_home, capsys):
+    content = _briefing_content(tmp_path, BODY)
+    render_page(BRIEFING_DIR, content)
+    baseline_err = capsys.readouterr().err
+    render_page(BRIEFING_DIR, content, figures={"FLOW": GOOD_SVG})
+    assert capsys.readouterr().err == baseline_err
+    assert "warning: figure" not in baseline_err
+
+
+def test_many_distinct_drops_are_capped(tmp_path, _isolated_home, capsys):
+    def figure(n):
+        return "<svg>" + "".join("<x{0}/>".format(i) for i in range(n)) + "</svg>"
+
+    content = _briefing_content(tmp_path, BODY)
+    render_page(BRIEFING_DIR, content, figures={"FLOW": figure(30)})
+    lines = [l for l in capsys.readouterr().err.splitlines() if l.startswith("warning: figure")]
+    assert len(lines) == 21
+    assert lines[0] == "warning: figure FLOW: dropped element x0 (not allowlisted)"
+    assert lines[19] == "warning: figure FLOW: dropped element x19 (not allowlisted)"
+    assert lines[20] == "warning: figure FLOW: 10 more distinct drops not shown"
+
+    render_page(BRIEFING_DIR, content, figures={"FLOW": figure(20)})
+    lines = [l for l in capsys.readouterr().err.splitlines() if l.startswith("warning: figure")]
+    assert len(lines) == 20 and "not shown" not in lines[-1]
+
+
+def test_warning_figure_name_is_filtered():
+    from jimemo.render import _figure_drop_warnings
+
+    lines = _figure_drop_warnings("F\x1b[2Jx", [_drop("element", "script", "not allowlisted")])
+    assert lines == ["figure F?[2Jx: dropped element script (not allowlisted)"]

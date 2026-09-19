@@ -29,7 +29,7 @@ Rules:
 import html
 import re
 from html.parser import HTMLParser
-from typing import List, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 from urllib.parse import urlsplit
 
 # Everything python-markdown (with the tables and fenced_code
@@ -391,7 +391,8 @@ def sanitize_html(html_text: str) -> str:
 # but it and the paint attributes are judged by _svg_css_value_ok, which
 # refuses rather than rewrites; and the result must be exactly one root
 # <svg> element or the input is refused outright. Entry points:
-# sanitize_svg (markup) and sanitize_svg_with_ids (markup + ids).
+# sanitize_svg (markup), sanitize_svg_with_ids (markup + ids) and
+# sanitize_svg_with_report (markup + ids + what was dropped, for display).
 # Nothing here touches the markdown path above: new names only.
 #
 # Everything emitted is rebuilt from parsed tokens and escaped, so a
@@ -598,6 +599,70 @@ def _svg_escape(text: str, quote: bool) -> str:
     return html.escape(text, quote=quote).replace("\r", "&#13;")
 
 
+# --- what the sanitizer dropped (jimemo#86jn) -----------------------------
+#
+# Refusing is silent by construction: a dropped element takes its subtree
+# with it, and a refused style leaves the element painted with whatever the
+# defaults give it — in the 4smm smoke test, a black rect nobody asked for.
+# Agents pass generated SVG without reading it, so the renderer reports
+# every drop on stderr (render._splice_figures). The report is DISPLAY
+# ONLY: it changes nothing about what is kept or dropped, and it never
+# carries a dropped VALUE.
+
+_SVG_DROP_LABEL_MAX = 40
+
+# Reason classes, one per refusal site below. Constants rather than
+# literals so the sites and the tests cannot drift apart.
+_SVG_DROP_NOT_ALLOWED = "not allowlisted"
+_SVG_DROP_TEXT_ONLY = "child of <title>/<desc>"
+_SVG_DROP_CSS = "css value refused"
+_SVG_DROP_HREF = "href not a same-document #fragment"
+_SVG_DROP_OUTSIDE_ROOT = "outside the <svg> root"
+_SVG_DROP_BAD_ID = "id is not a plain token"
+
+
+def _svg_drop_label(name: str) -> str:
+    """`name` reduced to something safe to write to a terminal: every code
+    point outside printable ASCII (0x21-0x7E) replaced by ``?``, and the
+    whole label — suffix included — capped at _SVG_DROP_LABEL_MAX
+    characters; ``?`` for a name that filters to nothing.
+
+    Names in a drop report come from the figure file, which is untrusted,
+    and html.parser accepts nearly anything in a tag or attribute name
+    after the first character — ``<a\\x1b[31m …>`` is a tag named
+    ``a\\x1b[31m``. Written raw to stderr that is an ANSI escape; U+202E
+    would reorder the rest of the line. The filter runs HERE rather than at
+    the print site so the raw name never enters the returned report at all
+    and no later consumer can print it by accident. Names are the
+    lowercased forms html.parser reports, as everywhere else in this
+    module."""
+    filtered = "".join(ch if 0x21 <= ord(ch) <= 0x7E else "?" for ch in name)
+    if len(filtered) > _SVG_DROP_LABEL_MAX:
+        filtered = filtered[: _SVG_DROP_LABEL_MAX - 3] + "..."
+    return filtered or "?"
+
+
+class SvgDrop(NamedTuple):
+    """One element or attribute the sanitizer removed. `name` is a DISPLAY
+    LABEL (_svg_drop_label), never the raw name, and nothing here carries
+    the dropped VALUE — a refused style is untrusted text, and the point is
+    to name what is gone, not to echo it."""
+
+    kind: str  # "element" | "attribute"
+    name: str
+    reason: str
+
+
+class SvgSanitizeResult(NamedTuple):
+    """What sanitize_svg_with_report returns: the rebuilt `markup`, the
+    `ids` it emitted in document order, and `drops` — every distinct
+    (kind, name, reason) it removed, in first-seen order."""
+
+    markup: str
+    ids: List[str]
+    drops: List[SvgDrop]
+
+
 class _SVGSanitizer(HTMLParser):
     """Allowlist rebuild of one root <svg> element (see the section
     comment above). Mirrors _Sanitizer's discard-until-matching-close
@@ -627,6 +692,24 @@ class _SVGSanitizer(HTMLParser):
         # render._splice_figures uses them to refuse two figures that
         # define the same id.
         self.ids: List[str] = []
+        # Every DISTINCT (kind, label, reason) dropped, in first-seen
+        # order, with _drop_seen as the dedup key set: a figure with 40
+        # refused style attributes is one line for the author, not 40.
+        # Display only — see the drop-report section comment above.
+        self.drops: List[SvgDrop] = []
+        self._drop_seen = set()
+
+    def _record_drop(self, kind: str, name: str, reason: str) -> None:
+        """Record that `name` (an element or attribute) was dropped for
+        `reason`, once. Never called from inside an already-discarded
+        subtree: the outermost drop is what explains the missing content,
+        and recording its children would let one hostile element produce
+        unbounded output."""
+        drop = SvgDrop(kind, _svg_drop_label(name), reason)
+        if drop in self._drop_seen:
+            return
+        self._drop_seen.add(drop)
+        self.drops.append(drop)
 
     # -- tag emission --------------------------------------------------
 
@@ -638,13 +721,17 @@ class _SVGSanitizer(HTMLParser):
         for name, value in attrs:
             name = name.lower()
             if name.startswith("on"):
+                self._record_drop("attribute", name, _SVG_DROP_NOT_ALLOWED)
                 continue  # never, on any element, regardless of allowlists
             if name not in _SVG_ALLOWED_ATTRS:
+                self._record_drop("attribute", name, _SVG_DROP_NOT_ALLOWED)
                 continue
             if name in seen:
                 # A repeated attribute: a browser keeps the FIRST and
                 # ignores the rest, so only the first is judged/emitted
-                # (and only its id is recorded).
+                # (and only its id is recorded). Deliberately NOT
+                # reported: the page shows exactly what a browser would
+                # show, so there is no wrong diagram to warn about.
                 continue
             seen.add(name)
             if value is None:
@@ -656,6 +743,7 @@ class _SVGSanitizer(HTMLParser):
                 # stripped, case-preserving form (_svg_fragment_ref).
                 fragment = _svg_fragment_ref(value) if tag == "use" else None
                 if fragment is None:
+                    self._record_drop("attribute", name, _SVG_DROP_HREF)
                     continue
                 value = fragment
             elif name not in _SVG_NON_CSS_ATTRS:
@@ -663,6 +751,7 @@ class _SVGSanitizer(HTMLParser):
                 # (_SVG_CSS_VALUE_ATTRS) and every other presentation
                 # or geometry attribute: see _SVG_NON_CSS_ATTRS.
                 if not _svg_css_value_ok(value):
+                    self._record_drop("attribute", name, _SVG_DROP_CSS)
                     continue
             if name == "id":
                 # An id holding whitespace or a control character is not
@@ -674,6 +763,7 @@ class _SVGSanitizer(HTMLParser):
                 if not value or any(
                     ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in value
                 ):
+                    self._record_drop("attribute", name, _SVG_DROP_BAD_ID)
                     continue
                 self.ids.append(value)
             parts.append(
@@ -694,6 +784,7 @@ class _SVGSanitizer(HTMLParser):
         if not self._stack:
             # Outside the root only <svg> itself may open one.
             if tag != "svg":
+                self._record_drop("element", tag, _SVG_DROP_OUTSIDE_ROOT)
                 self._discard_tag = tag
                 self._discard_depth = 1
                 return
@@ -704,9 +795,19 @@ class _SVGSanitizer(HTMLParser):
                 )
             self.root_seen = True
             self.root_open = True
-        elif tag not in _SVG_ALLOWED_TAGS or self._stack[-1] in _SVG_TEXT_ONLY_TAGS:
-            # Not on the allowlist, or a child of a text-only element
-            # (title/desc): dropped with its whole subtree.
+        elif tag not in _SVG_ALLOWED_TAGS:
+            # Not on the allowlist: dropped with its whole subtree. The
+            # allowlist is judged FIRST, so an element that is both
+            # unknown and inside <title>/<desc> reports the stronger
+            # reason.
+            self._record_drop("element", tag, _SVG_DROP_NOT_ALLOWED)
+            self._discard_tag = tag
+            self._discard_depth = 1
+            return
+        elif self._stack[-1] in _SVG_TEXT_ONLY_TAGS:
+            # A child of a text-only element (title/desc): dropped with
+            # its whole subtree.
+            self._record_drop("element", tag, _SVG_DROP_TEXT_ONLY)
             self._discard_tag = tag
             self._discard_depth = 1
             return
@@ -722,6 +823,7 @@ class _SVGSanitizer(HTMLParser):
             # <svg/> opens (and closes) the root; anything else is
             # stray markup, dropped without entering discard mode.
             if tag != "svg":
+                self._record_drop("element", tag, _SVG_DROP_OUTSIDE_ROOT)
                 return
             if self.root_seen:
                 raise ValueError(
@@ -731,7 +833,11 @@ class _SVGSanitizer(HTMLParser):
             self.root_seen = True
             self.out.append(self._format_tag(tag, attrs, self_closing=True))
             return
-        if tag not in _SVG_ALLOWED_TAGS or self._stack[-1] in _SVG_TEXT_ONLY_TAGS:
+        if tag not in _SVG_ALLOWED_TAGS:
+            self._record_drop("element", tag, _SVG_DROP_NOT_ALLOWED)
+            return
+        if self._stack[-1] in _SVG_TEXT_ONLY_TAGS:
+            self._record_drop("element", tag, _SVG_DROP_TEXT_ONLY)
             return
         self.out.append(self._format_tag(tag, attrs, self_closing=True))
 
@@ -773,22 +879,14 @@ class _SVGSanitizer(HTMLParser):
         pass
 
 
-def sanitize_svg_with_ids(svg_text: str) -> Tuple[str, List[str]]:
-    """``(sanitized_svg, ids)`` for `svg_text`: the rebuilt markup (see
-    sanitize_svg, which returns just that) and the value of every ``id``
-    attribute that survived, in document order. The ids come from parsed
-    start-tag attributes, never from scanning the output text.
-
-    Raises ValueError when the input has no <svg> root (or nothing
-    survives), opens a second <svg> root after the first has closed,
-    never closes its root, or is malformed enough that html.parser
-    itself raises (some CPython versions raise AssertionError or
-    NotImplementedError on input such as ``<![bogus]>``; every such
-    failure is reported as ValueError so callers have one error to
-    handle). Anything else outside the root — text, other elements,
-    whatever follows it — is dropped without an error. An unterminated
-    discard-mode element discards the rest of the document, which
-    leaves the root unclosed: fail closed, like sanitize_html."""
+def sanitize_svg_with_report(svg_text: str) -> SvgSanitizeResult:
+    """SvgSanitizeResult ``(markup, ids, drops)`` for `svg_text`: the
+    rebuilt markup and ids exactly as sanitize_svg_with_ids returns them,
+    plus `drops`, every distinct element and attribute that was removed
+    (SvgDrop: kind, display label, reason class), in first-seen order.
+    A repeated attribute is not a drop here — a browser ignores it too.
+    The report never carries a dropped value. Raises ValueError exactly as
+    sanitize_svg_with_ids does."""
     parser = _SVGSanitizer()
     try:
         # A browser's HTML parser turns U+0000 into U+FFFD wherever this
@@ -809,7 +907,29 @@ def sanitize_svg_with_ids(svg_text: str) -> Tuple[str, List[str]]:
         raise ValueError(
             "no <svg> root element found (or nothing survived sanitization)"
         )
-    return "".join(parser.out), list(parser.ids)
+    return SvgSanitizeResult("".join(parser.out), list(parser.ids), list(parser.drops))
+
+
+def sanitize_svg_with_ids(svg_text: str) -> Tuple[str, List[str]]:
+    """``(sanitized_svg, ids)`` for `svg_text`: the rebuilt markup (see
+    sanitize_svg, which returns just that) and the value of every ``id``
+    attribute that survived, in document order. The ids come from parsed
+    start-tag attributes, never from scanning the output text.
+    sanitize_svg_with_report returns the same two values plus a report of
+    what was dropped.
+
+    Raises ValueError when the input has no <svg> root (or nothing
+    survives), opens a second <svg> root after the first has closed,
+    never closes its root, or is malformed enough that html.parser
+    itself raises (some CPython versions raise AssertionError or
+    NotImplementedError on input such as ``<![bogus]>``; every such
+    failure is reported as ValueError so callers have one error to
+    handle). Anything else outside the root — text, other elements,
+    whatever follows it — is dropped without an error. An unterminated
+    discard-mode element discards the rest of the document, which
+    leaves the root unclosed: fail closed, like sanitize_html."""
+    result = sanitize_svg_with_report(svg_text)
+    return result.markup, result.ids
 
 
 def sanitize_svg(svg_text: str) -> str:
@@ -826,4 +946,4 @@ def sanitize_svg(svg_text: str) -> str:
     _SVG_ALLOWED_ATTRS, no ``on*`` attribute, no href except a
     ``#fragment`` on <use>, no element inside <title>/<desc>, and no
     ``style``/paint value that _svg_css_value_ok refuses."""
-    return sanitize_svg_with_ids(svg_text)[0]
+    return sanitize_svg_with_report(svg_text).markup
