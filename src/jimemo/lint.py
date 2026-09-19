@@ -105,6 +105,7 @@ pass means the page actually renders the charts it declares.
 import json
 import re
 from functools import lru_cache
+from html import parser as _html_parser
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
@@ -256,6 +257,52 @@ def _parser_decodes_unterminated_attr_refs() -> bool:
     probe.feed("<p a='&ampx'>")
     probe.close()
     return probe.value != "&ampx"
+
+
+def _raw_style_values(raw_tag: str) -> Optional[List[Optional[str]]]:
+    """The undecoded value of every style attribute in `raw_tag`, one
+    entry per attribute (None for a valueless one), split with
+    html.parser's OWN tag and attribute patterns so the boundaries are
+    the ones the parser used -- a hand-rolled split could be steered
+    into judging the wrong text. None if those patterns are missing."""
+    tagfind = getattr(_html_parser, "tagfind_tolerant", None)
+    attrfind = getattr(_html_parser, "attrfind_tolerant", None)
+    if tagfind is None or attrfind is None:
+        return None
+    match = tagfind.match(raw_tag, 1)
+    if match is None:
+        return None
+    values: List[Optional[str]] = []
+    position = match.end()
+    while position < len(raw_tag):
+        attr = attrfind.match(raw_tag, position)
+        if attr is None or attr.end() == position:
+            break
+        name, rest, value = attr.group(1, 2, 3)
+        if name.lower() == "style":
+            values.append(value if rest else None)
+        position = attr.end()
+    return values
+
+
+def _ambiguous_style_reference(raw_tag: str, style_count: int) -> Optional[str]:
+    """The first reference _AMBIGUOUS_LEGACY_REF_RE finds in the raw
+    text of `raw_tag`'s style attributes, or None. A reference in some
+    OTHER attribute (``href="?base=EUR&quote=USD"``) cannot move a CSS
+    boundary, so it is not judged here. When the tag cannot be split
+    the way the parser split it -- the patterns are gone, or they find a
+    different number of style attributes than the parser reported --
+    the whole raw tag is judged instead: over-rejection, not a guess."""
+    raw_values = _raw_style_values(raw_tag)
+    if raw_values is None or len(raw_values) != style_count:
+        haystacks = [raw_tag]
+    else:
+        haystacks = [value for value in raw_values if value]
+    for text in haystacks:
+        match = _AMBIGUOUS_LEGACY_REF_RE.search(text)
+        if match is not None:
+            return match.group(0)
+    return None
 
 
 # --- CSS references -------------------------------------------------------
@@ -936,6 +983,20 @@ class _Linter(HTMLParser):
                 )
                 break
 
+        # Once per tag, however many style attributes it repeats: judging
+        # the raw text per attribute made a tag of n duplicates cost n^2.
+        style_count = sum(1 for name, _value in attrs if name.lower() == "style")
+        if style_count and _parser_decodes_unterminated_attr_refs():
+            ambiguous = _ambiguous_style_reference(raw_tag, style_count)
+            if ambiguous is not None:
+                self.errors.append(
+                    f"in style attribute on <{tag}>: {ambiguous!r} without "
+                    "';' before a letter, digit or '=' — a browser keeps "
+                    "that literal in an attribute but this Python's "
+                    "html.parser decodes it, so the CSS cannot be read as "
+                    "the browser reads it (write the reference with its ';')"
+                )
+
         reason = _BANNED_TAGS.get(tag)
         if reason is not None:
             self.errors.append(
@@ -1018,16 +1079,6 @@ class _Linter(HTMLParser):
                 )
                 continue
             if name == "style" and value:
-                ambiguous = _AMBIGUOUS_LEGACY_REF_RE.search(raw_tag)
-                if ambiguous and _parser_decodes_unterminated_attr_refs():
-                    self.errors.append(
-                        f"in style attribute on <{tag}>: <{tag}> contains "
-                        f"{ambiguous.group(0)!r} without ';' before a letter, "
-                        "digit or '=' — a browser keeps that literal in an "
-                        "attribute but this Python's html.parser decodes it, "
-                        "so the style attribute's CSS cannot be read as the "
-                        "browser reads it (write the reference with its ';')"
-                    )
                 for problem in css_reference_errors(value):
                     self.errors.append(
                         f"in style attribute on <{tag}>: {problem}"

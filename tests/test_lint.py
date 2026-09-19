@@ -780,8 +780,9 @@ def test_style_escape_obfuscated_url_and_import_error():
 # treats /* as a comment opener in SOME of the places it appears, so the
 # strip could delete a fetching url() from the scanned text while the
 # browser still fetched it at view time. One test per bypass; each bypass
-# test returns ([], []) on the pre-fix code (the escaped-marker test is a
-# guard instead: that form was caught before and must stay caught).
+# test fails on the pre-fix code, most of them because it returned
+# ([], []) (the escaped-marker test is a guard instead: that form was
+# caught before and must stay caught).
 # REMOTE is the fetch each vector smuggles past the allowlist; the
 # comment names why the /* is or is not a comment there.
 
@@ -891,8 +892,9 @@ def test_style_hash_or_at_keyword_url_is_not_a_url_token(name):
     # opens an ordinary block in which /* IS a comment. Reading a url
     # token there instead puts every later string and comment boundary
     # out of step with the browser's, until a live declaration is
-    # deleted as a "comment". (Found by the code review of this fix; both
-    # the pre-fix regex and the scanner's first version let it through.)
+    # deleted as a "comment". (Found by the code review of this fix: the
+    # pre-fix regex happened to reject this input as an unparseable url(
+    # construct; the scanner's first version let it through.)
     css = '.x{--x:%s(#g/*)"*/"/*");background:url(%s);/*x*/}' % (name, REMOTE)
     errors, _ = _lint("<style>%s</style>" % css)
     assert any("evil.example" in e for e in errors)
@@ -1012,6 +1014,50 @@ def test_parser_probe_matches_this_interpreter():
     capture.close()
     decodes = capture.value != "&ampx"
     assert lint._parser_decodes_unterminated_attr_refs() is decodes
+
+
+def test_style_attribute_reference_in_another_attribute_is_fine(monkeypatch):
+    # Only the style attribute's own raw text is judged: a query string in
+    # an href cannot move a CSS boundary, even where the parser decodes it.
+    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+    errors, _ = _lint(
+        '<a href="https://example.com/?base=EUR&quote=USD&gte=5&amplitude=3" '
+        'style="color:red">rate</a>'
+    )
+    assert errors == []
+
+
+def test_style_attribute_reference_next_to_another_attribute_still_fails(monkeypatch):
+    # ... while the same reference INSIDE the style value still fails,
+    # whatever attributes sit around it.
+    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+    errors, _ = _lint(
+        '<a href="https://example.com/?a=1&amp;b=2" title="x" '
+        "style='a:&gturl(#a/*)\"*/ ); x:\"/*\"; background:url(%s); z:\"*/\"'>"
+        "x</a>" % REMOTE
+    )
+    assert any("'&gt' without ';'" in e for e in errors)
+
+
+def test_style_attribute_unsplittable_tag_is_judged_whole(monkeypatch):
+    # If the tag cannot be split the way html.parser split it, the guard
+    # judges the whole raw tag rather than guess which text is the style.
+    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+    monkeypatch.setattr(lint, "_raw_style_values", lambda raw_tag: None)
+    errors, _ = _lint('<a href="?base=EUR&quote=USD" style="color:red">x</a>')
+    assert any("'&quot' without ';'" in e for e in errors)
+
+
+def test_style_attribute_guard_is_linear_in_repeated_attributes(monkeypatch):
+    # The guard runs once per tag. Judging the raw tag once per style
+    # attribute made 40 000 duplicates take ~4 s (quadratic); linear, a
+    # 100 000-attribute tag is well under a second.
+    import time
+    monkeypatch.setattr(lint, "_parser_decodes_unterminated_attr_refs", lambda: True)
+    markup = "<p" + " style=x" * 100_000 + ">x</p>"
+    started = time.monotonic()
+    _lint(markup)
+    assert time.monotonic() - started < 5.0
 
 
 def test_style_attribute_terminated_references_are_fine(monkeypatch):
