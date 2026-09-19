@@ -34,6 +34,136 @@ def _chartjs_version(charts_vendor_dir: Path) -> str:
     return m.group(1) if m else "unknown"
 
 
+def _doctor_entry_point(running_version, unsupported_interpreter_problem) -> bool:
+    """The entry-point section of doctor (jimemo#p0nk): one line about the
+    wrapper install.sh wrote at ~/.local/bin/jimemo and the interpreter it is
+    bound to, then at most two more. Returns False on a FAIL.
+
+    Stays vendor-free: it runs before the checksum gate, so only stdlib and
+    jimemo._entry_point (stdlib-only) may be imported here. The verdict on the
+    bound interpreter comes from the same `unsupported_interpreter_problem`
+    the import boundary uses, given the BOUND interpreter's tuple, so doctor
+    cannot say ok about an interpreter jimemo.lint would refuse to load on.
+    `default_entry_point()` is looked up through the module at call time so
+    tests can point it at tmp_path instead of the developer's real HOME."""
+    import os
+
+    from . import _entry_point
+
+    ok = True
+    path = _entry_point.default_entry_point()
+    ep = str(path)
+    found = _entry_point.read_entry_point(path)
+    if isinstance(found, _entry_point.EntryPoint):
+        version = _entry_point.interpreter_version(found.python)
+        if isinstance(version, tuple):
+            problem = unsupported_interpreter_problem(version)
+            if problem is None:
+                print(
+                    f"ok   entry point {ep} -> {found.python} "
+                    f"({running_version(version)})"
+                )
+            else:
+                print(
+                    f"FAIL entry point {ep}: bound interpreter {found.python} is "
+                    f"{running_version(version)}, {problem} -- re-run install.sh"
+                )
+                ok = False
+        elif version in ("is missing", "is not executable"):
+            print(
+                f"FAIL entry point {ep}: bound interpreter {found.python} "
+                f"{version} -- re-run install.sh"
+            )
+            ok = False
+        else:
+            print(
+                f"FAIL entry point {ep}: bound interpreter {found.python} "
+                f"could not be read: {version} -- re-run install.sh"
+            )
+            ok = False
+        # The wrapper's own `[ -f "$JIMEMO_LAUNCHER" ]` check exits 1 when
+        # the checkout it was installed from is gone; doctor says so instead
+        # of ok. read_entry_point already refused control characters, but
+        # the filesystem calls are guarded anyway: an OSError or ValueError
+        # here is "gone", never a traceback in a doctor line.
+        launcher = Path(found.launcher)
+        try:
+            launcher_present = launcher.is_file()
+            resolved = launcher.resolve() if launcher_present else None
+        except (OSError, ValueError):
+            launcher_present = False
+            resolved = None
+        if not launcher_present:
+            print(
+                f"FAIL entry point {ep}: launcher {found.launcher} is gone "
+                "-- re-run install.sh from a jimemo checkout"
+            )
+            ok = False
+        else:
+            # Worktree confusion is the common case: the wrapper was
+            # installed from one checkout and doctor runs from another.
+            here = Path(__file__).resolve().parents[2] / "jimemo"
+            if resolved != here:
+                print(
+                    f"WARNING entry point {ep} runs a different checkout: "
+                    f"{found.launcher}"
+                )
+    elif found == "symlink":
+        try:
+            target = os.readlink(path)
+        except OSError:
+            target = "?"
+        print(
+            f"WARNING entry point {ep} is a symlink to {target}: it runs whatever "
+            "python3 the calling shell resolves -- re-run install.sh to bind an "
+            "interpreter"
+        )
+    elif found == "directory":
+        print(f"WARNING entry point {ep} is a directory, not an entry point")
+    elif found.startswith("unreadable: "):
+        reason = found[len("unreadable: "):]
+        print(f"WARNING entry point {ep} could not be read: {reason}")
+    elif found == "no marker":
+        print(f"WARNING entry point {ep} was not written by install.sh (no marker)")
+    elif found == "marker without python/launcher lines":
+        print(
+            f"WARNING entry point {ep} has a jimemo marker but no python/launcher "
+            "lines -- re-run install.sh"
+        )
+    elif found == "header value contains a control character":
+        print(
+            f"WARNING entry point {ep} has a header value with a control "
+            "character -- re-run install.sh"
+        )
+    elif found == "header python path is not absolute":
+        print(
+            f"WARNING entry point {ep} names a relative python path "
+            f"({_header_python(path)}) -- re-run install.sh"
+        )
+    else:  # "missing"
+        print(f"skip entry point (none at {ep}; ./install.sh writes one)")
+    through = os.environ.get("JIMEMO_ENTRY_POINT")
+    if through:
+        print(f"ok   this run came through the entry point {through}")
+    return ok
+
+
+def _header_python(path: Path) -> str:
+    """The raw `# python:` value of a header read_entry_point refused, for
+    the WARNING that names it. Same byte-mode read; empty on any failure."""
+    from . import _entry_point
+
+    try:
+        raw = path.read_bytes()[:4096]
+    except OSError:
+        return ""
+    lines = raw.decode("utf-8", errors="replace").split("\n")
+    for line in lines[: _entry_point.HEADER_LINES]:
+        if line.startswith("# python: "):
+            return line[len("# python: "):]
+    return ""
+
+
 def cmd_doctor(args) -> int:
     ok = True
 
@@ -51,6 +181,9 @@ def cmd_doctor(args) -> int:
         print(f"ok   python {running}")
     else:
         print(f"FAIL python {running} is not supported — {problem}")
+        ok = False
+
+    if not _doctor_entry_point(running_version, unsupported_interpreter_problem):
         ok = False
 
     problems = verify_checksums(VENDOR_DIR)

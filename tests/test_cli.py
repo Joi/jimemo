@@ -1,5 +1,6 @@
 import collections
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,54 @@ from jimemo import PYTHON_FLOOR
 from jimemo import _parser_floor as cli_parser_floor
 from jimemo import cli
 from jimemo.cli import main
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER = REPO_ROOT / "jimemo"
+
+# The autouse `hermetic_entry_point` fixture the doctor tests below lean on
+# lives in conftest.py: it has to cover every in-process main(["doctor"])
+# call, and test_suggest.py makes two of them.
+
+
+def _write_entry_point(path, python, launcher):
+    """A wrapper with install.sh's header (its first five lines are the
+    contract test_install.py checks the installer against)."""
+    path.write_text(
+        "#!/bin/sh\n"
+        "# jimemo entry point, written by install.sh. Re-run install.sh to change it.\n"
+        "# jimemo-entry-point: 1\n"
+        f"# python: {python}\n"
+        f"# launcher: {launcher}\n"
+        f"JIMEMO_PYTHON='{python}'\n"
+        f"JIMEMO_LAUNCHER='{launcher}'\n"
+        'JIMEMO_ENTRY_POINT="$0"\n'
+        "export JIMEMO_ENTRY_POINT\n"
+        'exec "$JIMEMO_PYTHON" "$JIMEMO_LAUNCHER" "$@"\n'
+    )
+    path.chmod(0o755)
+    return path
+
+
+def _fake_python_reporting(path, version, releaselevel="final", serial=0):
+    """An executable at `path` whose sys.version_info is `version`, whatever
+    the real interpreter is -- the same shape as test_install.py's
+    _fake_python3_reporting; it only needs to answer `-c`."""
+    path.write_text(
+        f"#!{sys.executable}\n"
+        "import collections, sys\n"
+        "version_info = collections.namedtuple(\n"
+        "    'version_info', 'major minor micro releaselevel serial'\n"
+        ")\n"
+        f"sys.version_info = version_info({version[0]}, {version[1]}, "
+        f"{version[2]}, {releaselevel!r}, {serial})\n"
+        "args = sys.argv[1:]\n"
+        "if args and args[0] == '-c':\n"
+        "    exec(compile(args[1], '<faked>', 'exec'), {'__name__': '__main__'})\n"
+        "else:\n"
+        "    raise SystemExit('faked python only answers -c')\n"
+    )
+    path.chmod(0o755)
+    return str(path)
 
 
 def test_version_flag(capsys):
@@ -108,6 +157,303 @@ def test_doctor_reports_the_running_interpreter_version(capsys):
     out = capsys.readouterr().out
     v = sys.version_info
     assert out.splitlines()[0] == f"ok   python {v.major}.{v.minor}.{v.micro}", out
+
+
+# --- the entry point section (jimemo#p0nk) --------------------------------
+
+
+def _entry_point_lines(out):
+    return [line for line in out.splitlines() if "entry point" in line]
+
+
+def test_doctor_skips_when_no_entry_point_is_installed(capsys, hermetic_entry_point):
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    lines = _entry_point_lines(out)
+    assert lines == [
+        f"skip entry point (none at {hermetic_entry_point}; ./install.sh writes one)"
+    ], out
+    # The interpreter line stays FIRST; the entry point comes right after.
+    assert out.splitlines()[0].startswith("ok   python "), out
+    assert out.splitlines()[1].startswith("skip entry point"), out
+
+
+def test_doctor_warns_on_an_old_symlink_install(capsys, hermetic_entry_point):
+    hermetic_entry_point.symlink_to(LAUNCHER)
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(
+        f"WARNING entry point {hermetic_entry_point} is a symlink to {LAUNCHER}: "
+    ), lines
+    assert "whatever python3 the calling shell resolves" in lines[0]
+    assert "re-run install.sh" in lines[0]
+
+
+def test_doctor_reports_the_bound_interpreter_and_its_version(
+    capsys, hermetic_entry_point
+):
+    _write_entry_point(hermetic_entry_point, sys.executable, str(LAUNCHER))
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    running = cli_parser_floor.running_version()
+    assert lines == [
+        f"ok   entry point {hermetic_entry_point} -> {sys.executable} ({running})"
+    ], lines
+
+
+def test_doctor_fails_when_the_bound_interpreter_is_missing(
+    capsys, hermetic_entry_point, tmp_path
+):
+    gone = tmp_path / "venv" / "bin" / "python"
+    _write_entry_point(hermetic_entry_point, str(gone), str(LAUNCHER))
+    assert main(["doctor"]) == 1
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert lines == [
+        f"FAIL entry point {hermetic_entry_point}: bound interpreter {gone} "
+        "is missing -- re-run install.sh"
+    ], lines
+
+
+def test_doctor_fails_when_the_bound_interpreter_is_below_the_floor(
+    capsys, hermetic_entry_point, tmp_path
+):
+    # The running interpreter is fine; the BOUND one is 3.12.11. Doctor's
+    # first line is still ok, the entry point line is the FAIL.
+    shim = _fake_python_reporting(tmp_path / "python3", (3, 12, 11))
+    _write_entry_point(hermetic_entry_point, shim, str(LAUNCHER))
+    assert main(["doctor"]) == 1
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].startswith("ok   python "), out
+    lines = _entry_point_lines(out)
+    assert len(lines) == 1, lines
+    floor = ".".join(str(part) for part in PYTHON_FLOOR)
+    assert lines[0].startswith(
+        f"FAIL entry point {hermetic_entry_point}: bound interpreter {shim} "
+        "is 3.12.11, "
+    ), lines
+    assert "below" in lines[0] and floor in lines[0], lines
+    assert lines[0].endswith(" -- re-run install.sh"), lines
+
+
+def test_doctor_fails_when_the_bound_interpreter_is_a_prerelease(
+    capsys, hermetic_entry_point, tmp_path
+):
+    # Above the floor by number. The releaselevel must come from the BOUND
+    # interpreter's tuple, not sys.version_info[3] of the one running doctor.
+    shim = _fake_python_reporting(tmp_path / "python3", (3, 14, 0), "beta", 1)
+    _write_entry_point(hermetic_entry_point, shim, str(LAUNCHER))
+    assert main(["doctor"]) == 1
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(
+        f"FAIL entry point {hermetic_entry_point}: bound interpreter {shim} "
+        "is 3.14.0b1, "
+    ), lines
+    assert "pre-release" in lines[0], lines
+    assert lines[0].endswith(" -- re-run install.sh"), lines
+
+
+@pytest.mark.parametrize(
+    "body, reason",
+    [
+        ("exit 3\n", "exited 3"),
+        (
+            "echo banner\necho 3 13 6 final 0\n",
+            "printed something other than a version",
+        ),
+        ("echo 3 13 6 final garbage\n", "printed something other than a version"),
+    ],
+    ids=["exit-3", "banner", "sixth-field"],
+)
+def test_doctor_fails_when_the_bound_interpreter_cannot_be_read(
+    capsys, hermetic_entry_point, tmp_path, body, reason
+):
+    shim = tmp_path / "python3"
+    shim.write_text("#!/bin/sh\n" + body)
+    shim.chmod(0o755)
+    _write_entry_point(hermetic_entry_point, str(shim), str(LAUNCHER))
+    assert main(["doctor"]) == 1
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert lines == [
+        f"FAIL entry point {hermetic_entry_point}: bound interpreter {shim} "
+        f"could not be read: {reason} -- re-run install.sh"
+    ], lines
+
+
+def test_doctor_fails_when_the_bound_interpreter_is_not_executable(
+    capsys, hermetic_entry_point, tmp_path
+):
+    shim = tmp_path / "python3"
+    shim.write_text("#!/bin/sh\necho 3 13 6 final 0\n")
+    shim.chmod(0o644)
+    if os.access(str(shim), os.X_OK):
+        pytest.skip("root can execute anything")
+    _write_entry_point(hermetic_entry_point, str(shim), str(LAUNCHER))
+    assert main(["doctor"]) == 1
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert lines == [
+        f"FAIL entry point {hermetic_entry_point}: bound interpreter {shim} "
+        "is not executable -- re-run install.sh"
+    ], lines
+
+
+# ---- S1 / S3: the launcher side of the header ----------------------------
+
+
+def test_doctor_fails_when_the_launcher_is_gone(capsys, hermetic_entry_point, tmp_path):
+    # The wrapper's own `[ -f "$JIMEMO_LAUNCHER" ]` check exits 1 at runtime
+    # for this case; doctor must not say ok about it.
+    gone = tmp_path / "old-checkout" / "jimemo"
+    _write_entry_point(hermetic_entry_point, sys.executable, str(gone))
+    assert main(["doctor"]) == 1
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert len(lines) == 2, lines
+    assert lines[0].startswith(f"ok   entry point {hermetic_entry_point} -> "), lines
+    assert lines[1] == (
+        f"FAIL entry point {hermetic_entry_point}: launcher {gone} is gone "
+        "-- re-run install.sh from a jimemo checkout"
+    ), lines
+    assert not any("different checkout" in line for line in lines), lines
+
+
+def test_doctor_warns_on_a_header_value_with_a_control_character(
+    capsys, hermetic_entry_point
+):
+    # A NUL survives errors="replace" and would make Path.resolve() raise;
+    # read_entry_point refuses it first, and doctor reports, not tracebacks.
+    hermetic_entry_point.write_bytes(
+        b"#!/bin/sh\n# jimemo-entry-point: 1\n# python: /usr/bin/py\x00thon3\n"
+        b"# launcher: /repo/jimemo\n"
+    )
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert lines == [
+        f"WARNING entry point {hermetic_entry_point} has a header value with a "
+        "control character -- re-run install.sh"
+    ], lines
+
+
+def test_doctor_warns_on_a_relative_python_path(capsys, hermetic_entry_point):
+    _write_entry_point(hermetic_entry_point, "python3", str(LAUNCHER))
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert lines == [
+        f"WARNING entry point {hermetic_entry_point} names a relative python "
+        "path (python3) -- re-run install.sh"
+    ], lines
+
+
+def test_doctor_survives_a_launcher_path_resolve_cannot_handle(
+    capsys, hermetic_entry_point, monkeypatch
+):
+    # Belt and braces for the resolve()/is_file() calls: even if a value
+    # gets past read_entry_point, an OSError/ValueError there is "gone", not
+    # a traceback.
+    _write_entry_point(hermetic_entry_point, sys.executable, str(LAUNCHER))
+    real_is_file = Path.is_file
+
+    def boom(self):
+        if self.name == "jimemo" and self != hermetic_entry_point:
+            raise OSError(5, "Input/output error")
+        return real_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", boom)
+    assert main(["doctor"]) == 1
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert any(
+        line.startswith(f"FAIL entry point {hermetic_entry_point}: launcher ")
+        and "is gone" in line
+        for line in lines
+    ), lines
+
+
+def test_doctor_reports_an_unreadable_symlink_target(
+    capsys, hermetic_entry_point, monkeypatch
+):
+    hermetic_entry_point.symlink_to(LAUNCHER)
+    def unreadable_link(path, *args, **kwargs):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(os, "readlink", unreadable_link)
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(
+        f"WARNING entry point {hermetic_entry_point} is a symlink to ?: "
+    ), lines
+
+
+def test_doctor_warns_when_the_entry_point_is_a_directory(capsys, hermetic_entry_point):
+    hermetic_entry_point.mkdir()
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert lines == [
+        f"WARNING entry point {hermetic_entry_point} is a directory, not an entry point"
+    ], lines
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads anything")
+def test_doctor_warns_when_the_entry_point_is_unreadable(capsys, hermetic_entry_point):
+    _write_entry_point(hermetic_entry_point, sys.executable, str(LAUNCHER))
+    hermetic_entry_point.chmod(0)
+    try:
+        rc = main(["doctor"])
+    finally:
+        hermetic_entry_point.chmod(0o755)
+    assert rc == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(
+        f"WARNING entry point {hermetic_entry_point} could not be read: "
+    ), lines
+
+
+def test_doctor_warns_on_a_file_it_did_not_write(capsys, hermetic_entry_point):
+    hermetic_entry_point.write_text("#!/bin/sh\nexec python3 /x/jimemo \"$@\"\n")
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert lines == [
+        f"WARNING entry point {hermetic_entry_point} was not written by install.sh "
+        "(no marker)"
+    ], lines
+
+
+def test_doctor_warns_on_a_truncated_header(capsys, hermetic_entry_point):
+    hermetic_entry_point.write_text("#!/bin/sh\n# jimemo-entry-point: 1\n")
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert lines == [
+        f"WARNING entry point {hermetic_entry_point} has a jimemo marker but no "
+        "python/launcher lines -- re-run install.sh"
+    ], lines
+
+
+def test_doctor_warns_when_the_entry_point_runs_a_different_checkout(
+    capsys, hermetic_entry_point, tmp_path
+):
+    # Another checkout that EXISTS (a missing one is the FAIL case above).
+    elsewhere = tmp_path / "elsewhere" / "jimemo"
+    elsewhere.parent.mkdir()
+    elsewhere.write_bytes(LAUNCHER.read_bytes())
+    _write_entry_point(hermetic_entry_point, sys.executable, str(elsewhere))
+    assert main(["doctor"]) == 0
+    lines = _entry_point_lines(capsys.readouterr().out)
+    assert len(lines) == 2, lines
+    assert lines[0].startswith(f"ok   entry point {hermetic_entry_point} -> "), lines
+    assert lines[1] == (
+        f"WARNING entry point {hermetic_entry_point} runs a different checkout: "
+        f"{elsewhere}"
+    ), lines
+
+
+def test_doctor_notes_a_run_through_the_entry_point(
+    capsys, hermetic_entry_point, monkeypatch
+):
+    monkeypatch.setenv("JIMEMO_ENTRY_POINT", "/x/bin/jimemo")
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "ok   this run came through the entry point /x/bin/jimemo" in out, out
 
 
 def test_no_args_shows_help(capsys):
@@ -219,7 +565,15 @@ def test_doctor_tampered_checksums_never_imports_vendored_libs(tmp_path):
         "assert 'tomli' not in sys.modules, sorted(sys.modules)\n"
         "print('OK')\n"
     )
-    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    # HOME under tmp_path: this doctor runs in a fresh process, where the
+    # autouse fixture cannot reach, and must not read the developer's real
+    # ~/.local/bin/jimemo (jimemo#p0nk).
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(tmp_path)},
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "checksum mismatch" in result.stdout
     assert "skip vendored imports" in result.stdout

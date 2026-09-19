@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import sys
 sys.dont_write_bytecode = True
 
@@ -10,7 +11,7 @@ sys.dont_write_bytecode = True
 # is duplicated from jimemo.PYTHON_FLOOR because this file runs before src/
 # is importable; tests/test_python_floor.py pins the two together. Written
 # so it cannot itself fail on an old interpreter: no f-strings, str.format
-# only, sys as the only import.
+# only, os and sys as the only imports (os for one environ read).
 #
 # DECIDED (jimemo#gaga): this launcher does NOT search PATH for a newer
 # python3.13/python3.14 and re-exec into it. install.sh validates the
@@ -33,15 +34,34 @@ if sys.version_info[3] != "final":
 # three checks jimemo depends on, and it let jimemo#y9p8's payload through
 # lint clean (measured). A version number cannot say which pre-release
 # carries which backport, so jimemo supports final releases only.
+# The installed entry point (install.sh's wrapper at ~/.local/bin/jimemo)
+# exports JIMEMO_ENTRY_POINT before exec'ing its bound interpreter into this
+# file. When that is how we got here, the PATH advice is wrong: the user is
+# not running whatever python3 their shell resolves, they are running the
+# interpreter install.sh bound, and the fix is to bind another (jimemo#p0nk).
+_ENTRY_POINT = os.environ.get("JIMEMO_ENTRY_POINT")
 if sys.version_info[:3] < _FLOOR or sys.version_info[3] != "final":
+    if _ENTRY_POINT:
+        _ADVICE = (
+            " this interpreter is {running} ({executable}), the one the entry"
+            " point {entry_point} is bound to; re-run install.sh in the jimemo"
+            " checkout to bind a supported interpreter."
+        )
+    else:
+        _ADVICE = (
+            " this interpreter is {running} ({executable}). Install"
+            " {floor}+ (macOS: brew install python@3.13; Debian/Ubuntu: apt"
+            " install python3.13) and put its python3 first on PATH."
+        )
     sys.stderr.write(
-        "jimemo: error: Python {floor} or newer is required, as a final"
-        " release; this interpreter is {running} ({executable}). Install"
-        " {floor}+ (macOS: brew install python@3.13; Debian/Ubuntu: apt"
-        " install python3.13) and put its python3 first on PATH.\n".format(
+        (
+            "jimemo: error: Python {floor} or newer is required, as a final"
+            " release;" + _ADVICE + "\n"
+        ).format(
             floor=".".join(str(part) for part in _FLOOR),
             running=_RUNNING,
             executable=sys.executable or "unknown",
+            entry_point=_ENTRY_POINT,
         )
     )
     raise SystemExit(1)

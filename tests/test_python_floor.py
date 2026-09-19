@@ -155,12 +155,19 @@ def test_launcher_runs_on_this_interpreter():
 # --- real sub-floor interpreters ------------------------------------------
 
 
-def _run_launcher_as(faked_version, argv, releaselevel="final", serial=0):
+def _run_launcher_as(
+    faked_version, argv, releaselevel="final", serial=0, env_extra=None
+):
     """Run the REAL launcher source with ``sys.version_info`` faked, so the
     floor boundary is tested at exact versions instead of at whatever
     interpreters this machine happens to have installed. The micro
     boundary (3.13.5 versus 3.13.6) is the whole point of the floor, and
-    almost no machine has a 3.13.5 lying around."""
+    almost no machine has a 3.13.5 lying around.
+
+    JIMEMO_ENTRY_POINT is always dropped from the inherited environment
+    first (a suite run through the installed entry point would otherwise
+    switch every refusal to the install.sh wording); `env_extra` then adds
+    what a test asks for, so the with/without cases are both explicit."""
     faker = (
         "import collections, sys\n"
         "VI = collections.namedtuple("
@@ -183,13 +190,16 @@ def _run_launcher_as(faked_version, argv, releaselevel="final", serial=0):
             str(LAUNCHER),
         )
     )
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    env.pop("JIMEMO_ENTRY_POINT", None)
+    env.update(env_extra or {})
     return subprocess.run(
         [sys.executable, "-c", faker],
         capture_output=True,
         text=True,
         timeout=60,
         cwd=str(REPO_ROOT),
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        env=env,
     )
 
 
@@ -217,6 +227,36 @@ def test_launcher_accepts_the_exact_floor():
     result = _run_launcher_as(PYTHON_FLOOR, ["--version"])
     assert result.returncode == 0, result.stderr
     assert result.stderr == "", result.stderr
+
+
+def test_launcher_refusal_names_install_sh_when_run_through_the_entry_point():
+    # install.sh's wrapper exports JIMEMO_ENTRY_POINT before exec'ing its
+    # bound interpreter (jimemo#p0nk). A refusal reached that way must not
+    # give PATH advice -- the user is running the interpreter install.sh
+    # bound, and the fix is to re-run install.sh.
+    result = _run_launcher_as(
+        (3, 12, 11), ["doctor"], env_extra={"JIMEMO_ENTRY_POINT": "/x/jimemo"}
+    )
+    assert result.returncode != 0, result.stdout
+    assert result.stdout == "", result.stdout
+    lines = [line for line in result.stderr.splitlines() if line.strip()]
+    assert len(lines) == 1, result.stderr
+    assert "Traceback" not in result.stderr
+    assert "install.sh" in lines[0], lines[0]
+    assert "/x/jimemo" in lines[0], lines[0]
+    assert "3.12.11" in lines[0], lines[0]
+    assert FLOOR_TEXT in lines[0], lines[0]
+
+
+def test_launcher_refusal_keeps_the_path_advice_without_the_entry_point():
+    # ./jimemo run directly from a checkout: today's wording, unchanged.
+    result = _run_launcher_as((3, 12, 11), ["doctor"])
+    assert result.returncode != 0, result.stdout
+    lines = [line for line in result.stderr.splitlines() if line.strip()]
+    assert len(lines) == 1, result.stderr
+    assert "install.sh" not in lines[0], lines[0]
+    assert "PATH" in lines[0], lines[0]
+    assert "3.12.11" in lines[0], lines[0]
 
 
 @pytest.mark.parametrize(

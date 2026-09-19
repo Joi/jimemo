@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.dont_write_bytecode = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -61,3 +63,24 @@ def _sub_floor_pythons():
 
 
 SUB_FLOOR_PYTHONS = _sub_floor_pythons()
+
+
+@pytest.fixture(autouse=True)
+def hermetic_entry_point(tmp_path, monkeypatch):
+    """`jimemo doctor` reads -- and runs -- the interpreter bound in
+    ~/.local/bin/jimemo (jimemo#p0nk). Point it at a path under tmp_path for
+    EVERY in-process test (test_cli.py and test_suggest.py both call
+    main(["doctor"])), so no doctor run sees or executes the developer's real
+    entry point: a symlink-style install or a stale wrapper on one machine
+    must not fail the suite. Narrower than redirecting HOME, which
+    discovery.py and config.py also read. Doctor tests that need an entry
+    point write their fixture wrapper to this same path. JIMEMO_ENTRY_POINT
+    is dropped too, so a suite run THROUGH the entry point does not add a
+    doctor line the assertions did not ask for. Subprocess-based doctor tests
+    are out of reach of a monkeypatch and set HOME themselves."""
+    from jimemo import _entry_point
+
+    entry_point = tmp_path / "jimemo"
+    monkeypatch.setattr(_entry_point, "default_entry_point", lambda: entry_point)
+    monkeypatch.delenv("JIMEMO_ENTRY_POINT", raising=False)
+    return entry_point

@@ -17,6 +17,7 @@ import ast
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -32,19 +33,31 @@ FLOOR_TEXT = ".".join(str(part) for part in PYTHON_FLOOR)
 PACKAGE_INIT = REPO_ROOT / "src" / "jimemo" / "__init__.py"
 
 
+# One empty HOME for every _fresh() call, removed when the interpreter
+# exits (TemporaryDirectory's finalizer), instead of one leaked mkdtemp per
+# call.
+_FRESH_HOME = tempfile.TemporaryDirectory(prefix="jimemo-fresh-home-")
+
+
 def _fresh(code, executable=None):
-    """Run `code` in a fresh interpreter with src/ importable."""
+    """Run `code` in a fresh interpreter with src/ importable. HOME is an
+    empty temp dir: `jimemo doctor` reads -- and runs -- the interpreter
+    bound in ~/.local/bin/jimemo (jimemo#p0nk), and a stale wrapper on the
+    developer's machine must not change what these tests see."""
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "HOME": _FRESH_HOME.name,
+    }
+    env.pop("JIMEMO_ENTRY_POINT", None)
     return subprocess.run(
         [executable or sys.executable, "-c", code],
         capture_output=True,
         text=True,
         timeout=90,
         cwd=str(REPO_ROOT),
-        env={
-            **os.environ,
-            "PYTHONPATH": str(REPO_ROOT / "src"),
-            "PYTHONDONTWRITEBYTECODE": "1",
-        },
+        env=env,
     )
 
 
