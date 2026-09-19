@@ -1230,3 +1230,20 @@ def test_page_id_with_nul_collides_with_a_figure_id_like_a_browser(tmp_path, _is
     # control: without the NUL there is nothing to collide with
     content = _briefing_content(tmp_path, '<a id="g"></a>Anchor.\n\n[[DIAGRAM:FLOW]]\n')
     assert FIGURE_OPEN_TEXT in render_page(BRIEFING_DIR, content, figures={"FLOW": clash})
+
+
+def test_only_the_first_id_attribute_of_a_page_element_is_collected(tmp_path, _isolated_home):
+    # sanitize_html keeps both attributes; a browser keeps only the first.
+    body = '<a id="first" id="second"></a>Anchor.\n\n[[DIAGRAM:FLOW]]\n'
+    content = _briefing_content(tmp_path, body)
+    assert 'id="first" id="second"' in render_page(BRIEFING_DIR, content)
+    # no false refusal: "second" names nothing in the browser's page
+    second = '<svg><rect id="second" width="1" height="1"/></svg>'
+    assert FIGURE_OPEN_TEXT in render_page(BRIEFING_DIR, content, figures={"FLOW": second})
+    # the real collision is still refused
+    first = '<svg><rect id="first" width="1" height="1"/></svg>'
+    with pytest.raises(ContentError, match="id='first', which the page already uses"):
+        render_page(BRIEFING_DIR, content, figures={"FLOW": first})
+    # an empty first id is still the element's id: the later one is ignored
+    content = _briefing_content(tmp_path, '<a id="" id="second"></a>A.\n\n[[DIAGRAM:FLOW]]\n')
+    assert FIGURE_OPEN_TEXT in render_page(BRIEFING_DIR, content, figures={"FLOW": second})
