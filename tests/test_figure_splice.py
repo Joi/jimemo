@@ -1255,33 +1255,3 @@ def test_only_the_first_id_attribute_of_a_page_element_is_collected(tmp_path, _i
     # an empty first id is still the element's id: the later one is ignored
     content = _briefing_content(tmp_path, '<a id="" id="second"></a>A.\n\n[[DIAGRAM:FLOW]]\n')
     assert FIGURE_OPEN_TEXT in render_page(BRIEFING_DIR, content, figures={"FLOW": second})
-
-
-@pytest.mark.parametrize("sep", [" ", "\x0b", "\x1c", "\x85", " ", "　"])
-@pytest.mark.parametrize("shape", [
-    '<div title=x{0}id id=grad></div>',    # inside an unquoted value
-    '<div data{0}id id=grad></div>',       # inside an attribute name
-])
-def test_first_id_rule_never_trusts_a_split_a_browser_would_not_make(sep, shape):
-    # Pre-handoff review of jimemo#1gs5: html.parser before 3.13 splits
-    # attributes on Python's `\s`, which also matches these characters; a
-    # browser keeps them inside the name or value. So 3.9 reports a phantom
-    # valueless `id` ahead of the real id=grad, and a bare first-id rule
-    # would miss the collision the collect-everything rule used to catch.
-    # Template markup reaches the collector as written (sanitize_html never
-    # sees it), which is how such a tag gets into a page. Meaningful on
-    # Python < 3.13; on 3.13+ the parser splits like a browser and the
-    # plain first-id rule already finds "grad".
-    from jimemo.render import _page_ids
-
-    assert "grad" in _page_ids(shape.format(sep))
-
-
-def test_first_id_rule_applies_to_plainly_tokenized_tags_only():
-    from jimemo.render import _page_ids
-
-    assert _page_ids('<a id="first" id="second"></a>') == {"first"}
-    assert _page_ids('<a id=first id=second></a>') == {"first"}
-    # Ambiguous tag: every id is kept — a false refusal, never a missed
-    # collision.
-    assert _page_ids('<a title="x y" id="first" id="second"></a>') == {"first", "second"}

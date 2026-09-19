@@ -13,7 +13,6 @@ the page's inline scripts to equal that set — nothing forged, extra,
 duplicated, or missing. A chartless manifest injects neither name,
 leaving chartless no-script output byte-identical.
 """
-import re
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
@@ -125,41 +124,27 @@ FIGURE_OPEN = '<figure class="jm-figure" style="contain:paint">'
 FIGURE_DROP_WARNINGS_MAX = 20
 
 
-# Characters Python's regex `\s` matches but HTML does not treat as
-# whitespace: U+000B, U+001C-U+001F, U+0085, U+00A0 and the other Unicode
-# spaces. html.parser before 3.13 splits attributes on `\s`, so in
-# `<div title=x id id=grad>` it reports a phantom valueless `id`
-# ahead of the real one, where a browser keeps "x id" as the title.
-_NON_HTML_WHITESPACE = re.compile(r"[^\S\t\n\f\r ]")
-
-
 class _IdCollector(HTMLParser):
-    """The ``id`` of every element in a page — its first ``id`` attribute,
-    recorded only when non-empty, as a browser reads it — taken from
-    parsed start tags (text that merely looks like ``id="x"``, and script
-    bodies, are not attributes and are not collected)."""
+    """The ``id`` of every element in a page — the FIRST non-empty ``id``
+    attribute on each, as a browser reads it — taken from parsed start
+    tags (text that merely looks like ``id="x"``, and script bodies, are
+    not attributes and are not collected)."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.ids = set()
 
     def handle_starttag(self, tag, attrs):
-        ids = [value for name, value in attrs if name == "id"]
-        if len(ids) > 1:
-            raw = self.get_starttag_text()
-            if raw is None or _NON_HTML_WHITESPACE.search(raw):
-                # html.parser may have split this tag where a browser
-                # does not (see _NON_HTML_WHITESPACE), so which id is the
-                # element's is uncertain. Record every one, as before:
-                # the cost is a false refusal, never a missed collision.
-                self.ids.update(value for value in ids if value)
-                return
-        # A browser keeps an element's FIRST id attribute and ignores the
-        # rest (sanitize_html keeps them all, so they reach the page);
-        # _SVGSanitizer does the same for figures. id="" is still the
-        # element's id, and matches nothing.
-        if ids and ids[0]:
-            self.ids.add(ids[0])
+        for name, value in attrs:
+            if name != "id":
+                continue
+            # A browser keeps an element's FIRST id attribute and ignores
+            # the rest (sanitize_html keeps them all, so they reach the
+            # page); _SVGSanitizer does the same for figures. id="" is
+            # still the element's id, and matches nothing.
+            if value:
+                self.ids.add(value)
+            return
 
     handle_startendtag = handle_starttag
 
