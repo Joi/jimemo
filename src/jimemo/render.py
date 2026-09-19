@@ -144,7 +144,13 @@ class _IdCollector(HTMLParser):
 def _page_ids(html: str) -> set:
     collector = _IdCollector()
     try:
-        collector.feed(html)
+        # A browser's HTML tokenizer turns U+0000 into U+FFFD; html.parser
+        # passes it through. Normalize before the parse, exactly as
+        # sanitize_svg_with_report does for a figure, so an anchor
+        # id="g\x00" and a figure id="g�" compare equal here as they
+        # do in the page. Only the collector's view changes: the rendered
+        # page keeps whatever sanitize_html produced.
+        collector.feed(html.replace("\x00", "�"))
         collector.close()
     except Exception as e:  # noqa: BLE001 - older html.parser raises assorted types
         # Fail closed: without the page's ids the collision check below

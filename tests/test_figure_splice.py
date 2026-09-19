@@ -1211,3 +1211,22 @@ def test_warning_figure_name_is_filtered():
 
     lines = _figure_drop_warnings("F\x1b[2Jx", [_drop("element", "script", "not allowlisted")])
     assert lines == ["figure F?[2Jx: dropped element script (not allowlisted)"]
+
+
+# --- jimemo#1gs5: page ids are collected as a browser reads them -----------
+
+
+def test_page_id_with_nul_collides_with_a_figure_id_like_a_browser(tmp_path, _isolated_home):
+    # Page-versus-figure (the NUL test above is figure-versus-figure). A
+    # browser reads U+0000 as U+FFFD while parsing the page, so the anchor's
+    # id and the figure's are one id there, and the figure's url(#…) would
+    # resolve to the anchor.
+    body = '<a id="g\x00"></a>Anchor.\n\n[[DIAGRAM:FLOW]]\n'
+    content = _briefing_content(tmp_path, body)
+    assert 'id="g\x00"' in render_page(BRIEFING_DIR, content)  # the page keeps NUL
+    clash = '<svg><linearGradient id="g�"/></svg>'
+    with pytest.raises(ContentError, match="which the page already uses"):
+        render_page(BRIEFING_DIR, content, figures={"FLOW": clash})
+    # control: without the NUL there is nothing to collide with
+    content = _briefing_content(tmp_path, '<a id="g"></a>Anchor.\n\n[[DIAGRAM:FLOW]]\n')
+    assert FIGURE_OPEN_TEXT in render_page(BRIEFING_DIR, content, figures={"FLOW": clash})
