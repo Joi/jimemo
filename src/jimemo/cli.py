@@ -37,19 +37,20 @@ def _chartjs_version(charts_vendor_dir: Path) -> str:
 def cmd_doctor(args) -> int:
     ok = True
 
-    # Compared on all THREE components: the floor is patch-level, because
-    # html.parser only stopped disagreeing with a browser in 3.13.4/3.13.6
-    # and jimemo's self-containment check depends on it (see
-    # jimemo.PYTHON_FLOOR). A major/minor comparison would report a 3.13.3
-    # as ok.
-    v = sys.version_info
+    # The verdict comes from _parser_floor, the same function jimemo.lint's
+    # import boundary uses, so doctor cannot disagree with it. It compares
+    # all three components (the floor is patch-level -- html.parser only
+    # stopped disagreeing with a browser in 3.13.4/3.13.6) and refuses a
+    # pre-release outright.
+    from ._parser_floor import running_version, unsupported_interpreter_problem
+
     floor = ".".join(str(part) for part in PYTHON_FLOOR)
-    running = f"{v.major}.{v.minor}.{v.micro}"
-    if v[:3] >= PYTHON_FLOOR:
+    running = running_version()
+    problem = unsupported_interpreter_problem()
+    if problem is None:
         print(f"ok   python {running}")
     else:
-        print(f"FAIL python {running} < required {floor} — install Python "
-              f"{floor}+ and run jimemo with it")
+        print(f"FAIL python {running} is not supported — {problem}")
         ok = False
 
     problems = verify_checksums(VENDOR_DIR)

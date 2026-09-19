@@ -15,7 +15,12 @@ __version__ = "0.0.3"
 #                    where a browser does not
 #   3.13.6           all three match a browser
 #
-# So the floor is 3.13.6. This number is the contract; it cannot see a
+# So the floor is 3.13.6, and only FINAL releases of it: 3.14.0b1 compares
+# (3, 14, 0) >= (3, 13, 6) while failing all three checks above, and it let
+# jimemo#y9p8's payload lint clean (measured; gh-69426 landed in 3.14.0b2).
+# Every boundary therefore checks sys.version_info[3] == "final" too.
+#
+# This number is the contract; it cannot see a
 # distro that backported one of these fixes into an older release or
 # reverted one in a newer release. What detects a parser that misbehaves at
 # or above the floor is the test suite -- the 318-case canary and the nine

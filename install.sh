@@ -227,15 +227,28 @@ fi
 # Ask once, for all four fields. `|| PY_PARTS=''` keeps a python3 that
 # exits non-zero from killing the script silently under `set -e`: without
 # it the user gets an exit status and no message at all.
-PY_PARTS="$(python3 -c 'import platform, sys; print("%d %d %d %s" % (sys.version_info[0], sys.version_info[1], sys.version_info[2], platform.python_version()))' 2>/dev/null)" \
+PY_PARTS="$(python3 -c 'import sys; print("%d %d %d %s %s" % (sys.version_info[0], sys.version_info[1], sys.version_info[2], sys.version_info[3], sys.version.split()[0]))' 2>/dev/null)" \
     || PY_PARTS=''
+
+# `read` consumes ONE line, so extra lines would be silently dropped and a
+# wrapper that prints a plausible first line could get an unsupported
+# interpreter installed. Reject any embedded newline before parsing. The
+# pattern below contains a literal newline; `wc` is deliberately not used,
+# since install.sh must work on a minimal PATH.
+case "$PY_PARTS" in
+    *"
+"*)
+        echo "install.sh: error: python3 printed more than one line when" \
+            "asked for its version. jimemo requires Python >= 3.13.6." >&2
+        exit 1 ;;
+esac
 
 # `read` rather than `set --`: it neither glob-expands the fields (an
 # unquoted `set -- $PY_PARTS` would expand a `*` in the version string
 # against the cwd) nor clobbers the script's positional parameters. The
 # fifth variable catches EXTRA words, so the field count is exact.
-PY_MAJOR=''; PY_MINOR=''; PY_MICRO=''; PY_VER=''; PY_EXTRA=''
-IFS=' ' read -r PY_MAJOR PY_MINOR PY_MICRO PY_VER PY_EXTRA <<EOF
+PY_MAJOR=''; PY_MINOR=''; PY_MICRO=''; PY_LEVEL=''; PY_VER=''; PY_EXTRA=''
+IFS=' ' read -r PY_MAJOR PY_MINOR PY_MICRO PY_LEVEL PY_VER PY_EXTRA <<EOF
 $PY_PARTS
 EOF
 
@@ -258,9 +271,21 @@ done
 # All four fields and no more: a partial or overlong answer is not the
 # answer we asked for, and guessing the rest is how a floor check ends up
 # trusting a version nobody reported.
-if [ -z "$PY_VER" ] || [ -n "$PY_EXTRA" ]; then
+if [ -z "$PY_LEVEL" ] || [ -z "$PY_VER" ] || [ -n "$PY_EXTRA" ]; then
     echo "install.sh: error: could not read python3's version" \
         "(got '$PY_PARTS'). jimemo requires Python >= 3.13.6." >&2
+    exit 1
+fi
+
+# A PRE-RELEASE is refused whatever its numbers say. CPython 3.14.0b1
+# compares (3, 14, 0) >= the floor while its html.parser still fails all
+# three checks jimemo depends on; gh-69426 landed in 3.14.0b2. A version
+# number cannot say which pre-release carries which backport.
+if [ "$PY_LEVEL" != "final" ]; then
+    echo "install.sh: error: python3 is $PY_VER, a pre-release" \
+        "(releaselevel $PY_LEVEL); jimemo requires a FINAL release of" \
+        "Python >= 3.13.6, because a pre-release's version number does not" \
+        "say which parser fixes it carries." >&2
     exit 1
 fi
 

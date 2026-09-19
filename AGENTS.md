@@ -25,7 +25,9 @@ cd jimemo
 this skill (`skill/`) with any harness it finds installed (Claude Code,
 Codex, ...). Idempotent, and `./install.sh --uninstall` reverses it. One
 clone; `git pull` updates every harness that points at it. Requires
-Python >= 3.13.6 (the floor is patch-level: `html.parser` only stopped
+Python >= 3.13.6, and a final release rather than a pre-release (3.14.0b1
+sorts above the floor but still has the old parser). The floor is
+patch-level: `html.parser` only stopped
 disagreeing with a browser about attribute character references,
 attribute splitting and unclosed `<style>` text in 3.13.4/3.13.6, and
 `jimemo check` depends on that — see `src/jimemo/__init__.py`, and

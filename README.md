@@ -18,8 +18,9 @@ cd jimemo
 jimemo doctor
 ```
 
-Requires Python >= 3.13.6 and nothing else -- stdlib plus vendored
-dependencies only, nothing to `pip install`. A stock Mac's
+Requires Python >= 3.13.6 -- a final release, not a pre-release -- and
+nothing else: stdlib plus vendored dependencies only, nothing to
+`pip install`. A stock Mac's
 `/usr/bin/python3` is 3.9.6, which is below the floor: install a current
 Python (macOS: `brew install python@3.13`; Debian/Ubuntu: `apt install
 python3.13`) and put its `python3` first on `PATH`. The floor is 3.13.6

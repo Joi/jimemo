@@ -22,14 +22,25 @@ sys.dont_write_bytecode = True
 # 3.13.6. Running a specific interpreter is already one command:
 # `python3.13 /path/to/jimemo ...`.
 _FLOOR = (3, 13, 6)
-if sys.version_info[:3] < _FLOOR:
+_LEVELS = {"alpha": "a", "beta": "b", "candidate": "rc"}
+_RUNNING = ".".join(str(part) for part in sys.version_info[:3])
+if sys.version_info[3] != "final":
+    _RUNNING += "{0}{1}".format(
+        _LEVELS.get(sys.version_info[3], sys.version_info[3]), sys.version_info[4]
+    )
+# A PRE-RELEASE is refused whatever its numbers say: CPython 3.14.0b1
+# compares (3, 14, 0) >= the floor while its html.parser still fails all
+# three checks jimemo depends on, and it let jimemo#y9p8's payload through
+# lint clean (measured). A version number cannot say which pre-release
+# carries which backport, so jimemo supports final releases only.
+if sys.version_info[:3] < _FLOOR or sys.version_info[3] != "final":
     sys.stderr.write(
-        "jimemo: error: Python {floor} or newer is required; this interpreter"
-        " is {running} ({executable}). Install {floor}+ (macOS: brew install"
-        " python@3.13; Debian/Ubuntu: apt install python3.13) and put its"
-        " python3 first on PATH.\n".format(
+        "jimemo: error: Python {floor} or newer is required, as a final"
+        " release; this interpreter is {running} ({executable}). Install"
+        " {floor}+ (macOS: brew install python@3.13; Debian/Ubuntu: apt"
+        " install python3.13) and put its python3 first on PATH.\n".format(
             floor=".".join(str(part) for part in _FLOOR),
-            running=".".join(str(part) for part in sys.version_info[:3]),
+            running=_RUNNING,
             executable=sys.executable or "unknown",
         )
     )

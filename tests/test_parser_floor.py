@@ -66,8 +66,14 @@ def test_problem_is_none_on_this_interpreter():
 
 @pytest.mark.parametrize(
     "version",
-    [(3, 9, 6), (3, 12, 11), (3, 13, 0), (3, 13, 3), (3, 13, 5)],
-    ids=lambda value: ".".join(str(part) for part in value),
+    [
+        (3, 9, 6, "final", 0),
+        (3, 12, 11, "final", 0),
+        (3, 13, 0, "final", 0),
+        (3, 13, 3, "final", 0),
+        (3, 13, 5, "final", 0),
+    ],
+    ids=lambda value: ".".join(str(part) for part in value[:3]),
 )
 def test_problem_names_the_version_and_the_floor(version, monkeypatch):
     # 3.13.5 is the case a major/minor comparison would accept: its
@@ -75,13 +81,60 @@ def test_problem_names_the_version_and_the_floor(version, monkeypatch):
     monkeypatch.setattr(_parser_floor.sys, "version_info", version)
     problem = _parser_floor.unsupported_interpreter_problem()
     assert problem is not None
-    assert ".".join(str(part) for part in version) in problem, problem
+    assert ".".join(str(part) for part in version[:3]) in problem, problem
     assert FLOOR_TEXT in problem, problem
 
 
 def test_exact_floor_is_accepted(monkeypatch):
-    monkeypatch.setattr(_parser_floor.sys, "version_info", PYTHON_FLOOR)
+    monkeypatch.setattr(
+        _parser_floor.sys, "version_info", PYTHON_FLOOR + ("final", 0)
+    )
     assert _parser_floor.unsupported_interpreter_problem() is None
+
+
+# A PRE-RELEASE must be refused whatever its numbers say. Measured on real
+# CPython 3.14.0b1: version_info[:3] == (3, 14, 0), which is ABOVE the
+# floor, yet its html.parser fails all three disagreements the floor exists
+# to rule out and jimemo#y9p8's payload lints clean on it. gh-69426 landed
+# in 3.14.0b2.
+PRERELEASES = [
+    (3, 14, 0, "beta", 1),
+    (3, 14, 0, "alpha", 7),
+    (3, 15, 0, "candidate", 1),
+    PYTHON_FLOOR + ("candidate", 1),
+    PYTHON_FLOOR + ("beta", 2),
+]
+
+
+@pytest.mark.parametrize(
+    "version", PRERELEASES, ids=lambda v: _parser_floor.running_version(v)
+)
+def test_prereleases_are_refused_even_above_the_floor(version, monkeypatch):
+    monkeypatch.setattr(_parser_floor.sys, "version_info", version)
+    problem = _parser_floor.unsupported_interpreter_problem()
+    assert problem is not None, version
+    assert "pre-release" in problem, problem
+    assert version[3] in problem, problem
+    assert _parser_floor.running_version(version) in problem, problem
+    with pytest.raises(RuntimeError):
+        _parser_floor.assert_interpreter_is_supported()
+
+
+@pytest.mark.parametrize(
+    "version, expected",
+    [
+        ((3, 14, 7, "final", 0), "3.14.7"),
+        ((3, 13, 6, "final", 0), "3.13.6"),
+        ((3, 14, 0, "beta", 1), "3.14.0b1"),
+        ((3, 14, 0, "alpha", 3), "3.14.0a3"),
+        ((3, 13, 6, "candidate", 2), "3.13.6rc2"),
+    ],
+)
+def test_running_version_spells_it_as_cpython_does(version, expected):
+    # platform.python_version() reports 3.14.0b1 as "3.14.0", which is the
+    # ambiguity that let a pre-release look supported. This builds the
+    # string from version_info so the releaselevel survives.
+    assert _parser_floor.running_version(version) == expected
 
 
 # --- importing lint really crosses the boundary (fresh processes) ---------

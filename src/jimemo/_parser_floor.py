@@ -7,7 +7,13 @@ CSS string boundaries and can hide a live ``url()`` behind an apparent
 comment. Joi ruled (jimemo#gaga) that the floor rises instead, so the guard
 is gone, and this module is the boundary that replaces it.
 
-It checks one thing: the interpreter is at or above ``jimemo.PYTHON_FLOOR``.
+It checks two things: the interpreter is at or above ``jimemo.PYTHON_FLOOR``,
+and it is a FINAL release. The second is not pedantry -- CPython 3.14.0b1
+compares ``(3, 14, 0) >= (3, 13, 6)`` and so passed every boundary in an
+earlier draft, while its ``html.parser`` fails all three disagreements below
+and jimemo#y9p8's payload lints clean on it (measured on the real build;
+gh-69426 landed in 3.14.0b2). A version number cannot say which pre-release
+carries which backport.
 
 **Why only a version check.** An earlier draft of this module also MEASURED
 the running parser -- feeding it probe inputs and refusing if any answer
@@ -78,14 +84,46 @@ import sys
 from . import PYTHON_FLOOR
 
 
+_RELEASELEVEL_SUFFIX = {"alpha": "a", "beta": "b", "candidate": "rc"}
+
+
+def running_version(version_info=None):
+    """The running interpreter's version as CPython spells it, built from
+    ``sys.version_info`` alone so a test can substitute one: ``3.14.7``,
+    ``3.14.0b1``. Not ``platform.python_version()``, which reports a
+    pre-release as though it were final (``3.14.0`` for 3.14.0b1) -- the
+    exact ambiguity that made a pre-release look supported."""
+    v = version_info if version_info is not None else sys.version_info
+    text = "{0}.{1}.{2}".format(v[0], v[1], v[2])
+    if v[3] != "final":
+        text += "{0}{1}".format(_RELEASELEVEL_SUFFIX.get(v[3], v[3]), v[4])
+    return text
+
+
 def unsupported_interpreter_problem():
     """A message naming how this interpreter falls short of
-    ``PYTHON_FLOOR``, or None when it is at or above it."""
+    ``PYTHON_FLOOR``, or None when it is supported."""
+    floor = ".".join(str(part) for part in PYTHON_FLOOR)
+    # A PRE-RELEASE is refused whatever its numbers say. CPython 3.14.0b1
+    # compares (3, 14, 0) >= (3, 13, 6) and so passed every boundary in an
+    # earlier draft -- while failing all three of the disagreements this
+    # floor exists to rule out, and letting jimemo#y9p8's payload through
+    # `lint_html` clean (measured). gh-69426 landed in 3.14.0b2. A version
+    # range cannot say which pre-release carries which backport, so jimemo
+    # supports final releases only and says so.
+    if sys.version_info[3] != "final":
+        return (
+            "Python {running} is a pre-release (releaselevel {level!r}); "
+            "jimemo supports final releases from {floor} onward, because a "
+            "pre-release's version number does not say which parser fixes "
+            "it carries".format(
+                running=running_version(), level=sys.version_info[3], floor=floor
+            )
+        )
     if sys.version_info[:3] >= PYTHON_FLOOR:
         return None
     return "Python {running} is below jimemo's floor of {floor}".format(
-        running=".".join(str(part) for part in sys.version_info[:3]),
-        floor=".".join(str(part) for part in PYTHON_FLOOR),
+        running=running_version(), floor=floor
     )
 
 

@@ -155,7 +155,7 @@ def test_launcher_runs_on_this_interpreter():
 # --- real sub-floor interpreters ------------------------------------------
 
 
-def _run_launcher_as(faked_version, argv):
+def _run_launcher_as(faked_version, argv, releaselevel="final", serial=0):
     """Run the REAL launcher source with ``sys.version_info`` faked, so the
     floor boundary is tested at exact versions instead of at whatever
     interpreters this machine happens to have installed. The micro
@@ -165,7 +165,7 @@ def _run_launcher_as(faked_version, argv):
         "import collections, sys\n"
         "VI = collections.namedtuple("
         "'version_info', 'major minor micro releaselevel serial')\n"
-        "sys.version_info = VI(%d, %d, %d, 'final', 0)\n"
+        "sys.version_info = VI(%d, %d, %d, %r, %d)\n"
         "sys.argv = [%r] + %r\n"
         "path = %r\n"
         "exec(\n"
@@ -176,6 +176,8 @@ def _run_launcher_as(faked_version, argv):
             faked_version[0],
             faked_version[1],
             faked_version[2],
+            releaselevel,
+            serial,
             str(LAUNCHER),
             list(argv),
             str(LAUNCHER),
@@ -215,6 +217,27 @@ def test_launcher_accepts_the_exact_floor():
     result = _run_launcher_as(PYTHON_FLOOR, ["--version"])
     assert result.returncode == 0, result.stderr
     assert result.stderr == "", result.stderr
+
+
+@pytest.mark.parametrize(
+    "version, level, serial",
+    [
+        ((3, 14, 0), "beta", 1),
+        ((3, 15, 0), "alpha", 1),
+        (PYTHON_FLOOR, "candidate", 1),
+    ],
+    ids=["3.14.0b1", "3.15.0a1", "floor-rc1"],
+)
+def test_launcher_refuses_a_prerelease_even_above_the_floor(version, level, serial):
+    # 3.14.0b1's version_info[:3] is above the floor, but its html.parser
+    # fails every check jimemo depends on (measured on the real build).
+    result = _run_launcher_as(version, ["doctor"], releaselevel=level, serial=serial)
+    assert result.returncode != 0, result.stdout
+    assert result.stdout == "", result.stdout
+    lines = [line for line in result.stderr.splitlines() if line.strip()]
+    assert len(lines) == 1, result.stderr
+    assert "Traceback" not in result.stderr
+    assert "final release" in lines[0], lines[0]
 
 
 @pytest.mark.skipif(

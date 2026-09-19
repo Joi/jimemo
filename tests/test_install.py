@@ -258,7 +258,7 @@ def _fake_bin_with_python3(tmp_path, python3_target=None):
     return fake_bin
 
 
-def _fake_python3_reporting(fake_bin, version):
+def _fake_python3_reporting(fake_bin, version, releaselevel="final", serial=0):
     """A `python3` on PATH that reports `version`, whatever the real
     interpreter is. install.sh asks three `python3 -c` questions about the
     version and one `platform.python_version()`; this answers all four.
@@ -270,6 +270,10 @@ def _fake_python3_reporting(fake_bin, version):
     the comparison (jimemo#gaga).
     """
     dotted = ".".join(str(part) for part in version)
+    if releaselevel != "final":
+        dotted += "{0}{1}".format(
+            {"alpha": "a", "beta": "b", "candidate": "rc"}[releaselevel], serial
+        )
     shim = fake_bin / "python3"
     shim.write_text(
         "#!{real}\n"
@@ -277,7 +281,9 @@ def _fake_python3_reporting(fake_bin, version):
         "version_info = collections.namedtuple(\n"
         "    'version_info', 'major minor micro releaselevel serial'\n"
         ")\n"
-        "sys.version_info = version_info({major}, {minor}, {micro}, 'final', 0)\n"
+        "sys.version_info = version_info("
+        "{major}, {minor}, {micro}, {level!r}, {serial})\n"
+        "sys.version = {dotted!r} + ' (faked)'\n"
         "import platform\n"
         "platform.python_version = lambda: {dotted!r}\n"
         "args = sys.argv[1:]\n"
@@ -289,6 +295,8 @@ def _fake_python3_reporting(fake_bin, version):
             major=version[0],
             minor=version[1],
             micro=version[2],
+            level=releaselevel,
+            serial=serial,
             dotted=dotted,
         ),
         encoding="utf-8",
@@ -404,28 +412,34 @@ def test_install_refuses_every_version_below_the_floor(version, tmp_path):
         "surprise banner\n",
         "",
         "3 13 6\n",
+        "3 13 6 final\n",
         "not a version at all\n",
         # Digits, but not an integer bash 3.2's `test` can represent: it
         # rejects an overflowing number exactly as it rejects a word, with
         # status 2, so a digits-only guard would let this install.
-        "3 13 99999999999999999999 3.13.5\n",
+        "3 13 99999999999999999999 final 3.13.5\n",
         # A glob metacharacter: an unquoted `set -- $PY_PARTS` would expand
         # it against the cwd and could take the floor verdict from the
         # filesystem. `read` does not glob.
-        "3 13 [0-9] 3.13.glob\n",
+        "3 13 [0-9] final 3.13.glob\n",
         # More fields than asked for.
-        "3 13 6 3.13.6 extra\n",
+        "3 13 6 final 3.13.6 extra\n",
+        # A plausible first line followed by more output: `read` takes one
+        # line, so the rest would be silently dropped.
+        "3 13 6 final 3.13.6\n3 12 11 final 3.12.11\n",
         # A component that is not a bare decimal.
-        "3 13 0x6 3.13.6\n",
+        "3 13 0x6 final 3.13.6\n",
     ],
     ids=[
         "banner",
         "empty",
+        "missing-two-fields",
         "missing-version-string",
         "words",
         "overflowing-micro",
         "glob-metachar",
         "extra-field",
+        "multiline",
         "hex-micro",
     ],
 )
@@ -452,7 +466,48 @@ def test_install_refuses_a_python3_whose_version_it_cannot_read(stdout, tmp_path
     )
 
     assert result.returncode != 0, result.stdout
-    assert "could not read python3's version" in result.stderr, result.stderr
+    # Either the generic parse refusal or the multiline-specific one. Both
+    # name the floor, and both must install nothing.
+    assert (
+        "could not read python3's version" in result.stderr
+        or "printed more than one line" in result.stderr
+    ), result.stderr
+    assert ".".join(str(part) for part in PYTHON_FLOOR) in result.stderr
+    assert_nothing_installed(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "version, level, serial",
+    [
+        ((3, 14, 0), "beta", 1),
+        ((3, 15, 0), "alpha", 1),
+        (PYTHON_FLOOR, "candidate", 1),
+    ],
+    ids=["3.14.0b1", "3.15.0a1", "floor-rc1"],
+)
+def test_install_refuses_a_prerelease_even_above_the_floor(
+    version, level, serial, tmp_path
+):
+    # Measured on real CPython 3.14.0b1: version_info[:3] is ABOVE the
+    # floor, yet its html.parser fails all three checks jimemo depends on
+    # and jimemo#y9p8's payload lints clean on it (gh-69426 landed in
+    # 3.14.0b2). A version number cannot say which pre-release carries
+    # which backport, so install.sh takes final releases only.
+    fake_bin = _fake_bin_with_python3(tmp_path, None)
+    _fake_python3_reporting(fake_bin, version, releaselevel=level, serial=serial)
+
+    result = subprocess.run(
+        ["/bin/bash", str(INSTALL_SH)],
+        cwd=str(tmp_path),
+        env=_isolated_env(tmp_path, fake_bin),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode != 0, result.stdout
+    assert "pre-release" in result.stderr, result.stderr
+    assert level in result.stderr, result.stderr
     assert_nothing_installed(tmp_path)
 
 

@@ -13,7 +13,8 @@ cd jimemo
 ./install.sh
 ```
 
-`install.sh` needs `python3` >= 3.13.6 and nothing else. That is newer
+`install.sh` needs `python3` >= 3.13.6 -- a final release, not a beta or
+release candidate -- and nothing else. That is newer
 than the `python3` macOS ships (`/usr/bin/python3` is 3.9.6) and newer than
 most distro defaults, so you may need to install one first -- macOS:
 `brew install python@3.13`; Debian/Ubuntu: `apt install python3.13` -- and

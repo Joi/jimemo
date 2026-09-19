@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import jimemo
 from jimemo import PYTHON_FLOOR
+from jimemo import _parser_floor as cli_parser_floor
 from jimemo import cli
 from jimemo.cli import main
 
@@ -52,17 +53,50 @@ def test_doctor_fails_below_the_python_floor(version, capsys, monkeypatch):
     # (jimemo#gaga). 3.13.0/3.13.3 also still decode semicolonless
     # attribute references and drop unclosed <style> text.
     monkeypatch.setattr(cli.sys, "version_info", _faked_version_info(*version))
+    monkeypatch.setattr(
+        cli_parser_floor.sys, "version_info", _faked_version_info(*version)
+    )
     assert main(["doctor"]) != 0
     out = capsys.readouterr().out
     running = ".".join(str(part) for part in version)
     floor = ".".join(str(part) for part in PYTHON_FLOOR)
-    assert f"FAIL python {running} < required {floor}" in out, out
+    assert f"FAIL python {running} is not supported" in out, out
+    assert floor in out.splitlines()[0], out
     # The interpreter line is still the FIRST thing doctor prints.
     assert out.splitlines()[0].startswith("FAIL python "), out
 
 
+@pytest.mark.parametrize(
+    "version, level, serial, shown",
+    [
+        ((3, 14, 0), "beta", 1, "3.14.0b1"),
+        ((3, 15, 0), "alpha", 2, "3.15.0a2"),
+        (PYTHON_FLOOR, "candidate", 1, ".".join(map(str, PYTHON_FLOOR)) + "rc1"),
+    ],
+    ids=["3.14.0b1", "3.15.0a2", "floor-rc1"],
+)
+def test_doctor_fails_on_a_prerelease_even_above_the_floor(
+    version, level, serial, shown, capsys, monkeypatch
+):
+    # Measured on real CPython 3.14.0b1: above the floor by number, yet its
+    # html.parser fails every check jimemo depends on. doctor must not
+    # report ok on an interpreter jimemo.lint will refuse to load on.
+    faked = collections.namedtuple(
+        "version_info", "major minor micro releaselevel serial"
+    )(version[0], version[1], version[2], level, serial)
+    monkeypatch.setattr(cli.sys, "version_info", faked)
+    monkeypatch.setattr(cli_parser_floor.sys, "version_info", faked)
+    assert main(["doctor"]) != 0
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first.startswith(f"FAIL python {shown} is not supported"), first
+    assert "pre-release" in first, first
+
+
 def test_doctor_passes_at_the_exact_floor(capsys, monkeypatch):
     monkeypatch.setattr(cli.sys, "version_info", _faked_version_info(*PYTHON_FLOOR))
+    monkeypatch.setattr(
+        cli_parser_floor.sys, "version_info", _faked_version_info(*PYTHON_FLOOR)
+    )
     assert main(["doctor"]) == 0
     out = capsys.readouterr().out
     floor = ".".join(str(part) for part in PYTHON_FLOOR)
