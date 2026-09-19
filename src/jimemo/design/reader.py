@@ -76,6 +76,10 @@ class FontFace:
 @dataclass
 class BrandFont:
     family: str
+    # The manifest's referencing token names, restricted by read_export to
+    # names the export actually defines a token for (manifest order kept);
+    # a name that resolves to no token is dropped, so every consumer sees
+    # only live references.
     referencing_token_names: List[str]
     status: str
 
@@ -95,6 +99,9 @@ def read_export(export_dir: Path) -> DesignExport:
     (or, absent a tokens/ dir, any top-level `*.css`) for `:root`
     custom properties. Raises DesignImportError if neither source
     yields any tokens, or a token value fails safety validation.
+
+    A brandFonts entry's referencing token names are kept only where they
+    name a token this export defines; see `BrandFont`.
     """
     export_dir = Path(export_dir)
     manifest = _read_manifest(export_dir)
@@ -200,6 +207,7 @@ def _from_manifest(manifest: dict) -> DesignExport:
         )
 
     brand_fonts: List[BrandFont] = []
+    token_names = {t.name for t in tokens}
     for b in _manifest_list(manifest.get("brandFonts"), "'brandFonts'"):
         if not isinstance(b, dict):
             continue
@@ -222,6 +230,21 @@ def _from_manifest(manifest: dict) -> DesignExport:
         # reach mapping.
         for tn in referencing:
             validate_token_name(tn)
+        # Referential integrity, applied AFTER that validation and never
+        # in place of it: a manifest may name a token this export does not
+        # define -- stale after a rename, or fabricated. Such a name
+        # references nothing, so mapping must not count it: it ranks brand
+        # fonts by how many names reference them, tie-breaks on a
+        # `--<ns>-font`-shaped name, reports one as the theme header's
+        # `source_token`, and reads "ok" plus a referencing name as a
+        # confident font signal. Filtering here -- the one place holding
+        # both lists -- keeps all of those consumers agreeing on what a
+        # live reference is instead of each re-deriving it; mapping's
+        # generic-family hunt already made exactly this check by hand.
+        # Order matters: a hostile name names no token either, and must be
+        # REJECTED by validate_token_name above rather than quietly
+        # dropped here.
+        referencing = [tn for tn in referencing if tn in token_names]
         family = b.get("family")
         family = family if isinstance(family, str) else ""
         # BrandFont.family flows into mapping._font_declaration's quoted

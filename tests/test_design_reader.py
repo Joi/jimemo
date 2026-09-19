@@ -397,7 +397,16 @@ def _manifest_with_brand_font(tmp_path: Path, brand_font: dict) -> Path:
     manifest = {
         "namespace": "Evil",
         "tokens": [
-            {"name": "--evil-token", "value": "#111111", "kind": "color"}
+            {"name": "--evil-token", "value": "#111111", "kind": "color"},
+            # The token the accepted-case brand font below references.
+            # read_export keeps only referencing names that name a token
+            # the export actually defines (see the dangling-reference
+            # tests), so the negative control needs a LIVE name to stay a
+            # test about validation rather than about liveness. The
+            # injection cases are unaffected: a hostile name names no
+            # token either, and is rejected by validate_token_name before
+            # any liveness filtering happens.
+            {"name": "--brand-font", "value": '"Legit", sans-serif', "kind": "font"},
         ],
         "fonts": [],
         "brandFonts": [brand_font],
@@ -522,6 +531,53 @@ def test_brand_font_referencing_token_name_normal_accepted(tmp_path):
     export = read_export(export_dir)
     legit = next(b for b in export.brand_fonts if b.family == "Legit")
     assert legit.referencing_token_names == ["--brand-font"]
+
+
+# -- referential integrity: dangling referencing token names -------------
+#
+# A manifest's brandFonts[].tokens may name a token the export does not
+# define -- stale after a rename, or fabricated. Such a name references
+# nothing, so it must not reach mapping, which counts referencing names to
+# rank brand fonts, tie-breaks on a `--*-font`-shaped one, and reports one
+# as the theme header's source_token. Dropping them here is the ONE place
+# that has both lists; it runs AFTER validate_token_name (the closed
+# header-comment/:root injection finding above), never instead of it --
+# the injection cases above name no token either and still raise.
+
+
+def test_brand_font_dangling_referencing_token_names_dropped(tmp_path):
+    brand = {
+        "family": "Legit",
+        "status": "ok",
+        "tokens": ["--ghost-font", "--brand-font", "--ghost-font-label"],
+    }
+    export_dir = _manifest_with_brand_font(tmp_path, brand)
+    export = read_export(export_dir)
+    legit = next(b for b in export.brand_fonts if b.family == "Legit")
+    assert legit.referencing_token_names == ["--brand-font"]
+
+
+def test_brand_font_with_only_dangling_names_reads_as_unreferenced(tmp_path):
+    # Nothing in the export references this family, whatever the manifest
+    # claims -- it must be indistinguishable from a brandFonts entry with
+    # an empty tokens list, which mapping already declines to pick.
+    brand = {"family": "Legit", "status": "ok", "tokens": ["--ghost-font"]}
+    export_dir = _manifest_with_brand_font(tmp_path, brand)
+    export = read_export(export_dir)
+    legit = next(b for b in export.brand_fonts if b.family == "Legit")
+    assert legit.referencing_token_names == []
+
+
+def test_fixture_brand_font_referencing_names_are_all_live(tmp_path):
+    # The Northwind fixture's brandFonts name only tokens it defines, so
+    # the filter is a no-op there -- the guard that this change does not
+    # move the fixture's mapped theme.
+    export = read_export(FIXTURE_DIR)
+    token_names = {t.name for t in export.tokens}
+    for b in export.brand_fonts:
+        assert set(b.referencing_token_names) <= token_names
+    primary = next(b for b in export.brand_fonts if b.family == "Northwind Sans")
+    assert primary.referencing_token_names == ["--nw-font", "--nw-font-label"]
 
 
 # -- security: manifest shape validation (fail closed, not TypeError) -----
