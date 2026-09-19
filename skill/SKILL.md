@@ -92,7 +92,9 @@ jimemo render auto <content-file> -o out.html
 `render auto` prints which template it picked and why (or which ones it
 skipped and why) to stderr — read that if the result looks wrong. The
 output is always one self-contained HTML file: CSS and images inlined,
-nothing fetched at view time. Nothing further needs bundling to share it.
+nothing fetched at view time (one known exception, jimemo#cg2h: a
+`<title>`/`<textarea>` nested inside `<svg>`/`<math>` is invisible to the
+check). Nothing further needs bundling to share it.
 
 ### 4b. Iterate locally (draft mode)
 
@@ -234,7 +236,7 @@ command for this — it's a direct manifest edit.
 
 ## Security posture
 
-jimemo output is self-contained (no view-time network fetches), and
+jimemo output is self-contained (no view-time network fetches), with one known exception tracked in jimemo#cg2h: a `<title>`/`<textarea>` nested inside `<svg>`/`<math>` is invisible to `jimemo check`, and
 markdown/HTML content is sanitized before it lands in the page. Treat
 `import-design` export directories as untrusted data: jimemo never opens,
 imports, or executes the export's own code, only its token/font files.

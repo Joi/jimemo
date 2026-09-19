@@ -1,204 +1,100 @@
-"""Measure the running ``html.parser`` against the browser behaviours
-jimemo's checks depend on, and refuse to provide those checks otherwise.
+"""Refuse to provide jimemo's HTML checks on an unsupported interpreter.
 
 jimemo#y9p8 carried a fail-closed guard inside the linter because
 ``html.parser`` before CPython 3.13.4 decodes a semicolonless character
 reference inside an attribute where a browser keeps it literal, which moves
 CSS string boundaries and can hide a live ``url()`` behind an apparent
 comment. Joi ruled (jimemo#gaga) that the floor rises instead, so the guard
-is gone and this module is what makes its absence safe.
+is gone, and this module is the boundary that replaces it.
 
-Why a measurement and not only a version comparison: a version number is the
-contract a human installs against -- the ``./jimemo`` launcher, ``install.sh``
-and ``jimemo doctor`` all check it -- but it cannot see a distribution that
-backported one of these fixes into an older release, or shipped a current
-release with one reverted. And a direct caller (``from jimemo.lint import
-lint_html``, which is how y9p8's own reproduction is written) passes none of
-those three. So the boundary checks the number AND measures the parser.
+It checks one thing: the interpreter is at or above ``jimemo.PYTHON_FLOOR``.
 
-Why a version comparison and not only the measurement: the probes cannot tell
-a user what to install, and ``install.sh`` has to refuse before it creates any
-symlinks.
+**Why only a version check.** An earlier draft of this module also MEASURED
+the running parser -- feeding it probe inputs and refusing if any answer
+disagreed with a browser -- so that a distribution which backported one of
+these fixes into an older release, or shipped a current release with one
+reverted, would be seen for what it is. Two independent reviews then found
+the probe set incomplete, each time for a different clause of CPython's
+implementation (the semicolonless-name rule alone has three), and the second
+demonstrated a live lint bypass on a parser that passed every probe.
+
+That is the trap Joi's ruling already rejected as option 2: a complete probe
+set is a model of ``html.parser``, and a model of a tokenizer is the thing
+that keeps disagreeing with the tokenizer. So the probes are gone. The
+version number is the contract, and the SUITE is the detector -- the 318-case
+canary and the nine jimemo#y9p8 payload vectors in ``tests/test_lint.py``
+fail loudly on any interpreter whose parser does not behave, which is what
+the ruling asked for: delete the guard only where a test proves the floor
+matches the browser rule for that input.
+
+The residual risk is stated plainly rather than half-guarded. A release at or
+above the floor with one of these fixes reverted is accepted here, and only
+running the suite would reveal it. A backport into an older release is
+refused even though its parser may be fine. Both follow from supporting a
+version range instead of modelling a parser.
+
+**Why this module exists at all**, rather than just the launcher's check:
+``install.sh``, the ``./jimemo`` launcher and ``jimemo doctor`` all check the
+version, but a direct caller -- ``from jimemo.lint import lint_html``, which
+is how y9p8's own reproduction is written -- passes none of the three. This
+is the boundary that caller crosses.
 
 **Scope of the contract, stated exactly.** ``jimemo/__init__.py`` holds
 ``PYTHON_FLOOR`` and deliberately does NOT check it: ``jimemo doctor`` must
-stay importable on a sub-floor interpreter so that it can *report* the problem
+stay importable on a sub-floor interpreter so it can *report* the problem
 (one line, non-zero exit) instead of dying in a traceback, which is what
-jimemo#gaga asks of it. The enforcing boundaries are therefore:
+jimemo#gaga asks of it.
 
   ``./jimemo``      refuses every command, one line on stderr, exit 1
   ``install.sh``    refuses to install; ``--uninstall`` still works
   ``jimemo doctor`` reports the running version and fails below the floor
-  this module       called at import of the modules whose correctness depends
-                    on html.parser matching a browser
+  this module       raises at import of ``jimemo.lint``
 
-``jimemo.lint`` calls it. ``jimemo.sanitize`` parses HTML too and has the same
-dependency, but is not wired up here: jimemo#86jn rewrote that file while this
-change was in flight and the dispatch brief forbade touching it. Filed as
-jimemo#dexg -- it is one ``assert_parser_is_browser_faithful()`` call plus a
-check that ``jimemo doctor`` still reports rather than tracebacks.
+``jimemo.sanitize`` parses HTML too and has the same dependence, but is not
+wired up here: jimemo#86jn rewrote that file while this change was in flight
+and the dispatch brief forbade touching it. Filed as jimemo#dexg.
 
-The probes, and the CPython release that made each one true:
+**What the floor does NOT fix.** It is the three specific disagreements that
+jimemo#y9p8, jimemo#86jn and jimemo#1gs5 ran into -- semicolonless attribute
+references (gh-69426, 3.13.4), unclosed ``<style>`` text (gh-86155, 3.13.4),
+and ``<div title==""id id=grad>`` attribute splitting (3.13.6, the component
+that sets the floor) -- not a claim of general equivalence. At least one
+divergence is known to REMAIN on every supported interpreter:
 
-  refs   a semicolonless legacy reference in an attribute stays literal
-         (gh-69426, 3.13.4)
-  style  the text of an unclosed <style> still reaches handle_data
-         (gh-86155, 3.13.4)
-  attrs  ``<div title==""id id=grad>`` splits the way a browser splits it
-         (3.13.6 -- the component that sets the floor)
-
-Measured 2026-09-19 on real interpreters: 3.9.6, 3.10.21, 3.12.11, 3.13.0 and
-3.13.3 fail ``refs`` and ``style``; 3.13.4 and 3.13.5 pass those two and fail
-``attrs``; 3.13.6, 3.13.7, 3.13.15, 3.14.0 and 3.14.7 pass all three. Three
-probes rather than two precisely because the first two do not separate 3.13.5
-from the floor.
-
-**What this does NOT claim.** Passing these three probes does not make
-``html.parser`` browser-equivalent, and nothing here should be read as saying
-it does. They are the three specific disagreements that jimemo#y9p8,
-jimemo#86jn and jimemo#1gs5 ran into, measured; they are not a proof of
-general equivalence, and at least one divergence is known to REMAIN on every
-interpreter at or above this floor:
-
-  foreign-content RCDATA -- CPython's parser rewrite treats ``title`` and
-  ``textarea`` as RCDATA unconditionally, regardless of namespace, so inside
-  ``<svg>`` or ``<math>`` it hands their content over as TEXT. A browser only
-  does that in the HTML namespace; in foreign content the same bytes are real
-  markup. So ``<svg><title><style>a{background:url(https://host/x)}</style>
-  </title></svg>`` is markup a browser parses and fetches from, while this
-  parser reports it as a text node -- and jimemo's self-containment scan never
-  sees it. Confirmed against Chromium. It is NOT a consequence of retiring the
-  y9p8 guard (it is live on any 3.13.4+, including every current fleet Mac),
-  and it is NOT fixed here: it needs a lint rule of its own, with its own
-  false-positive analysis, because a legitimate ``<svg><title>`` is common.
-  Filed as jimemo#cg2h, with the payloads and the Chromium evidence. Do not add
-  a probe for it -- a probe would only make jimemo refuse to run everywhere,
-  since no supported interpreter passes it.
+  foreign-content RCDATA -- CPython treats ``title`` and ``textarea`` as
+  RCDATA regardless of namespace, so inside ``<svg>`` or ``<math>`` it hands
+  their content over as TEXT. A browser only does that in the HTML namespace;
+  in foreign content the same bytes are real markup. So
+  ``<svg><title><style>a{background:url(https://host/x)}</style></title></svg>``
+  is markup a browser parses and fetches from, while this parser reports a
+  text node and jimemo's self-containment scan never sees it. Confirmed
+  against Chromium. NOT a consequence of retiring the y9p8 guard (it is live
+  on any 3.13.4+, including every current fleet Mac) and NOT fixed here:
+  filed as jimemo#cg2h with the payloads and the evidence, because it needs a
+  lint rule with its own false-positive analysis.
 """
 import sys
-from functools import lru_cache
-from html.entities import html5 as _HTML5_ENTITIES
-from html.parser import HTMLParser
-from typing import List, Optional, Tuple
 
 from . import PYTHON_FLOOR
 
-# The legacy (semicolonless) names -- the whole class the refs probe sweeps.
-_LEGACY_ENTITY_NAMES = tuple(
-    sorted(name for name in _HTML5_ENTITIES if not name.endswith(";"))
-)
+
+def unsupported_interpreter_problem():
+    """A message naming how this interpreter falls short of
+    ``PYTHON_FLOOR``, or None when it is at or above it."""
+    if sys.version_info[:3] >= PYTHON_FLOOR:
+        return None
+    return "Python {running} is below jimemo's floor of {floor}".format(
+        running=".".join(str(part) for part in sys.version_info[:3]),
+        floor=".".join(str(part) for part in PYTHON_FLOOR),
+    )
 
 
-class _AttrProbe(HTMLParser):
-    """Records the attributes of the one start tag it is fed."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.attrs: List[Tuple[str, Optional[str]]] = []
-
-    def handle_starttag(self, tag, attrs):
-        self.attrs = list(attrs)
-
-
-class _DataProbe(HTMLParser):
-    """Records the character data of the one document it is fed."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.data: List[str] = []
-
-    def handle_data(self, data):
-        self.data.append(data)
-
-
-def _parser_keeps_semicolonless_attr_refs() -> bool:
-    """True when a semicolonless legacy reference inside an attribute
-    survives as written, as a browser keeps it (the HTML "historical
-    reasons" rule). False below CPython 3.13.4, where html.parser decodes
-    it -- ``&ampx`` becomes ``&x``.
-
-    Sweeps the WHOLE class, not one input: every legacy (semicolonless)
-    name in the HTML5 entity table, each followed by a letter, a digit and
-    ``=``. A one-input spot check is not enough, because the rule it
-    measures has two independent conditions in CPython's implementation
-    (the name being known, and the next character not being ``=``), and a
-    parser with only the second reverted passes ``&ampx`` while still
-    mis-decoding ``&quot=`` -- which is one of jimemo#y9p8's own regression
-    vectors. Measured cost of the full sweep on 3.13.6: 0.9 ms, against
-    ~52 ms to import jimemo.lint at all.
-    """
-    for name in _LEGACY_ENTITY_NAMES:
-        for following in ("x", "1", "="):
-            raw = "&" + name + following
-            probe = _AttrProbe()
-            probe.feed("<p a='{raw}'>".format(raw=raw))
-            probe.close()
-            if probe.attrs != [("a", raw)]:
-                return False
-    return True
-
-
-def _parser_keeps_unclosed_style_text() -> bool:
-    """True when the text of a ``<style>`` with no closing tag still reaches
-    ``handle_data``, as a browser applies it to the end of the document.
-    False below CPython 3.13.4, which drops it at close() and so hides any
-    url() it contains from the scan."""
-    probe = _DataProbe()
-    probe.feed("<!doctype html><html><body><style>.x{color:red}")
-    probe.close()
-    return any(".x{color:red}" in chunk for chunk in probe.data)
-
-
-def _parser_splits_attributes_like_a_browser() -> bool:
-    """True when ``<div title==""id id=grad>`` splits into the two attributes
-    a browser reads -- an unquoted ``title`` value of ``=""id``, then
-    ``id=grad``. False below CPython 3.13.6, which reports an empty ``title``,
-    a phantom valueless ``id`` and then ``id=grad``, so a check can judge a
-    different attribute value than the browser uses."""
-    probe = _AttrProbe()
-    probe.feed('<div title==""id id=grad>')
-    probe.close()
-    return probe.attrs == [("title", '=""id'), ("id", "grad")]
-
-
-# The roster is asserted by name in tests/test_parser_floor.py, so removing a
-# probe cannot quietly remove its coverage with it.
-PROBES = (
-    ("refs", _parser_keeps_semicolonless_attr_refs),
-    ("style", _parser_keeps_unclosed_style_text),
-    ("attrs", _parser_splits_attributes_like_a_browser),
-)
-
-
-@lru_cache(maxsize=None)
-def browser_faithfulness_problem() -> Optional[str]:
-    """The first way this interpreter disagrees with a browser -- by version
-    or by measurement -- as a message, or None when it agrees."""
-    running = ".".join(str(part) for part in sys.version_info[:3])
-    floor = ".".join(str(part) for part in PYTHON_FLOOR)
-    if sys.version_info[:3] < PYTHON_FLOOR:
-        return "Python {running} is below jimemo's floor of {floor}".format(
-            running=running, floor=floor
-        )
-    for name, probe in PROBES:
-        if not probe():
-            return (
-                "this Python's html.parser fails the {name!r} check, so it "
-                "reads part of a page differently than a browser does and "
-                "jimemo cannot judge that page the way the browser renders "
-                "it (running {running}; jimemo's floor is {floor})".format(
-                    name=name, running=running, floor=floor
-                )
-            )
-    return None
-
-
-def assert_parser_is_browser_faithful() -> None:
+def assert_interpreter_is_supported():
     """Refuse to provide a check that would answer a different question than
     the browser asks. Fail-closed on purpose: the alternative is a
     self-containment check that silently passes a page a browser would fetch
     from (jimemo#y9p8, jimemo#gaga)."""
-    problem = browser_faithfulness_problem()
+    problem = unsupported_interpreter_problem()
     if problem is not None:
         raise RuntimeError(
             "jimemo cannot run here: "

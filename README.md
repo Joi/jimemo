@@ -459,7 +459,11 @@ are in [`docs/publish-setup.md`](docs/publish-setup.md).
 
 - **Self-contained output.** A rendered `out.html` inlines its CSS and
   images; nothing is fetched when it's opened. Hand it to anyone with
-  no server involved.
+  no server involved. One known exception, tracked in jimemo#cg2h:
+  `jimemo check` cannot see inside a `<title>` or `<textarea>` nested in
+  `<svg>`/`<math>`, because Python's `html.parser` hands that content over
+  as text while a browser reads it as markup, so a resource reference
+  hidden there is neither reported nor inlined.
 - **No network at view or render time.** `jimemo render` never shells
   out or touches the network. `jimemo publish` is the only subcommand
   that does (and only when you run it).

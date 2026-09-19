@@ -24,7 +24,10 @@ contract in detail.
   - `lint.py` — `lint_html`: post-render static checks (no remote
     fetches, no scripts unless the template declares charts, output
     size). `lint_standalone` re-checks a file with no render context
-    (the gate behind `check`, `pdf`, and `publish`).
+    (the gate behind `check`, `pdf`, and `publish`). Refuses to import
+    below `jimemo.PYTHON_FLOOR` (`_parser_floor.py`), which is the
+    boundary a direct `from jimemo.lint import lint_html` caller crosses;
+    that module also records what the floor does and does not fix.
   - `pdf.py` — `find_browser`/`render_pdf`: converts a rendered page to
     PDF by running a locally installed Chromium-family browser headless
     (Chart.js needs a real JS engine), through the same injectable-launcher

@@ -109,7 +109,7 @@ from html.parser import HTMLParser
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from ._parser_floor import (
-    assert_parser_is_browser_faithful as _assert_parser_is_browser_faithful,
+    assert_interpreter_is_supported as _assert_interpreter_is_supported,
 )
 from ._paths import CHARTJS_BUNDLE
 from .charts import chart_lib_inline_text, parse_chart_init_js
@@ -226,17 +226,20 @@ _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
 # boundaries and can hide a live url() behind an apparent comment. Joi
 # ruled (jimemo#gaga) that the floor rises instead, so the guard is gone.
 #
-# _parser_floor is what makes its absence safe: it checks the numeric floor
-# AND measures the running parser against the three browser behaviours the
-# floor exists to guarantee (refs, style, attrs), and raises here at import
-# rather than letting lint answer a weaker question than the browser asks.
-# It is called at import, not per call, so a direct caller --
-# `from jimemo.lint import lint_html`, which is how y9p8's own repro is
-# written -- cannot reach any lint entry point without crossing it. That
-# module's docstring states the contract and the per-release measurement.
-# If the 318-case test in tests/test_lint.py ever fails, the floor has been
-# undercut and the y9p8 guard has to come back.
-_assert_parser_is_browser_faithful()
+# _parser_floor is what makes its absence safe: it refuses to let this
+# module load on an interpreter below jimemo.PYTHON_FLOOR. It is called at
+# import, not per call, so a direct caller -- `from jimemo.lint import
+# lint_html`, which is how y9p8's own repro is written -- cannot reach any
+# lint entry point without crossing it, and the launcher, install.sh and
+# doctor never see that caller at all.
+#
+# The DETECTOR for a parser that misbehaves at or above the floor is the
+# test suite, not a runtime probe: the 318-case canary and the nine y9p8
+# payload vectors in tests/test_lint.py. If the canary ever fails, the floor
+# has been undercut and the y9p8 guard has to come back. _parser_floor's
+# docstring records why runtime probing was tried and dropped, and what the
+# floor does and does not fix.
+_assert_interpreter_is_supported()
 
 
 
@@ -923,7 +926,7 @@ class _Linter(HTMLParser):
         # (jimemo#gaga): on the 3.13.6 floor the parser keeps those
         # references literal, exactly as a browser does, so the CSS scan
         # below already reads what the browser applies. The floor is
-        # enforced by _assert_parser_is_browser_faithful() at import.
+        # enforced by _assert_interpreter_is_supported() at import.
         reason = _BANNED_TAGS.get(tag)
         if reason is not None:
             self.errors.append(

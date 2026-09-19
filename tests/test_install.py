@@ -400,8 +400,34 @@ def test_install_refuses_every_version_below_the_floor(version, tmp_path):
 
 @pytest.mark.parametrize(
     "stdout",
-    ["surprise banner\n", "", "3 13 6\n", "not a version at all\n"],
-    ids=["banner", "empty", "missing-version-string", "words"],
+    [
+        "surprise banner\n",
+        "",
+        "3 13 6\n",
+        "not a version at all\n",
+        # Digits, but not an integer bash 3.2's `test` can represent: it
+        # rejects an overflowing number exactly as it rejects a word, with
+        # status 2, so a digits-only guard would let this install.
+        "3 13 99999999999999999999 3.13.5\n",
+        # A glob metacharacter: an unquoted `set -- $PY_PARTS` would expand
+        # it against the cwd and could take the floor verdict from the
+        # filesystem. `read` does not glob.
+        "3 13 [0-9] 3.13.glob\n",
+        # More fields than asked for.
+        "3 13 6 3.13.6 extra\n",
+        # A component that is not a bare decimal.
+        "3 13 0x6 3.13.6\n",
+    ],
+    ids=[
+        "banner",
+        "empty",
+        "missing-version-string",
+        "words",
+        "overflowing-micro",
+        "glob-metachar",
+        "extra-field",
+        "hex-micro",
+    ],
 )
 def test_install_refuses_a_python3_whose_version_it_cannot_read(stdout, tmp_path):
     # A floor check must fail CLOSED. If python3 exits 0 but prints
@@ -426,6 +452,29 @@ def test_install_refuses_a_python3_whose_version_it_cannot_read(stdout, tmp_path
     )
 
     assert result.returncode != 0, result.stdout
+    assert "could not read python3's version" in result.stderr, result.stderr
+    assert_nothing_installed(tmp_path)
+
+
+def test_install_reports_a_python3_that_exits_non_zero(tmp_path):
+    # Under `set -e` a failing command substitution used to abort the
+    # script with no output at all -- fail-closed, but the user got
+    # nothing to act on (jimemo#gaga).
+    fake_bin = _fake_bin_with_python3(tmp_path, None)
+    shim = fake_bin / "python3"
+    shim.write_text("#!/bin/sh\nexit 3\n", encoding="utf-8")
+    shim.chmod(0o755)
+
+    result = subprocess.run(
+        ["/bin/bash", str(INSTALL_SH)],
+        cwd=str(tmp_path),
+        env=_isolated_env(tmp_path, fake_bin),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode != 0
     assert "could not read python3's version" in result.stderr, result.stderr
     assert_nothing_installed(tmp_path)
 

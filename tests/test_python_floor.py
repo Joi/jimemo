@@ -40,12 +40,16 @@ def _launcher_floor_tuple():
     would run it)."""
     tree = ast.parse(LAUNCHER.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        if isinstance(node, ast.Tuple) and node.elts and all(
-            isinstance(elt, ast.Constant) and isinstance(elt.value, int)
-            for elt in node.elts
+        # The tuple assigned to _FLOOR, BY NAME -- not "the first tuple
+        # literal in the file", which would silently follow any tuple that
+        # appeared above it later.
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_FLOOR"
+            for target in node.targets
         ):
-            return tuple(elt.value for elt in node.elts)
-    raise AssertionError("no integer tuple literal found in the launcher")
+            assert isinstance(node.value, ast.Tuple), ast.dump(node.value)
+            return tuple(elt.value for elt in node.value.elts)
+    raise AssertionError("the launcher no longer assigns _FLOOR")
 
 
 def test_launcher_literal_matches_the_package_constant():
@@ -62,6 +66,17 @@ def test_install_sh_floor_matches_the_package_constant():
     assert major and minor and micro, "install.sh lost a version comparison"
     found = (int(major[0]), int(minor[0]), int(micro[0]))
     assert found == PYTHON_FLOOR
+    # The -eq operands matter just as much: a floor bump that updates the
+    # three -lt numbers but leaves `-eq 13` behind would accept every
+    # release in the OLD minor series above the new micro. The faked-python3
+    # tests in test_install.py catch that behaviourally; this catches it in
+    # the source, where the mistake is made.
+    eq_major = re.findall(r'"\$PY_MAJOR" -eq ([0-9]+)', text)
+    eq_minor = re.findall(r'"\$PY_MINOR" -eq ([0-9]+)', text)
+    assert eq_major, "install.sh lost its major -eq guard"
+    assert eq_minor, "install.sh lost its minor -eq guard"
+    assert {int(v) for v in eq_major} == {PYTHON_FLOOR[0]}, eq_major
+    assert {int(v) for v in eq_minor} == {PYTHON_FLOOR[1]}, eq_minor
     # And the human-readable floor appears in both error messages.
     assert text.count(FLOOR_TEXT) >= 2, text
 

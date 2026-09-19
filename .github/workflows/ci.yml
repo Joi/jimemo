@@ -8,8 +8,9 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # The exact floor (3.13.6, the oldest interpreter whose html.parser
-        # agrees with a browser -- see src/jimemo/__init__.py) plus what the
+        # The exact floor (3.13.6, the oldest interpreter that has all three
+        # html.parser fixes jimemo's checks rely on -- see
+        # src/jimemo/__init__.py) plus what the
         # fleet actually runs. Pinned to the exact patch, not "3.13": a
         # floating 3.13 would silently stop testing the floor boundary the
         # moment setup-python's 3.13 moved, and 3.13.0-3.13.5 are below it.

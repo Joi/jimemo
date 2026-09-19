@@ -224,29 +224,41 @@ fi
 # still reads attributes differently than a browser (jimemo#gaga; the
 # per-release measurement is in src/jimemo/__init__.py). Kept in the bash
 # 3.2 style the rest of this file uses: no arrays, plain -lt.
-PY_PARTS="$(python3 -c 'import platform, sys; print("%d %d %d %s" % (sys.version_info[0], sys.version_info[1], sys.version_info[2], platform.python_version()))' 2>/dev/null)"
-set -- $PY_PARTS
-PY_MAJOR="$1"
-PY_MINOR="$2"
-PY_MICRO="$3"
-PY_VER="$4"
+# Ask once, for all four fields. `|| PY_PARTS=''` keeps a python3 that
+# exits non-zero from killing the script silently under `set -e`: without
+# it the user gets an exit status and no message at all.
+PY_PARTS="$(python3 -c 'import platform, sys; print("%d %d %d %s" % (sys.version_info[0], sys.version_info[1], sys.version_info[2], platform.python_version()))' 2>/dev/null)" \
+    || PY_PARTS=''
 
-# Refuse anything we could not read as three integers. Without this, a
-# python3 that exits 0 but prints something unexpected leaves PY_MAJOR
-# non-numeric; every `[ … -lt … ]` then fails with "integer expression
-# expected" and status 2, the whole `if` evaluates false (set -e does not
-# apply inside an if condition), and the install proceeds -- a floor check
-# that fails OPEN. This one fails closed.
-case "$PY_MAJOR$PY_MINOR$PY_MICRO" in
-    ''|*[!0-9]*)
-        echo "install.sh: error: could not read python3's version" \
-            "(got '$PY_PARTS'). jimemo requires Python >= 3.13.6." >&2
-        exit 1 ;;
-esac
-# All four fields or none: a partial answer means we did not get what we
-# asked for, and guessing the rest is how a floor check ends up trusting
-# a version nobody reported.
-if [ -z "$PY_VER" ]; then
+# `read` rather than `set --`: it neither glob-expands the fields (an
+# unquoted `set -- $PY_PARTS` would expand a `*` in the version string
+# against the cwd) nor clobbers the script's positional parameters. The
+# fifth variable catches EXTRA words, so the field count is exact.
+PY_MAJOR=''; PY_MINOR=''; PY_MICRO=''; PY_VER=''; PY_EXTRA=''
+IFS=' ' read -r PY_MAJOR PY_MINOR PY_MICRO PY_VER PY_EXTRA <<EOF
+$PY_PARTS
+EOF
+
+# A floor check must fail CLOSED on anything it cannot read. Without this,
+# a python3 that exits 0 but reports something unusable leaves PY_MICRO
+# non-numeric or unrepresentable; every `[ … -lt … ]` then fails with
+# status 2, the whole `if` below evaluates false (`set -e` does not apply
+# inside an `if` condition), and the install PROCEEDS. Each component must
+# therefore be 1-4 plain digits -- digits alone is not enough, because bash
+# 3.2's `test` rejects an integer it cannot represent the same way it
+# rejects a word, so `3 13 99999999999999999999` would install.
+for _py_part in "$PY_MAJOR" "$PY_MINOR" "$PY_MICRO"; do
+    case "$_py_part" in
+        ''|*[!0-9]*|?????*)
+            echo "install.sh: error: could not read python3's version" \
+                "(got '$PY_PARTS'). jimemo requires Python >= 3.13.6." >&2
+            exit 1 ;;
+    esac
+done
+# All four fields and no more: a partial or overlong answer is not the
+# answer we asked for, and guessing the rest is how a floor check ends up
+# trusting a version nobody reported.
+if [ -z "$PY_VER" ] || [ -n "$PY_EXTRA" ]; then
     echo "install.sh: error: could not read python3's version" \
         "(got '$PY_PARTS'). jimemo requires Python >= 3.13.6." >&2
     exit 1
