@@ -1238,3 +1238,89 @@ def test_page_id_with_nul_collides_with_a_figure_id_like_a_browser(tmp_path, _is
     # control: without the NUL there is nothing to collide with
     content = _briefing_content(tmp_path, '<a id="g"></a>Anchor.\n\n[[DIAGRAM:FLOW]]\n')
     assert FIGURE_OPEN_TEXT in render_page(BRIEFING_DIR, content, figures={"FLOW": clash})
+
+
+# --- jimemo#v72t: --figure ContentError messages are terminal-safe --------
+
+# The three vectors the issue names, in one name: ESC (the ANSI
+# introducer), U+009B (CSI — a terminal reads it as ESC-[ on its own) and
+# U+202E (right-to-left override, which reorders the rest of the line).
+HOSTILE_NAME = "FL\x1b[31mOW\x9b2K‮"
+HOSTILE_LABEL = "FL?[31mOW?2K?"
+UNSAFE_CODE_POINTS = ("\x1b", "\x9b", "‮")
+
+
+def _assert_terminal_safe(message: str):
+    for ch in UNSAFE_CODE_POINTS:
+        assert ch not in message, (hex(ord(ch)), message)
+
+
+def test_sanitizer_error_names_the_figure_with_a_filtered_label(tmp_path, _isolated_home):
+    # The sanitizer error fires before the placeholder check, so this is
+    # the message a bad figure file reaches stderr through.
+    content = _briefing_content(tmp_path, BODY)
+    with pytest.raises(ContentError) as exc_info:
+        render_page(BRIEFING_DIR, content, figures={HOSTILE_NAME: "<p>not an svg</p>"})
+    message = str(exc_info.value)
+    _assert_terminal_safe(message)
+    # Filtered, not replaced: the printable part still names the figure.
+    assert message.startswith("--figure " + HOSTILE_LABEL + ": ")
+
+
+def test_page_id_collision_message_filters_the_figure_name(tmp_path, _isolated_home):
+    content = _briefing_content(tmp_path, '<a id="anchor-id"></a>A.\n\n[[DIAGRAM:FLOW]]\n')
+    clash = '<svg><linearGradient id="anchor-id"/></svg>'
+    with pytest.raises(ContentError) as exc_info:
+        render_page(BRIEFING_DIR, content, figures={HOSTILE_NAME: clash})
+    message = str(exc_info.value)
+    _assert_terminal_safe(message)
+    assert "--figure {0} defines id='anchor-id'".format(HOSTILE_LABEL) in message
+
+
+def test_two_figure_id_collision_message_filters_the_names_and_the_url_id(
+    tmp_path, _isolated_home
+):
+    # An id may hold U+009B or U+202E: the sanitizer's id check drops only
+    # code points <= 0x20 and 0x7F. Both figures are refused before any
+    # placeholder lookup, so the page needs no placeholder for either name.
+    hostile_id = "g\x9b2K‮"
+    a = '<svg><linearGradient id="{0}"/></svg>'.format(hostile_id)
+    b = '<svg><radialGradient id="{0}"/></svg>'.format(hostile_id)
+    with pytest.raises(ContentError) as exc_info:
+        render_page(
+            BRIEFING_DIR,
+            _briefing_content(tmp_path, BODY),
+            figures={"A\x1b[31m": a, "B‮": b},
+        )
+    message = str(exc_info.value)
+    _assert_terminal_safe(message)
+    # The exact id, repr-escaped, is still there; the url(#…) copy — which
+    # reads as the CSS it shows — is the display label.
+    assert "--figure A?[31m and --figure B? both define " in message
+    assert "id='g\\x9b2K\\u202e';" in message
+    assert "url(#g?2K?)" in message
+
+
+def test_missing_placeholder_message_filters_the_figure_name(tmp_path, _isolated_home):
+    with pytest.raises(ContentError) as exc_info:
+        render_page(
+            BRIEFING_DIR, _briefing_content(tmp_path, BODY),
+            figures={"FLOW": GOOD_SVG, HOSTILE_NAME: PLAIN_SVG},
+        )
+    message = str(exc_info.value)
+    _assert_terminal_safe(message)
+    assert "--figure {0}: placeholder [[DIAGRAM:{0}]] not found".format(
+        HOSTILE_LABEL
+    ) in message
+
+
+def test_not_a_paragraph_message_filters_the_figure_name(tmp_path, _isolated_home):
+    # A name whose raw form survives markdown as plain text, so the
+    # "in the page but not a paragraph" branch is the one that fires.
+    name = "FLOW\x9b2K‮"
+    body = "Before [[DIAGRAM:{0}]] inline.\n".format(name)
+    with pytest.raises(ContentError) as exc_info:
+        render_page(BRIEFING_DIR, _briefing_content(tmp_path, body), figures={name: PLAIN_SVG})
+    message = str(exc_info.value)
+    _assert_terminal_safe(message)
+    assert "--figure FLOW?2K?: [[DIAGRAM:FLOW?2K?]] is in the rendered" in message

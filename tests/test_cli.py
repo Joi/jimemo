@@ -833,6 +833,22 @@ def test_render_figure_malformed_value_exits_2_with_one_line(
     assert not out.exists()
 
 
+def test_render_figure_name_with_terminal_escapes_is_refused(tmp_path, capsys):
+    # The CLI's own --figure messages print NAME bare, but only AFTER the
+    # allowlist above has accepted it ([A-Za-z0-9_-], 1-64), and a rejected
+    # value is echoed through repr(), which escapes what a terminal acts on.
+    # That is why jimemo#v72t filtered render.py's messages and not these;
+    # this pins the CLI half of that. ESC, U+009B (CSI) and U+202E (RLO).
+    content, svg = _figure_inputs(tmp_path)
+    assert main(["render", "briefing", str(content), "-o", str(tmp_path / "o.html"),
+                 "--figure", "FL\x1b[31mOW\x9b2K\u202e=" + str(svg)]) == 2
+    err = capsys.readouterr().err
+    assert "NAME must be" in err
+    for ch in ("\x1b", "\x9b", "\u202e"):
+        assert ch not in err, hex(ord(ch))
+    assert len(err.strip().splitlines()) == 1
+
+
 def test_render_figure_duplicate_name_exits_2(tmp_path, capsys):
     content, svg = _figure_inputs(tmp_path)
     assert main(["render", "briefing", str(content), "-o", str(tmp_path / "o.html"),

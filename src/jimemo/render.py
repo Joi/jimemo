@@ -208,21 +208,29 @@ def _splice_figures(html: str, figures: Dict[str, str]) -> Tuple[str, List[str]]
     Returns ``(html, warnings)``: `warnings` holds one line per distinct
     element or attribute the sanitizer dropped (_figure_drop_warnings), for
     render_page to print — the drops are silent otherwise, and a refused
-    style shows up only as a wrongly painted shape."""
+    style shows up only as a wrongly painted shape.
+
+    Every message here names a figure by its DISPLAY LABEL
+    (sanitize._svg_drop_label), as the warnings do: a NAME is written by
+    whoever ran the tool and an id comes from the untrusted figure file, and
+    both land on a terminal. An id is ALSO printed with ``!r``, which is
+    exact and escapes what a terminal would act on; the ``url(#…)`` form
+    beside it is the label, because that one is read as the CSS it shows."""
     sanitized: Dict[str, str] = {}
     id_owner: Dict[str, str] = {}
     warnings: List[str] = []
     page_ids = _page_ids(html)
     for name, svg_text in figures.items():
+        label = _svg_drop_label(name)
         try:
             svg, ids, drops = sanitize_svg_with_report(svg_text)
         except ValueError as e:
-            raise ContentError(f"--figure {name}: {e}") from e
+            raise ContentError(f"--figure {label}: {e}") from e
         warnings.extend(_figure_drop_warnings(name, drops))
         for svg_id in ids:
             if svg_id in page_ids:
                 raise ContentError(
-                    f"--figure {name} defines id={svg_id!r}, which the page "
+                    f"--figure {label} defines id={svg_id!r}, which the page "
                     "already uses (a heading anchor or a chart); inline SVG "
                     "shares the page's one id namespace — give the figure's "
                     "ids a distinct prefix"
@@ -230,11 +238,11 @@ def _splice_figures(html: str, figures: Dict[str, str]) -> Tuple[str, List[str]]
             owner = id_owner.setdefault(svg_id, name)
             if owner != name:
                 raise ContentError(
-                    f"--figure {owner} and --figure {name} both define "
-                    f"id={svg_id!r}; "
+                    f"--figure {_svg_drop_label(owner)} and --figure {label} "
+                    f"both define id={svg_id!r}; "
                     "inline SVG shares the page's one id namespace, so "
-                    f"url(#{svg_id}) would resolve to the wrong figure — "
-                    "give each figure's ids a distinct prefix"
+                    f"url(#{_svg_drop_label(svg_id)}) would resolve to the "
+                    "wrong figure — give each figure's ids a distinct prefix"
                 )
         sanitized[name] = svg
 
@@ -244,18 +252,21 @@ def _splice_figures(html: str, figures: Dict[str, str]) -> Tuple[str, List[str]]
     for name in sanitized:
         if FIGURE_PLACEHOLDER.format(name=name) in html:
             continue
+        # The lookups above use the raw NAME — the page holds the real
+        # placeholder, not a label — and only the messages below show it.
+        label = _svg_drop_label(name)
         if f"[[DIAGRAM:{name}]]" in html:
             # The text is there, but not as the exact bare paragraph the
             # splice replaces. Say so: the usual cause is invisible in
             # the source (a trailing space renders as "…]] </p>").
             raise ContentError(
-                f"--figure {name}: [[DIAGRAM:{name}]] is in the rendered "
+                f"--figure {label}: [[DIAGRAM:{label}]] is in the rendered "
                 "page, but not as a paragraph of its own — remove any "
                 "other text or trailing spaces on its line, and do not "
                 "put it in a heading or a list item (see docs/diagrams.md)"
             )
         raise ContentError(
-            f"--figure {name}: placeholder [[DIAGRAM:{name}]] not found "
+            f"--figure {label}: placeholder [[DIAGRAM:{label}]] not found "
             "in the rendered page — it must be a paragraph of its own "
             "in a markdown slot (see docs/diagrams.md)"
         )
