@@ -1230,6 +1230,8 @@ class _CountingStopScan:
         "url(" * 50000,                     # one re-match per open before
         "url(" * 50000 + '"',               # every open stops at the far quote
         "url(" * 1000 + ")",                # every open stops at the far ``)``
+                                            # (the n targets it yields are
+                                            # jimemo#j7mv, not counted here)
         'url("' * 40000,                    # each string closes at the next quote
         "url(" + " " * 200000 + '"x"' + " " * 200000 + ")",
         'url(" ' + "url('" * 30000 + '")',  # opens inside a long string

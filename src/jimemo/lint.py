@@ -560,6 +560,14 @@ def _css_url_targets(text: str) -> Iterator[Optional[str]]:
     so the stop scans together cover the text once. When no stop exists
     ahead, this open and every later one are unterminated, so the
     generator ends after one None (the caller reports the construct once).
+
+    What is NOT bounded here: opens nested inside one bare target
+    (``url(url(x))``) each yield their own target, as they always did,
+    so n opens sharing one ``)`` hand the caller n overlapping targets
+    to copy and check — work proportional to opens x length. A browser
+    reads the inner ``url(`` as URL text, not a token; reporting it that
+    way is jimemo#j7mv, kept apart from this fix because it changes what
+    is reported.
     """
     stop = None  # the first ``)`` or quote at or after the current open
     for open_match in _CSS_URL_OPEN_RE.finditer(text):
