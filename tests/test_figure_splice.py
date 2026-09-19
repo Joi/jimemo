@@ -1263,25 +1263,64 @@ def test_only_the_first_id_attribute_of_a_page_element_is_collected(tmp_path, _i
     '<div data{0}id id=grad></div>',       # inside an attribute name
 ])
 def test_first_id_rule_never_trusts_a_split_a_browser_would_not_make(sep, shape):
-    # Pre-handoff review of jimemo#1gs5: html.parser before 3.13 splits
-    # attributes on Python's `\s`, which also matches these characters; a
-    # browser keeps them inside the name or value. So 3.9 reports a phantom
-    # valueless `id` ahead of the real id=grad, and a bare first-id rule
-    # would miss the collision the collect-everything rule used to catch.
-    # Template markup reaches the collector as written (sanitize_html never
-    # sees it), which is how such a tag gets into a page. Meaningful on
-    # Python < 3.13; on 3.13+ the parser splits like a browser and the
-    # plain first-id rule already finds "grad".
+    # Pre-handoff review of jimemo#1gs5: some html.parser versions (3.9.6
+    # here; not 3.14.7) split attributes on Python's `\s`, which also
+    # matches these characters, where a browser keeps them inside the
+    # name or value. The parser then reports a phantom valueless `id`
+    # ahead of the real id=grad, and a bare first-id rule would miss the
+    # collision the collect-everything rule used to catch. Template markup
+    # reaches the collector as written (sanitize_html never sees it). On a
+    # parser that splits like a browser this passes through the plain
+    # first-id rule instead.
     from jimemo.render import _page_ids
 
     assert "grad" in _page_ids(shape.format(sep))
 
 
+@pytest.mark.parametrize("markup", [
+    '<div title==""id id=grad></div>',     # `=+`, then a name right after a quote
+    '<div title=="x"id id=grad></div>',
+    '<div title=""id id=grad></div>',      # no whitespace after a quoted value
+    '<div id=first id=grad></div>',        # unquoted values: not plain
+    '<div id = "first" id=grad></div>',    # whitespace around "="
+])
+def test_tags_outside_the_plain_grammar_keep_every_id(markup):
+    # Delta review of the fix above: `<div title==""id id=grad>` gives the
+    # same phantom id on 3.9.6 with no unusual whitespace at all. So the
+    # first-id rule is applied only to tags inside an ALLOWLIST grammar
+    # both tokenizers split identically; everything else records every id.
+    from jimemo.render import _page_ids
+
+    assert "grad" in _page_ids(markup)
+
+
 def test_first_id_rule_applies_to_plainly_tokenized_tags_only():
     from jimemo.render import _page_ids
 
+    # What sanitize_html emits (quoted values), and bare names: plain.
     assert _page_ids('<a id="first" id="second"></a>') == {"first"}
-    assert _page_ids('<a id=first id=second></a>') == {"first"}
-    # Ambiguous tag: every id is kept — a false refusal, never a missed
-    # collision.
-    assert _page_ids('<a title="x y" id="first" id="second"></a>') == {"first", "second"}
+    assert _page_ids("<a hidden id='first' id='second'/>") == {"first"}
+    assert _page_ids('<a title="x y=z id=q" id="first" id="second"></a>') == {"first"}
+    # An empty first id is still the element's id.
+    assert _page_ids('<a id="" id="second"></a>') == set()
+    # One id attribute: recorded whatever the tag looks like.
+    assert _page_ids('<div title==x id=solo></div>') == {"solo"}
+
+
+def test_phantom_id_in_template_markup_still_collides(tmp_path, _isolated_home):
+    # The render path the delta review asked for: template markup reaches
+    # the page (and the collector) as written, unlike content.
+    import shutil
+
+    template_dir = tmp_path / "tpl"
+    shutil.copytree(BRIEFING_DIR, template_dir)
+    tpl = template_dir / "template.html.j2"
+    text = tpl.read_text()
+    marker = "{% block content %}"
+    assert text.count(marker) == 1
+    tpl.write_text(text.replace(marker, marker + '<div title==""id id=grad></div>'))
+    content = _briefing_content(tmp_path, BODY)
+    assert 'id=grad' in render_page(template_dir, content)
+    clash = '<svg><linearGradient id="grad"/></svg>'
+    with pytest.raises(ContentError, match="id='grad', which the page already uses"):
+        render_page(template_dir, content, figures={"FLOW": clash})
