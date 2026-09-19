@@ -136,15 +136,8 @@ class _IdCollector(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         for name, value in attrs:
-            if name != "id":
-                continue
-            # A browser keeps an element's FIRST id attribute and ignores
-            # the rest (sanitize_html keeps them all, so they reach the
-            # page); _SVGSanitizer does the same for figures. id="" is
-            # still the element's id, and matches nothing.
-            if value:
+            if name == "id" and value:
                 self.ids.add(value)
-            return
 
     handle_startendtag = handle_starttag
 
