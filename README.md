@@ -24,11 +24,20 @@ dependencies only, nothing to `pip install`. A stock Mac's
 Python (macOS: `brew install python@3.13`; Debian/Ubuntu: `apt install
 python3.13`) and put its `python3` first on `PATH`. The floor is 3.13.6
 rather than 3.9 because `jimemo check`'s self-containment scan has to read
-a page's HTML the way a browser reads it, and `html.parser` only stopped
-disagreeing with a browser about attribute character references and
-unclosed `<style>` elements in 3.13.4/3.13.6. It's one clone: `install.sh`
-symlinks everything back to it, so `git pull` updates every harness at
-once. The script is idempotent, refuses to clobber a real file/dir that
+a page's HTML as closely as possible to the way a browser reads it, and
+`html.parser` only stopped disagreeing with a browser about attribute
+character references, attribute splitting and unclosed `<style>` elements
+in 3.13.4/3.13.6 (`jimemo.PYTHON_FLOOR` records the measurement). Those
+are the specific disagreements jimemo hit, not a guarantee that the two
+parsers agree in general — `src/jimemo/_parser_floor.py` lists a known
+remaining divergence. Neither `./jimemo` nor `install.sh` looks for another
+interpreter on `PATH`: they check the `python3` you ran them with and stop,
+because `python3.13` on `PATH` says nothing about whether it is 3.13.3 or
+3.13.6. To use a specific one without changing `PATH`, invoke it directly:
+`python3.13 /path/to/jimemo render ...`.
+
+It's one clone: `install.sh` symlinks everything back to it, so `git pull`
+updates every harness at once. The script is idempotent, refuses to clobber a real file/dir that
 isn't its own symlink, and `./install.sh --uninstall` reverses exactly
 what it created, leaving the clone untouched. `--dry-run` prints the plan
 without touching anything.

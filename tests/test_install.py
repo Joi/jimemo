@@ -355,7 +355,17 @@ def test_sub_floor_python3_is_refused(version, executable, dry_run, tmp_path):
     assert_nothing_installed(tmp_path)
 
 
-SUB_FLOOR_VERSIONS = [(3, 9, 6), (3, 12, 11), (3, 13, 0), (3, 13, 3), (3, 13, 5)]
+# Hardcoded historical versions PLUS the release immediately below the
+# floor, derived so a floor bump keeps testing its own boundary instead of
+# a stale one.
+_JUST_BELOW_FLOOR = (
+    (PYTHON_FLOOR[0], PYTHON_FLOOR[1], PYTHON_FLOOR[2] - 1)
+    if PYTHON_FLOOR[2] > 0
+    else (PYTHON_FLOOR[0], PYTHON_FLOOR[1] - 1, 0)
+)
+SUB_FLOOR_VERSIONS = sorted(
+    {(3, 9, 6), (3, 12, 11), (3, 13, 0), (3, 13, 3), _JUST_BELOW_FLOOR}
+)
 
 
 @pytest.mark.parametrize(
@@ -385,6 +395,38 @@ def test_install_refuses_every_version_below_the_floor(version, tmp_path):
     assert dotted in result.stderr, result.stderr
     assert floor_text in result.stderr, result.stderr
     assert "Traceback" not in result.stderr
+    assert_nothing_installed(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    ["surprise banner\n", "", "3 13 6\n", "not a version at all\n"],
+    ids=["banner", "empty", "missing-version-string", "words"],
+)
+def test_install_refuses_a_python3_whose_version_it_cannot_read(stdout, tmp_path):
+    # A floor check must fail CLOSED. If python3 exits 0 but prints
+    # something unexpected, the version components are non-numeric; every
+    # `[ … -lt … ]` then fails with status 2, the whole `if` evaluates
+    # false (set -e does not apply inside an if condition), and without an
+    # explicit guard install.sh would proceed to install (jimemo#gaga).
+    fake_bin = _fake_bin_with_python3(tmp_path, None)
+    shim = fake_bin / "python3"
+    shim.write_text(
+        '#!/bin/sh\ncat <<"EOF"\n' + stdout + "EOF\nexit 0\n", encoding="utf-8"
+    )
+    shim.chmod(0o755)
+
+    result = subprocess.run(
+        ["/bin/bash", str(INSTALL_SH)],
+        cwd=str(tmp_path),
+        env=_isolated_env(tmp_path, fake_bin),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode != 0, result.stdout
+    assert "could not read python3's version" in result.stderr, result.stderr
     assert_nothing_installed(tmp_path)
 
 

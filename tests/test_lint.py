@@ -1021,7 +1021,9 @@ def _first_style_value(markup):
 # Every legacy (semicolonless) name in the HTML5 entity table, not just the
 # four that decode to ASCII: this is the whole input class y9p8's guard
 # covered, measured against the real parser rather than assumed from a
-# version number. Measured 2026-09-19: 0 of 318 kept literal on 3.9.6,
+# version number. 106 legacy names x 3 following characters = 318 checks
+# (the table has 106 such names, not 318). Measured 2026-09-19: 0 of the
+# 318 kept literal on 3.9.6,
 # 3.10.21, 3.12.11, 3.13.0 and 3.13.3; all 318 kept on 3.13.4, 3.13.6,
 # 3.13.15, 3.14.0 and 3.14.7. If this test ever fails, the floor has been
 # undercut and the y9p8 guard has to come back -- it is the canary for the

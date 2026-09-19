@@ -20,7 +20,7 @@ Parsed with the vendored ``tomli`` reader (see ``_vendor.py``). jimemo's
 Python floor is 3.13.6 (see ``jimemo.PYTHON_FLOOR``), so the stdlib
 ``tomllib`` is now always available; ``tomli`` is kept for the moment
 because dropping a vendored dependency changes ``vendor/SHA256SUMS`` and
-its checksum tests, which is its own change.
+its checksum tests, which is its own change (jimemo#bgaw).
 
 SECURITY: this file NEVER holds secrets. It stores only non-secret
 identifiers -- a command name, or a Cloudflare project/account/KV-namespace

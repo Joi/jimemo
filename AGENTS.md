@@ -26,9 +26,11 @@ this skill (`skill/`) with any harness it finds installed (Claude Code,
 Codex, ...). Idempotent, and `./install.sh --uninstall` reverses it. One
 clone; `git pull` updates every harness that points at it. Requires
 Python >= 3.13.6 (the floor is patch-level: `html.parser` only stopped
-disagreeing with a browser about attribute character references and
-unclosed `<style>` text in 3.13.4/3.13.6, and `jimemo check` depends on
-that — see `src/jimemo/__init__.py`). A stock Mac's `/usr/bin/python3` is
+disagreeing with a browser about attribute character references,
+attribute splitting and unclosed `<style>` text in 3.13.4/3.13.6, and
+`jimemo check` depends on that — see `src/jimemo/__init__.py`, and
+`src/jimemo/_parser_floor.py` for what the floor does and does not
+guarantee). A stock Mac's `/usr/bin/python3` is
 3.9.6; `brew install python@3.13` and put it first on `PATH`.
 
 Without `install.sh`, the manual equivalent is a symlink:

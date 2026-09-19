@@ -41,7 +41,7 @@ def markdown_extensions() -> list:
     Stock macOS Python 3.9.6 -- the documented floor until jimemo#gaga
     raised it to 3.13.6 -- crashed on first render exactly there. Objects
     skip name resolution entirely, which is the right thing to pass
-    regardless of version, so this stays.
+    regardless of version, so this stays (jimemo#adw9).
     Fresh instances per call: Extension objects carry per-run config
     and are not documented as reuse-safe across Markdown instances."""
     return [TableExtension(), FencedCodeExtension()]

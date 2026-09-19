@@ -239,6 +239,7 @@ _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
 _assert_parser_is_browser_faithful()
 
 
+
 # --- CSS references -------------------------------------------------------
 # CSS fetches on its own: a url(...) in any property (background,
 # cursor, @font-face src, ...) and an @import both load their target at

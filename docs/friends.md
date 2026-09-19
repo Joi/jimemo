@@ -18,12 +18,13 @@ than the `python3` macOS ships (`/usr/bin/python3` is 3.9.6) and newer than
 most distro defaults, so you may need to install one first -- macOS:
 `brew install python@3.13`; Debian/Ubuntu: `apt install python3.13` -- and
 put it first on your `PATH`. The floor is that high because `jimemo check`
-has to read a page's HTML the way a browser reads it, and Python's
-`html.parser` only stopped disagreeing with browsers about attribute
-character references and unclosed `<style>` elements in 3.13.4/3.13.6.
-`install.sh` and `./jimemo` both refuse an older interpreter with one
-line, rather than running with a weaker check. It symlinks the `jimemo`
-CLI onto
+has to read a page's HTML as closely as it can to the way a browser reads
+it, and Python's `html.parser` only stopped disagreeing with browsers about
+attribute character references, attribute splitting and unclosed `<style>`
+elements in 3.13.4/3.13.6. `install.sh` and `./jimemo` both refuse an
+older interpreter with one line, rather than running with a weaker check,
+and neither hunts for a newer interpreter on your `PATH` -- they check the
+`python3` you ran them with. It symlinks the `jimemo` CLI onto
 `~/.local/bin` and registers the agent skill with whatever harness it
 finds on the machine (Claude Code/Cowork, Codex, Amplifier) -- see
 `AGENTS.md` if you're wiring it into something else. If `~/.local/bin`

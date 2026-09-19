@@ -224,10 +224,33 @@ fi
 # still reads attributes differently than a browser (jimemo#gaga; the
 # per-release measurement is in src/jimemo/__init__.py). Kept in the bash
 # 3.2 style the rest of this file uses: no arrays, plain -lt.
-PY_MAJOR="$(python3 -c 'import sys; print(sys.version_info[0])')"
-PY_MINOR="$(python3 -c 'import sys; print(sys.version_info[1])')"
-PY_MICRO="$(python3 -c 'import sys; print(sys.version_info[2])')"
-PY_VER="$(python3 -c 'import platform; print(platform.python_version())')"
+PY_PARTS="$(python3 -c 'import platform, sys; print("%d %d %d %s" % (sys.version_info[0], sys.version_info[1], sys.version_info[2], platform.python_version()))' 2>/dev/null)"
+set -- $PY_PARTS
+PY_MAJOR="$1"
+PY_MINOR="$2"
+PY_MICRO="$3"
+PY_VER="$4"
+
+# Refuse anything we could not read as three integers. Without this, a
+# python3 that exits 0 but prints something unexpected leaves PY_MAJOR
+# non-numeric; every `[ … -lt … ]` then fails with "integer expression
+# expected" and status 2, the whole `if` evaluates false (set -e does not
+# apply inside an if condition), and the install proceeds -- a floor check
+# that fails OPEN. This one fails closed.
+case "$PY_MAJOR$PY_MINOR$PY_MICRO" in
+    ''|*[!0-9]*)
+        echo "install.sh: error: could not read python3's version" \
+            "(got '$PY_PARTS'). jimemo requires Python >= 3.13.6." >&2
+        exit 1 ;;
+esac
+# All four fields or none: a partial answer means we did not get what we
+# asked for, and guessing the rest is how a floor check ends up trusting
+# a version nobody reported.
+if [ -z "$PY_VER" ]; then
+    echo "install.sh: error: could not read python3's version" \
+        "(got '$PY_PARTS'). jimemo requires Python >= 3.13.6." >&2
+    exit 1
+fi
 
 if [ "$PY_MAJOR" -lt 3 ] \
     || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 13 ]; } \

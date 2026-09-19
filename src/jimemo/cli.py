@@ -45,7 +45,7 @@ def cmd_doctor(args) -> int:
     v = sys.version_info
     floor = ".".join(str(part) for part in PYTHON_FLOOR)
     running = f"{v.major}.{v.minor}.{v.micro}"
-    if tuple(v[:3]) >= PYTHON_FLOOR:
+    if v[:3] >= PYTHON_FLOOR:
         print(f"ok   python {running}")
     else:
         print(f"FAIL python {running} < required {floor} — install Python "

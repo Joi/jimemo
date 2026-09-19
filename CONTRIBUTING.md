@@ -4,11 +4,13 @@ Open an ordinary GitHub pull request. That is the whole job from your
 side:
 
 1. Fork or branch, make the change. jimemo needs Python >= 3.13.6 — a
-   patch-level floor, because `jimemo check` reads a page's HTML the way a
-   browser does and `html.parser` only stopped disagreeing about attribute
-   character references and unclosed `<style>` text in 3.13.4/3.13.6 (see
-   `src/jimemo/__init__.py`). `./jimemo` and `install.sh` both refuse an
-   older interpreter with one line.
+   patch-level floor, because `jimemo check` reads a page's HTML as closely
+   as it can to the way a browser does, and `html.parser` only stopped
+   disagreeing about attribute character references, attribute splitting and
+   unclosed `<style>` text in 3.13.4/3.13.6 (see `src/jimemo/__init__.py`;
+   `src/jimemo/_parser_floor.py` records what is and is not guaranteed).
+   `./jimemo` and `install.sh` both refuse an older interpreter with one
+   line; neither looks for a newer one on `PATH`.
 2. Run the tests: `python3 -m pip install pytest`, then
    `python3 -m pytest tests -q` (and `./jimemo doctor`) — pytest is the
    suite runner and the repo's only development dependency.

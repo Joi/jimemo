@@ -34,8 +34,9 @@ jimemo#gaga asks of it. The enforcing boundaries are therefore:
 
 ``jimemo.lint`` calls it. ``jimemo.sanitize`` parses HTML too and has the same
 dependency, but is not wired up here: jimemo#86jn rewrote that file while this
-change was in flight and the dispatch brief forbade touching it. Filed as a
-follow-up -- it is one ``_assert_parser_is_browser_faithful()`` call.
+change was in flight and the dispatch brief forbade touching it. Filed as
+jimemo#dexg -- it is one ``assert_parser_is_browser_faithful()`` call plus a
+check that ``jimemo doctor`` still reports rather than tracebacks.
 
 The probes, and the CPython release that made each one true:
 
@@ -51,13 +52,41 @@ Measured 2026-09-19 on real interpreters: 3.9.6, 3.10.21, 3.12.11, 3.13.0 and
 ``attrs``; 3.13.6, 3.13.7, 3.13.15, 3.14.0 and 3.14.7 pass all three. Three
 probes rather than two precisely because the first two do not separate 3.13.5
 from the floor.
+
+**What this does NOT claim.** Passing these three probes does not make
+``html.parser`` browser-equivalent, and nothing here should be read as saying
+it does. They are the three specific disagreements that jimemo#y9p8,
+jimemo#86jn and jimemo#1gs5 ran into, measured; they are not a proof of
+general equivalence, and at least one divergence is known to REMAIN on every
+interpreter at or above this floor:
+
+  foreign-content RCDATA -- CPython's parser rewrite treats ``title`` and
+  ``textarea`` as RCDATA unconditionally, regardless of namespace, so inside
+  ``<svg>`` or ``<math>`` it hands their content over as TEXT. A browser only
+  does that in the HTML namespace; in foreign content the same bytes are real
+  markup. So ``<svg><title><style>a{background:url(https://host/x)}</style>
+  </title></svg>`` is markup a browser parses and fetches from, while this
+  parser reports it as a text node -- and jimemo's self-containment scan never
+  sees it. Confirmed against Chromium. It is NOT a consequence of retiring the
+  y9p8 guard (it is live on any 3.13.4+, including every current fleet Mac),
+  and it is NOT fixed here: it needs a lint rule of its own, with its own
+  false-positive analysis, because a legitimate ``<svg><title>`` is common.
+  Filed as jimemo#cg2h, with the payloads and the Chromium evidence. Do not add
+  a probe for it -- a probe would only make jimemo refuse to run everywhere,
+  since no supported interpreter passes it.
 """
 import sys
 from functools import lru_cache
+from html.entities import html5 as _HTML5_ENTITIES
 from html.parser import HTMLParser
 from typing import List, Optional, Tuple
 
 from . import PYTHON_FLOOR
+
+# The legacy (semicolonless) names -- the whole class the refs probe sweeps.
+_LEGACY_ENTITY_NAMES = tuple(
+    sorted(name for name in _HTML5_ENTITIES if not name.endswith(";"))
+)
 
 
 class _AttrProbe(HTMLParser):
@@ -83,13 +112,30 @@ class _DataProbe(HTMLParser):
 
 
 def _parser_keeps_semicolonless_attr_refs() -> bool:
-    """True when ``&ampx`` inside an attribute survives as written, as a
-    browser keeps it (the HTML "historical reasons" rule). False below
-    CPython 3.13.4, where html.parser decodes it to ``&x``."""
-    probe = _AttrProbe()
-    probe.feed("<p a='&ampx'>")
-    probe.close()
-    return probe.attrs == [("a", "&ampx")]
+    """True when a semicolonless legacy reference inside an attribute
+    survives as written, as a browser keeps it (the HTML "historical
+    reasons" rule). False below CPython 3.13.4, where html.parser decodes
+    it -- ``&ampx`` becomes ``&x``.
+
+    Sweeps the WHOLE class, not one input: every legacy (semicolonless)
+    name in the HTML5 entity table, each followed by a letter, a digit and
+    ``=``. A one-input spot check is not enough, because the rule it
+    measures has two independent conditions in CPython's implementation
+    (the name being known, and the next character not being ``=``), and a
+    parser with only the second reverted passes ``&ampx`` while still
+    mis-decoding ``&quot=`` -- which is one of jimemo#y9p8's own regression
+    vectors. Measured cost of the full sweep on 3.13.6: 0.9 ms, against
+    ~52 ms to import jimemo.lint at all.
+    """
+    for name in _LEGACY_ENTITY_NAMES:
+        for following in ("x", "1", "="):
+            raw = "&" + name + following
+            probe = _AttrProbe()
+            probe.feed("<p a='{raw}'>".format(raw=raw))
+            probe.close()
+            if probe.attrs != [("a", raw)]:
+                return False
+    return True
 
 
 def _parser_keeps_unclosed_style_text() -> bool:
@@ -130,17 +176,17 @@ def browser_faithfulness_problem() -> Optional[str]:
     or by measurement -- as a message, or None when it agrees."""
     running = ".".join(str(part) for part in sys.version_info[:3])
     floor = ".".join(str(part) for part in PYTHON_FLOOR)
-    if tuple(sys.version_info[:3]) < PYTHON_FLOOR:
+    if sys.version_info[:3] < PYTHON_FLOOR:
         return "Python {running} is below jimemo's floor of {floor}".format(
             running=running, floor=floor
         )
     for name, probe in PROBES:
         if not probe():
             return (
-                "this Python's html.parser fails the {name!r} check: it reads "
-                "HTML differently than a browser does, so jimemo cannot judge "
-                "a page the way the browser renders it (running {running}; "
-                "jimemo's floor is {floor})".format(
+                "this Python's html.parser fails the {name!r} check, so it "
+                "reads part of a page differently than a browser does and "
+                "jimemo cannot judge that page the way the browser renders "
+                "it (running {running}; jimemo's floor is {floor})".format(
                     name=name, running=running, floor=floor
                 )
             )

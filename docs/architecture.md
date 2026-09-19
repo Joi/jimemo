@@ -58,7 +58,8 @@ contract in detail.
   Markdown, PyYAML, tomli) with `SHA256SUMS`; verified by `jimemo doctor`.
   tomli parses `~/.jimemo/config.toml`. It predates the 3.13.6 floor
   (`jimemo.PYTHON_FLOOR`), which always has stdlib `tomllib`; swapping to
-  `tomllib` is a separate change because it rewrites `vendor/SHA256SUMS`.
+  `tomllib` is a separate change because it rewrites `vendor/SHA256SUMS`
+  (jimemo#bgaw).
 - `charts/vendor/chartjs/` — vendored browser-side Chart.js
   (`chart.umd.min.js` + `LICENSE.md`), pinned and checksummed like
   `vendor/` but kept in its own tree with its own `SHA256SUMS` since
