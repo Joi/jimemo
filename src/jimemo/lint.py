@@ -46,7 +46,10 @@ is scanned: every ``<style>`` element's text and every ``style="..."``
 attribute value is searched for ``url(...)`` references and
 ``@import`` rules. A ``url()`` target must satisfy the same allowlist
 as a fetch-on-load attribute; ``@import`` always loads a stylesheet,
-which has no allowed form, so any ``@import`` is an error.
+which has no allowed form, so any ``@import`` is an error. Comments
+are removed first, but only where a browser would read one: a ``/*``
+inside a string or an unquoted ``url(`` token is text, not a comment
+(_css_comments_stripped).
 
 Separate from the fetch allowlist, execution checks remain: ``on*``
 attributes and ``javascript:``/``vbscript:`` URLs are never allowed
@@ -213,6 +216,17 @@ def _shorten(text: str) -> str:
 # fails closed. Legitimate escaping (&amp;, &#39;, &#x27;, ...) always
 # decodes to a real character and never trips this.
 _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
+# ``&quot`` without its ``;`` before a letter, digit or ``=``. Inside an
+# attribute a browser keeps that text literal (the HTML "historical
+# reasons" rule), but html.parser before Python 3.13 decodes it to a
+# ``"`` -- and a quote the browser never sees shifts every CSS string
+# boundary in a style attribute, which is enough to hide a live url()
+# behind an apparent comment (jimemo#y9p8). ``quot``/``QUOT`` are the
+# only legacy no-semicolon names that decode to a character the CSS
+# comment scan reacts to: ``amp``/``gt``/``lt`` give ``&``/``>``/``<``,
+# which change no string or comment state, and every other legacy name
+# decodes to a non-ASCII ident code point.
+_AMBIGUOUS_QUOT_REF_RE = re.compile(r"&(?:quot|QUOT)(?=[A-Za-z0-9=])")
 
 
 # --- CSS references -------------------------------------------------------
@@ -238,10 +252,23 @@ _NUMERIC_CHARREF_RE = re.compile(r"&#(?:[0-9]+|[xX][0-9a-fA-F]+);?")
 # on the extracted URL text itself), so over-decoding cannot bless an
 # unsafe value — it can only over-reject, which fails closed.
 
-_CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 # A CSS escape: backslash + 1-6 hex digits + one optional whitespace,
-# or backslash + any other single character (identity escape).
+# or backslash + any other single character (identity escape). Note the
+# DOTALL: the identity branch also matches backslash + newline, which is
+# NOT a valid escape outside a string (CSS Syntax 3, "check if two code
+# points are a valid escape") -- _css_valid_escape_end applies that rule
+# where token boundaries depend on it.
 _CSS_ESCAPE_RE = re.compile(r"\\(?:([0-9a-fA-F]{1,6})[ \t\r\n\f]?|(.))", re.DOTALL)
+# CSS Syntax 3 "ident code point": letters and digits of any script,
+# ``-``, ``_``, and every non-ASCII code point. Deliberately wide, the
+# same reasoning as sanitize._svg_css_ident_char: the run before a ``(``
+# is the WHOLE function name a browser reads, so ``foourl(`` is not
+# ``url(``.
+_CSS_IDENT_CHAR_RE = re.compile(r"[-_a-zA-Z0-9\u0080-\U0010ffff]")
+# The one non-ident token that starts with ident code points a browser
+# does NOT fold into the following ident: ``<!--`` is a single CDO
+# token, so ``<!--url(`` is CDO + a url token, not an ident ``--url``.
+_CSS_CDO = "<!--"
 # Where a url( token might start; each hit is then parsed in full by
 # _CSS_URL_RE, and a hit that does not parse is itself an error — a
 # construct this scanner cannot read cannot be validated.
@@ -251,7 +278,11 @@ _CSS_URL_RE = re.compile(
 )
 # The whole rule text up to the terminator, for the error message; the
 # rule is rejected regardless of what its target turns out to be.
-_CSS_IMPORT_RE = re.compile(r"@import\b[^;{]*", re.IGNORECASE)
+# No ``\b`` after ``import``: a deleted comment joins the tokens either
+# side of it, so ``@import/**/url(#g)`` arrives here as
+# ``@importurl(#g)``, which ``@import\b`` would not match -- the one way
+# comment removal could LOSE a finding instead of merely over-rejecting.
+_CSS_IMPORT_RE = re.compile(r"@import[^;{]*", re.IGNORECASE)
 
 
 def _css_unescape(text: str) -> str:
@@ -266,6 +297,196 @@ def _css_unescape(text: str) -> str:
             return "�"
         return match.group(2)
     return _CSS_ESCAPE_RE.sub(_sub, text)
+
+
+def _css_preprocessed(css: str) -> str:
+    """`css` with CSS Syntax 3 input preprocessing applied: every CRLF,
+    CR and FF becomes a single LF, and NUL becomes U+FFFD. A browser
+    does this BEFORE tokenizing, so a scanner that skips it disagrees
+    with the browser about where a string ends: ``"\\22`` + CRLF keeps
+    the string open there (the hex escape eats the one folded newline)
+    while a raw scan sees the CR eaten and the LF as a terminator. The
+    CR and LF need not come from the file -- html.parser decodes
+    ``&#13;&#10;`` in a style attribute before lint sees the value."""
+    for raw in ("\r\n", "\r", "\f"):
+        css = css.replace(raw, "\n")
+    return css.replace("\0", "\ufffd")
+
+
+def _css_valid_escape_end(text: str, start: int) -> Optional[int]:
+    """The index just past the CSS escape at `start`, or None if `text`
+    does not begin a VALID escape there. Backslash + newline is not an
+    escape outside a string (it is a delim followed by whitespace), and
+    a trailing backslash at EOF is not one either; treating either as an
+    escape merges tokens a browser keeps apart -- ``foo\\`` + newline +
+    ``url(`` is ``foo``, a delim, then a real url token."""
+    if start >= len(text) or text[start] != "\\":
+        return None
+    match = _CSS_ESCAPE_RE.match(text, start)
+    if match is None:                       # backslash at EOF
+        return None
+    if match.group(2) is not None and match.group(2) in "\n\r\f":
+        return None                         # backslash + newline
+    return match.end()
+
+
+def _css_ident_run(text: str, start: int) -> Tuple[str, int]:
+    """(raw text, index just past it) of the ident-like run at `start` --
+    ident code points and valid escapes, undecoded. `start` must begin
+    one, so the run is never empty and the caller always advances."""
+    index = len(text)
+    position = start
+    while position < index:
+        escape_end = _css_valid_escape_end(text, position)
+        if escape_end is not None:
+            position = escape_end
+            continue
+        if _CSS_IDENT_CHAR_RE.match(text[position]):
+            position += 1
+            continue
+        break
+    return text[start:position], position
+
+
+def _css_comments_stripped(css: str) -> str:
+    """`css` with exactly the comments a BROWSER would consume removed,
+    and every other byte kept verbatim.
+
+    Deleting ``/*...*/`` with a regex is unsound, because ``/*`` is only
+    a comment opener in some of the places it appears. Each of these
+    hid a fetching url() from the scan below before this function
+    existed (jimemo#y9p8):
+
+      * ``url(/*);background:url(https://e.x/p);/*x*/#g)`` -- inside an
+        unquoted url token ``/*`` is URL text and the first ``)`` ends
+        the token, so a regex strip leaves an allowed ``url(#g)`` while
+        the browser applies the second declaration and fetches.
+      * ``content:"/*"; background:url(https://e.x/p); z:"*/"`` -- a
+        ``/*`` inside a string is string text; the regex deleted from
+        the first marker to the last, remote reference included.
+      * ``u\\72l(/*);...`` -- escapes are decoded BEFORE tokenizing, so
+        this is a url token; whether a ``/*`` is inside one can only be
+        decided on the unescaped ident (hence _css_ident_run).
+      * ``--marker:\\/*;...`` and ``--label:"\\22`` + newline + ``/*";``
+        -- an escape swallows the characters it consumes, so neither
+        opens a comment nor ends a string (hence _css_valid_escape_end
+        and _css_preprocessed).
+      * ``<!--url(/*);...`` -- ``<!--`` is one CDO token, so the ``url``
+        after it starts a url token rather than continuing an ident.
+      * ``#url(#g/*)"*/"/*");background:url(https://e.x/p);`` -- ``#url``
+        is a hash token, so its ``(`` opens a block in which ``/*`` IS a
+        comment; reading a url token there desyncs every boundary after
+        it. Any other name ending in ``url`` before ``(`` stops the
+        stripping outright rather than guessing.
+
+    Used only to FIND constructs, never to allow anything: a comment
+    that really is a comment is dropped, and everything a browser would
+    tokenize as string or URL text survives to be judged. Every loop
+    branch advances, so no input can spin it (a lone trailing backslash
+    used to)."""
+    css = _css_preprocessed(css)
+    kept: List[str] = []
+    index = len(css)
+    position = 0
+    while position < index:
+        if css.startswith("/*", position):
+            close = css.find("*/", position + 2)
+            # An unterminated comment runs to EOF (CSS Syntax 3 4.3.2):
+            # the browser sees no declaration after it, so neither does
+            # the scan -- the one place this reports LESS than the regex.
+            position = index if close < 0 else close + 2
+            continue
+        if css.startswith(_CSS_CDO, position):
+            kept.append(_CSS_CDO)
+            position += len(_CSS_CDO)
+            continue
+        char = css[position]
+        if char in "\"'":
+            kept.append(char)
+            position += 1
+            while position < index:
+                # Inside a string, backslash + newline is a line
+                # continuation (CSS Syntax 3 4.3.5): both are consumed
+                # and the string goes on. Outside a string the same pair
+                # is not an escape at all, which is why this case is
+                # handled here and not in _css_valid_escape_end.
+                if css.startswith("\\\n", position):
+                    kept.append("\\\n")
+                    position += 2
+                    continue
+                escape_end = _css_valid_escape_end(css, position)
+                if escape_end is not None:
+                    kept.append(css[position:escape_end])
+                    position = escape_end
+                    continue
+                char_in_string = css[position]
+                kept.append(char_in_string)
+                position += 1
+                # The matching quote closes it; a bare newline makes it
+                # a bad-string, which ends there too.
+                if char_in_string in (char, "\n"):
+                    break
+            continue
+        # ``#`` or ``@`` + a name is a hash token or at-keyword: the
+        # name after it is consumed whole and is never a url token, so
+        # ``#url(`` opens an ordinary ()-block in which ``/*`` IS a
+        # comment.
+        prefixed = char in "#@"
+        name_start = position + 1 if prefixed else position
+        if _css_valid_escape_end(css, name_start) is not None or (
+            name_start < index and _CSS_IDENT_CHAR_RE.match(css[name_start])
+        ):
+            raw, after = _css_ident_run(css, name_start)
+            kept.append(css[position:after])
+            position = after
+            if not (after < index and css[after] == "("):
+                continue
+            name = _css_unescape(raw).lower()
+            if not name.endswith("url"):
+                continue
+            if prefixed or name != "url":
+                # A name ENDING in url before ``(`` -- ``#url(``,
+                # ``5url(``, ``foourl(``, a non-ASCII code point before
+                # ``url`` -- is where engines and spec revisions can
+                # disagree about whether a url token starts (the current
+                # CSS Syntax draft narrows the non-ASCII ident code
+                # points _CSS_IDENT_CHAR_RE admits). A wrong guess in
+                # EITHER direction desyncs every later string and comment
+                # boundary, which is how a live declaration gets deleted.
+                # So stop stripping here and judge the rest verbatim:
+                # nothing after this point can be deleted, and at worst
+                # a commented-out reference is over-rejected.
+                kept.append(css[position:])
+                break
+            # url( ... ) with an unquoted target is a url token, whose
+            # text is everything up to the first ) -- comments and all.
+            # url("...") / url( '...' ) are functions taking a string
+            # argument, where a comment IS a comment, so they fall
+            # through to the string rule above.
+            kept.append("(")
+            position = after + 1
+            argument = position
+            while argument < index and css[argument] in " \t\n":
+                argument += 1
+            if argument < index and css[argument] in "\"'":
+                continue
+            kept.append(css[position:argument])
+            position = argument
+            while position < index:
+                escape_end = _css_valid_escape_end(css, position)
+                if escape_end is not None:
+                    kept.append(css[position:escape_end])
+                    position = escape_end
+                    continue
+                char_in_url = css[position]
+                kept.append(char_in_url)
+                position += 1
+                if char_in_url == ")":
+                    break
+            continue
+        kept.append(char)
+        position += 1
+    return "".join(kept)
 
 
 def _css_url_problem(url: str) -> Optional[str]:
@@ -314,7 +535,7 @@ def css_reference_errors(css: str) -> List[str]:
         if message not in errors:
             errors.append(message)
 
-    stripped = _CSS_COMMENT_RE.sub("", css)
+    stripped = _css_comments_stripped(css)
     forms = [stripped]
     decoded = _css_unescape(stripped)
     if decoded != stripped:
@@ -768,6 +989,14 @@ class _Linter(HTMLParser):
                 )
                 continue
             if name == "style" and value:
+                if _AMBIGUOUS_QUOT_REF_RE.search(raw_tag):
+                    self.errors.append(
+                        f"in style attribute on <{tag}>: <{tag}> contains "
+                        "'&quot' without ';' before a letter, digit or '=' "
+                        "— a browser keeps it literal in an attribute but "
+                        "this parser may decode it to a quote, so the CSS "
+                        "string boundaries cannot be trusted as written"
+                    )
                 for problem in css_reference_errors(value):
                     self.errors.append(
                         f"in style attribute on <{tag}>: {problem}"

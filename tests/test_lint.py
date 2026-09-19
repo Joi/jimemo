@@ -772,6 +772,274 @@ def test_style_escape_obfuscated_url_and_import_error():
     assert any("@import" in e for e in errors)
 
 
+# --- comment stripping must match a browser's (jimemo#y9p8) -----------------
+#
+# lint used to delete /*...*/ with a regex before scanning. A browser only
+# treats /* as a comment opener in SOME of the places it appears, so the
+# strip could delete a fetching url() from the scanned text while the
+# browser still fetched it at view time. One test per bypass; each bypass
+# test returns ([], []) on the pre-fix code (the escaped-marker test is a
+# guard instead: that form was caught before and must stay caught).
+# REMOTE is the fetch each vector smuggles past the allowlist; the
+# comment names why the /* is or is not a comment there.
+
+REMOTE = "https://evil.example/p"
+
+
+def test_style_comment_inside_url_token_hides_remote():
+    # Inside an unquoted url( token /* is URL text and the first ) ends
+    # the token, so the browser reads url(/*) and then a SECOND
+    # declaration that fetches; the regex strip left only url(#g).
+    errors, _ = _lint(
+        "<style>.x{background:url(/*);background:url(%s);/*x*/#g)}</style>" % REMOTE
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_comment_only_url_is_an_external_path():
+    # url(/**/#g) is not a fragment: the target is the path /**/#g.
+    errors, _ = _lint("<style>.x{background:url(/**/#g)}</style>")
+    assert any("local path" in e for e in errors)
+
+
+def test_style_comment_marker_inside_string_hides_remote():
+    # /* inside a string is string text, so the browser sees no comment
+    # at all; the regex deleted from the first marker to the last.
+    errors, _ = _lint(
+        '<style>.x{content:"/*";background:url(%s);z:"*/"}</style>' % REMOTE
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [r"u\72l", r"\75rl", "u\\72 l"],   # the third: the hex escape eats the space
+)
+def test_style_escaped_url_ident_with_comment_hides_remote(spelling):
+    # Escapes are decoded BEFORE tokenizing, so this IS a url token —
+    # which is why "is this /* inside a url token?" must be decided on
+    # the unescaped ident, not on the literal text.
+    errors, _ = _lint(
+        "<style>.x{background:%s(/*);background:url(%s);/*x*/#g)}</style>"
+        % (spelling, REMOTE)
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_escaped_slash_is_not_a_comment_opener():
+    # \/ is an escaped code point inside an ident; it opens nothing.
+    errors, _ = _lint(
+        "<style>.x{--marker:\\/*;background:url(%s);/*x*/}</style>" % REMOTE
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_style_hex_escape_consumes_the_newline_after_it(newline):
+    # A hex escape eats one following whitespace character, so the string
+    # continues through the /* — and CSS folds CRLF to one newline first,
+    # so both spellings behave identically to a browser.
+    errors, _ = _lint(
+        '<style>.x{--label:"\\22%s/*";background:url(%s);--tail:"*/"}</style>'
+        % (newline, REMOTE)
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_form_feed_ends_a_string_like_a_newline():
+    # FF is folded to a newline by CSS input preprocessing, so the first
+    # string is a bad-string ending there and "/*" is an ordinary string.
+    errors, _ = _lint(
+        '<style>.x{--x:"\f"/*";background:url(%s);--tail:"*/"}</style>' % REMOTE
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_backslash_newline_continues_a_string():
+    # The same pair means the opposite INSIDE a string: a line
+    # continuation, so the string goes on through the /* and ends at
+    # the next quote.
+    errors, _ = _lint(
+        '<style>.x{--x:"\\\n/*";background:url(%s);--tail:"*/"}</style>' % REMOTE
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_backslash_newline_is_not_an_ident_escape():
+    # Backslash + newline is not a valid escape outside a string, so the
+    # ident ends at the backslash and a real url token follows it.
+    errors, _ = _lint(
+        "<style>.x{--x:foo\\\nurl(/*);background:url(%s);/*x*/#g)}</style>" % REMOTE
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_cdo_token_does_not_extend_the_next_ident():
+    # <!-- is a single CDO token, so the url after it starts a url token
+    # rather than continuing an ident named --url.
+    errors, _ = _lint(
+        "<style>.x{--x:<!--url(/*);background:url(%s);/*x*/#g)}</style>" % REMOTE
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+@pytest.mark.parametrize("name", ["#url", "@url", r"#\75rl"])
+def test_style_hash_or_at_keyword_url_is_not_a_url_token(name):
+    # #url is a hash token and @url an at-keyword, so the ( after either
+    # opens an ordinary block in which /* IS a comment. Reading a url
+    # token there instead puts every later string and comment boundary
+    # out of step with the browser's, until a live declaration is
+    # deleted as a "comment". (Found by the code review of this fix; both
+    # the pre-fix regex and the scanner's first version let it through.)
+    css = '.x{--x:%s(#g/*)"*/"/*");background:url(%s);/*x*/}' % (name, REMOTE)
+    errors, _ = _lint("<style>%s</style>" % css)
+    assert any("evil.example" in e for e in errors)
+    attr = css[3:-1].replace('"', "&quot;")
+    errors, _ = _lint('<p style="%s">x</p>' % attr)
+    assert any("evil.example" in e and "style attribute" in e for e in errors)
+
+
+@pytest.mark.parametrize("name", ["×url", "5url", "foourl", "u+1url"])
+def test_style_name_ending_in_url_stops_comment_stripping(name):
+    # Whether url( after these starts a url token depends on the engine
+    # or the spec revision (the current CSS Syntax draft narrows which
+    # non-ASCII code points are ident code points; unicode-range contexts
+    # tokenize u+1 separately). The scan does not guess: it stops
+    # removing comments there, so an engine that DOES read a url token
+    # cannot have the declaration after it deleted.
+    errors, _ = _lint(
+        "<style>.x{a:%s(/*);background:url(%s);/*x*/#g)}</style>" % (name, REMOTE)
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_escaped_comment_markers_are_not_comments():
+    # The mirror image: \2f\2a decodes to /* but a browser never reads an
+    # escape as a comment delimiter, so the declaration between these
+    # stays live and must keep being scanned.
+    errors, _ = _lint(
+        "<style>.x{a:\\2f\\2a;background:url(%s);b:\\2a\\2f}</style>" % REMOTE
+    )
+    assert any("evil.example" in e for e in errors)
+
+
+def test_style_escaped_paren_inside_url_token_errors():
+    # A backslash-escaped ) does not end the url token, so the target is
+    # the path /*\)*/#g rather than the fragment the strip left behind.
+    errors, _ = _lint("<style>.x{background:url(/*\\)*/#g)}</style>")
+    assert any("local path" in e for e in errors)
+
+
+def test_style_comment_joined_import_errors():
+    # Deleting the comment joins the tokens either side of it, so this
+    # arrives as @importurl(#g) — which @import\b did not match.
+    errors, _ = _lint("<style>@import/**/url(#g);</style>")
+    assert any("@import" in e for e in errors)
+
+
+def test_style_attribute_carries_the_same_scan():
+    # The style ATTRIBUTE path is the one the issue reproduced on, and
+    # html.parser decodes entity-encoded CR/LF in an attribute value
+    # before lint sees it — a browser's newline folding then keeps the
+    # string open exactly as it does for a literal CRLF.
+    errors, _ = _lint(
+        '<p style="background:url(/*);background:url(%s);/*x*/#g)">x</p>' % REMOTE
+    )
+    assert any("evil.example" in e and "style attribute" in e for e in errors)
+    errors, _ = _lint(
+        '<div style="--label:&quot;\\22&#13;&#10;/*&quot;;'
+        'background:url(%s);--tail:&quot;*/&quot;">x</div>' % REMOTE
+    )
+    assert any("evil.example" in e and "style attribute" in e for e in errors)
+
+
+@pytest.mark.parametrize("ref", ["&quotx", "&QUOT1", "&quot="])
+def test_style_attribute_ambiguous_quot_reference_fails_closed(ref):
+    # In an attribute, a browser keeps &quot literal when no ; follows and
+    # the next character is a letter, digit or =; html.parser before
+    # Python 3.13 decodes it to a quote instead. That phantom quote opens
+    # a CSS string the browser never sees, and the real "/*" after it
+    # becomes a "comment" that swallows the live url() (found by the code
+    # review of this fix on Python 3.9 and 3.10). The guard reads the RAW
+    # tag, so it fires on every Python version, not just the old ones.
+    errors, _ = _lint(
+        "<p style='a:%s \"/*\";background:url(%s);z:\"*/\"'>x</p>" % (ref, REMOTE)
+    )
+    assert any("'&quot' without ';'" in e for e in errors)
+
+
+def test_style_attribute_terminated_quot_reference_is_fine():
+    # &quot; with its semicolon decodes the same way everywhere.
+    errors, _ = _lint('<p style="font-family:&quot;Iowan&quot;,serif">x</p>')
+    assert errors == []
+
+
+# Real theme CSS is full of legitimate comments (the seed templates carry
+# 39-43 per rendered page), so the stricter scan must not report any of
+# these. The count is asserted: a corpus that silently became empty
+# would make this test pass while proving nothing.
+THEME_CORPUS_CASES = (
+    "/* tokens */\n:root{--ink:#1a1a1a;--paper:#fff}",
+    "/* background: url(https://ok.example/x.png); */\np{color:var(--ink)}",
+    '/* @import "https://ok.example/x.css"; */\np{color:red}',
+    r'.icon-\" {color:red} /* background:url(https://ok.example/y.png) */',
+    r'.a\/b{color:red} /* url(https://ok.example/z.png) */',
+    'nav li + li::before{content:"\\00B7"} /* middot */',
+    "p{content:\"it's\"} /* url(https://ok.example/q.png) */",
+    "p{background:url(" + DATA_PNG + ")} /* inlined by inline_images */",
+    '@font-face{font-family:"X";src:url(data:font/woff2;base64,AAAA)}',
+    "svg .grad{fill:url(#grad)} /* same-document paint server */",
+    "p{color:red}\r\n/* crlf and form feed are ordinary whitespace */\fq{color:blue}",
+    # Unterminated: the comment runs to the end, as it does in a browser,
+    # so the reference inside it is inert (the regex used to report it).
+    "p{color:red} /* unterminated: url(https://ok.example/w.png)",
+)
+
+
+def test_style_theme_corpus_with_comments_is_fine():
+    assert len(THEME_CORPUS_CASES) == 12
+    for css in THEME_CORPUS_CASES:
+        errors, _ = _lint("<style>%s</style>" % css)
+        assert errors == [], (css, errors)
+
+
+def test_style_inert_constructs_are_over_rejected_not_parsed():
+    # Two forms a browser fetches nothing for, which the scan reports
+    # anyway. Recorded deliberately: over-rejection is the direction this
+    # module chooses, and a future reader should see it was a decision.
+    # A string carrying BOTH comment markers and url() text:
+    errors, _ = _lint(
+        '<style>.x{content:"/* url(https://ok.example/icon.png) */"}</style>'
+    )
+    assert any("ok.example" in e for e in errors)
+    # url( whose unquoted target contains a quote is a bad-url token:
+    errors, _ = _lint(
+        '<style>@font-face{src:url(/*c*/"data:font/woff2;base64,AAAA")}</style>'
+    )
+    assert any("unparseable" in e for e in errors)
+
+
+@pytest.mark.parametrize(
+    "css",
+    [
+        "\\",                       # a lone trailing backslash
+        "color:red;x:\\",           # an ident ending in one
+        'content:"\\',              # inside an unterminated string
+        "background:url(\\",        # inside an unterminated url token
+        "/* background:url(https://e.x/p)",   # an unterminated comment
+        "--x:<",
+        "--x:<!",
+        "--x:<!--",                 # a CDO at EOF
+    ],
+)
+def test_style_truncated_css_terminates(css):
+    # Every scan branch must advance: a lone trailing backslash used to
+    # spin the loop forever, allocating as it went — a hang reachable
+    # from <style>\</style>.
+    errors, _ = _lint("<style>%s</style>" % css)
+    assert isinstance(errors, list)
+
+
 def test_style_unparseable_url_construct_errors():
     # An unterminated quote defeats extraction; that is itself an error.
     errors, _ = _lint('<style>.x{background:url("https://evil.example/x}</style>')
