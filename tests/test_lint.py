@@ -1,4 +1,7 @@
+import itertools
+import re
 import sys
+import time
 from html.entities import html5 as html5_entities
 from html.parser import HTMLParser
 from pathlib import Path
@@ -1190,6 +1193,108 @@ def test_style_unparseable_url_construct_errors():
 def test_unclosed_style_element_still_scanned():
     errors, _ = _lint("<style>.x{background:url(https://evil.example/x)}")
     assert any("evil.example" in e for e in errors)
+
+
+# --- url( extraction is linear in the text (jimemo#ay7w) --------------------
+#
+# The regex that read a url( target could absorb the same whitespace in
+# three places, so an unterminated ``url(`` followed by n spaces cost
+# O(n^3) before failing (n=6400: 125 s on main), and each open re-ran the
+# match over the rest of the text (``url(`` x 50000: 75 s). The bounds
+# here are on the WORK where it can be counted; the one clock bound is
+# generous and on the two inputs that took minutes before.
+
+UNPARSEABLE = (
+    "unparseable url( construct — its target cannot be validated, failing closed"
+)
+
+
+class _CountingStopScan:
+    """Stands in for lint._CSS_URL_STOP_RE and counts the characters its
+    searches walked over."""
+
+    def __init__(self, real):
+        self.real = real
+        self.scanned = 0
+
+    def search(self, text, pos):
+        match = self.real.search(text, pos)
+        self.scanned += (match.start() if match else len(text)) - pos
+        return match
+
+
+@pytest.mark.parametrize(
+    "css",
+    [
+        "url(" + " " * 6400,                # cubic before the fix
+        "url(" * 50000,                     # one re-match per open before
+        "url(" * 50000 + '"',               # every open stops at the far quote
+        "url(" * 1000 + ")",                # every open stops at the far ``)``
+        'url("' * 40000,                    # each string closes at the next quote
+        "url(" + " " * 200000 + '"x"' + " " * 200000 + ")",
+        'url(" ' + "url('" * 30000 + '")',  # opens inside a long string
+    ],
+)
+def test_css_url_stop_scans_cover_the_text_once(monkeypatch, css):
+    counter = _CountingStopScan(lint._CSS_URL_STOP_RE)
+    monkeypatch.setattr(lint, "_CSS_URL_STOP_RE", counter)
+    targets = list(lint._css_url_targets(css))
+    assert targets  # the scan did run
+    assert counter.scanned <= len(css)
+
+
+@pytest.mark.parametrize("css", ["url(" + " " * 6400, "url(" * 50000])
+def test_css_unterminated_url_is_reported_in_seconds(css):
+    # Over a minute each before the fix; one pass over 200k characters
+    # is milliseconds, and the slack is for a loaded gate host.
+    started = time.perf_counter()
+    errors = lint.css_reference_errors(css)
+    assert time.perf_counter() - started < 5.0
+    assert errors == [UNPARSEABLE]
+
+
+# The pattern _css_url_targets replaced, kept as the oracle for what it
+# read: the fix changes how a target is found, never which one.
+_REPLACED_CSS_URL_RE = re.compile(
+    r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']*))\s*\)""", re.IGNORECASE
+)
+
+
+def _targets_by_replaced_regex(text):
+    targets = []
+    for open_match in lint._CSS_URL_OPEN_RE.finditer(text):
+        full = _REPLACED_CSS_URL_RE.match(text, open_match.start())
+        targets.append(
+            None if full is None
+            else next(g for g in full.groups() if g is not None).strip()
+        )
+    return targets
+
+
+def _distinct(items):
+    seen = []
+    for item in items:
+        if item not in seen:
+            seen.append(item)
+    return seen
+
+
+def test_css_url_targets_read_the_replaced_regex_language():
+    # Every string of up to six symbols over the alphabet the url(
+    # grammar reacts to, compared as css_reference_errors consumes them:
+    # the distinct targets in order (each problem is reported once, and
+    # the scan ends at the first unterminated open, where the regex went
+    # on failing at every later one).
+    symbols = ("url(", ")", '"', "'", " ", "\t", "x")
+    cases = 0
+    for length in range(7):
+        for parts in itertools.product(symbols, repeat=length):
+            css = "".join(parts)
+            assert _distinct(list(lint._css_url_targets(css))) == _distinct(
+                _targets_by_replaced_regex(css)
+            ), repr(css)
+            cases += 1
+    assert cases == sum(7 ** n for n in range(7))
 
 
 # --- charts declared: the one controlled opening (Phase 4) -----------------

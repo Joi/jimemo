@@ -106,7 +106,7 @@ import json
 import re
 from html import unescape
 from html.parser import HTMLParser
-from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
 
 from ._parser_floor import (
     assert_interpreter_is_supported as _assert_interpreter_is_supported,
@@ -283,13 +283,15 @@ _CSS_IDENT_CHAR_RE = re.compile(r"[-_a-zA-Z0-9\u0080-\U0010ffff]")
 # does NOT fold into the following ident: ``<!--`` is a single CDO
 # token, so ``<!--url(`` is CDO + a url token, not an ident ``--url``.
 _CSS_CDO = "<!--"
-# Where a url( token might start; each hit is then parsed in full by
-# _CSS_URL_RE, and a hit that does not parse is itself an error — a
+# Where a url( token might start; each hit is then read in full by
+# _css_url_targets, and a hit that does not parse is itself an error — a
 # construct this scanner cannot read cannot be validated.
 _CSS_URL_OPEN_RE = re.compile(r"url\(", re.IGNORECASE)
-_CSS_URL_RE = re.compile(
-    r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']*))\s*\)""", re.IGNORECASE
-)
+# What ends the read of a url( target: the first ``)`` closes an
+# unquoted target; the first quote either opens the quoted form (when
+# only whitespace precedes it) or makes the construct unreadable.
+_CSS_URL_STOP_RE = re.compile(r"""[)"']""")
+_CSS_WS_RE = re.compile(r"\s*")
 # The whole rule text up to the terminator, for the error message; the
 # rule is rejected regardless of what its target turns out to be.
 # No ``\b`` after ``import``: a deleted comment joins the tokens either
@@ -538,6 +540,54 @@ def _css_url_problem(url: str) -> Optional[str]:
     )
 
 
+def _css_url_targets(text: str) -> Iterator[Optional[str]]:
+    """The target of each ``url(`` in `text`, in order: the text between
+    the parentheses — bare, or inside one pair of matching quotes with
+    nothing but whitespace around them — with surrounding whitespace
+    removed; None for a construct that does not read (no closing ``)``,
+    a quote after bare target text, or something other than whitespace
+    and ``)`` after the closing quote).
+
+    Reads exactly the language of the regex it replaced,
+    ``url\\(\\s*(?:"([^"]*)"|'([^']*)'|([^)"']*))\\s*\\)``, but in one
+    forward pass. In that pattern the leading ``\\s*``, the bare-target
+    class and the trailing ``\\s*`` could all absorb the same
+    whitespace, so an unterminated ``url(`` followed by n spaces cost
+    O(n^3) before failing, and every open re-ran the match over the rest
+    of the text (jimemo#ay7w). Here each open reads forward to the first
+    ``)`` or quote, and that stop is shared: the first stop at or after
+    one open is also the first at or after every later open before it,
+    so the stop scans together cover the text once. When no stop exists
+    ahead, this open and every later one are unterminated, so the
+    generator ends after one None (the caller reports the construct once).
+    """
+    stop = None  # the first ``)`` or quote at or after the current open
+    for open_match in _CSS_URL_OPEN_RE.finditer(text):
+        start = open_match.end()
+        if stop is None or stop.start() < start:
+            stop = _CSS_URL_STOP_RE.search(text, start)
+            if stop is None:
+                yield None
+                return
+        end = stop.start()
+        quote = text[end]
+        if quote == ")":
+            yield text[start:end].strip()
+            continue
+        if _CSS_WS_RE.match(text, start).end() != end:
+            yield None  # bare target text runs into a quote
+            continue
+        close = text.find(quote, end + 1)
+        if close < 0:
+            yield None  # the quoted target never closes
+            continue
+        after = _CSS_WS_RE.match(text, close + 1).end()
+        if after < len(text) and text[after] == ")":
+            yield text[end + 1:close].strip()
+        else:
+            yield None  # something other than ``)`` follows the string
+
+
 def css_reference_errors(css: str) -> List[str]:
     """Error strings for every url()/@import reference in `css` that
     violates the allowlist (see the section comment above)."""
@@ -555,15 +605,13 @@ def css_reference_errors(css: str) -> List[str]:
     if decoded != stripped:
         forms.append(decoded)
     for text in forms:
-        for open_match in _CSS_URL_OPEN_RE.finditer(text):
-            full = _CSS_URL_RE.match(text, open_match.start())
-            if full is None:
+        for url in _css_url_targets(text):
+            if url is None:
                 add(
                     "unparseable url( construct — its target cannot be "
                     "validated, failing closed"
                 )
                 continue
-            url = next(g for g in full.groups() if g is not None).strip()
             problem = _css_url_problem(url)
             if problem is not None:
                 add(problem)
