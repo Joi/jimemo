@@ -86,6 +86,28 @@ presentation attributes, `id`, `class`, `role`, `aria-label`,
 - Elements inside `<title>` and `<desc>`; their text is kept.
 - Comments, DOCTYPE, processing instructions, CDATA.
 
+Every element and attribute removed is reported on stderr, one line per
+distinct drop, so a refused `style` does not pass unnoticed as a shape
+painted default black:
+
+```
+warning: figure FLOW: dropped element script (not allowlisted)
+warning: figure FLOW: dropped attribute style (css value refused)
+warning: figure FLOW: dropped attribute href (href not a same-document #fragment)
+warning: figure FLOW: dropped element g (child of <title>/<desc>)
+```
+
+The other reasons are `outside the <svg> root` and `id is not a plain
+token`. A figure prints at most 20 such lines, then one line counting the
+rest (`warning: figure FLOW: 7 more distinct drops not shown`). The line
+names what was
+removed, never the value: a refused `style` is untrusted text, so it does
+not go to the terminal, and element and attribute names are shown as
+printable ASCII, with anything else as `?`. A repeated attribute is not
+reported, because a browser ignores it too. A warning is not an error —
+the page still renders — so read the warnings for every figure before
+publishing.
+
 Inline SVG shares the page's one `id` namespace. Two figures that both
 define `id="grad"` are refused, and so is a figure id the page already
 uses — a heading anchor, or a chart's canvas, whose script would
