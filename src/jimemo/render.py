@@ -125,8 +125,8 @@ FIGURE_DROP_WARNINGS_MAX = 20
 
 
 class _IdCollector(HTMLParser):
-    """Every ``id`` attribute value in a page, read from parsed start
-    tags (text that merely looks like ``id="x"``, and script bodies, are
+    """Every element id in a page — the first ``id`` attribute of each
+    parsed start tag (text that merely looks like ``id="x"``, and script bodies, are
     not attributes and are not collected)."""
 
     def __init__(self) -> None:
@@ -135,8 +135,17 @@ class _IdCollector(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         for name, value in attrs:
-            if name == "id" and value:
+            if name != "id":
+                continue
+            # A browser keeps an element's FIRST id attribute and drops the
+            # rest (sanitize_html keeps them all, so they reach the page);
+            # _SVGSanitizer does the same for figures. An empty first id is
+            # still the element's id, and matches nothing. This trusts
+            # html.parser to split attributes as a browser does, which holds
+            # from jimemo.PYTHON_FLOOR on (measured on 3.13.6, jimemo#1gs5).
+            if value:
                 self.ids.add(value)
+            return
 
     handle_startendtag = handle_starttag
 

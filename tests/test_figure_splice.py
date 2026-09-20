@@ -1240,6 +1240,55 @@ def test_page_id_with_nul_collides_with_a_figure_id_like_a_browser(tmp_path, _is
     assert FIGURE_OPEN_TEXT in render_page(BRIEFING_DIR, content, figures={"FLOW": clash})
 
 
+# Each row: a page element, the id a browser gives it (Chromium, measured
+# for jimemo#1gs5; html.parser on the 3.13.6 floor reports the same first id),
+# and an id that appears in the markup but is not the element's.
+FIRST_ID_CASES = [
+    pytest.param('<a id="first" id="second"></a>', "first", "second", id="duplicate-id"),
+    # U+00A0 is not HTML whitespace: the title value is "x\u00a0id"
+    pytest.param('<a title=x\u00a0id id=grad></a>', "grad", "id", id="nbsp-is-not-a-split"),
+    # an unquoted value may start with "=": the title value is '=""id'
+    pytest.param('<a title==""id id=grad></a>', "grad", "id", id="equals-run"),
+    # "&notit;" is no character reference in an attribute; "&amp;notit;"
+    # decodes to the same text, but it is the second id
+    pytest.param(
+        '<a title="x\u00a0y" id="&notit;" id="&amp;notit;"></a>',
+        "&notit;", "\u00acit;", id="value-decoding",
+    ),
+    # a valueless first id is the element's (empty) id; "grad" is dropped
+    pytest.param('<a title=x id id=grad></a>', None, "grad", id="empty-first-id"),
+]
+
+
+@pytest.mark.parametrize("element, browser_id, not_an_id", FIRST_ID_CASES)
+def test_page_element_with_two_id_attributes_has_only_its_first(
+    tmp_path, _isolated_home, element, browser_id, not_an_id
+):
+    from jimemo.render import _page_ids
+
+    body = f"{element}Anchor.\n\n[[DIAGRAM:FLOW]]\n"
+    content = _briefing_content(tmp_path, body)
+    # The collector's own reading of the markup as written, and of the page
+    # (sanitize_html re-serializes the element with quoted values and keeps
+    # both id attributes).
+    for ids in (_page_ids(element), _page_ids(render_page(BRIEFING_DIR, content))):
+        assert not_an_id not in ids
+        assert browser_id is None or browser_id in ids
+
+    def figure(fid):
+        return {"FLOW": f'<svg><linearGradient id="{fid}"/></svg>'}
+
+    # the false refusal is gone
+    assert FIGURE_OPEN_TEXT in render_page(BRIEFING_DIR, content, figures=figure(not_an_id))
+    # a real collision on the element's id is still refused
+    if browser_id is not None:
+        with pytest.raises(ContentError, match="which the page already uses"):
+            render_page(
+                BRIEFING_DIR, content,
+                figures=figure(browser_id.replace("&", "&amp;")),
+            )
+
+
 # --- jimemo#v72t: --figure ContentError messages are terminal-safe --------
 
 # The three vectors the issue names, in one name: ESC (the ANSI
