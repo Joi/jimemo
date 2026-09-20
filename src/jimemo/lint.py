@@ -43,8 +43,9 @@ all, which no per-attribute check can see — and ``<form>`` turns a
 static document into a data-exfiltration vector on submit; any
 occurrence of these tags is an error, attributes unexamined. And CSS
 is scanned: every ``<style>`` element's text and every ``style="..."``
-attribute value is searched for ``url(...)`` references and
-``@import`` rules. A ``url()`` target must satisfy the same allowlist
+attribute value is searched for ``url(...)`` references,
+``image-set()`` bare-string candidates and ``@import`` rules. A
+``url()`` target must satisfy the same allowlist
 as a fetch-on-load attribute; ``@import`` always loads a stylesheet,
 which has no allowed form, so any ``@import`` is an error. Comments
 are removed first, but only where a browser would read one: a ``/*``
@@ -265,6 +266,10 @@ _assert_interpreter_is_supported()
 # hide; the decoded copy only ever ADDS findings (allowances are judged
 # on the extracted URL text itself), so over-decoding cannot bless an
 # unsafe value — it can only over-reject, which fails closed.
+# image-set()/-webkit-image-set() take a BARE STRING candidate
+# (image-set("https://..." 1x)) that fetches on load without ever
+# writing ``url(``, so the same two-form scan also reads those strings
+# (_css_image_set_targets) and judges them by the url() allowlist.
 
 # A CSS escape: backslash + 1-6 hex digits + one optional whitespace,
 # or backslash + any other single character (identity escape). Note the
@@ -299,6 +304,13 @@ _CSS_WS_RE = re.compile(r"\s*")
 # ``@importurl(#g)``, which ``@import\b`` would not match -- the one way
 # comment removal could LOSE a finding instead of merely over-rejecting.
 _CSS_IMPORT_RE = re.compile(r"@import[^;{]*", re.IGNORECASE)
+# The function names whose bare-string arguments are image-set()
+# candidates: the WHOLE identifier a browser reads before the ``(`` must
+# be one of these, compared case-insensitively. ``ximage-set(`` and
+# ``-image-set(`` are different functions and fetch nothing, while the
+# ``-webkit-`` prefix is part of the name, not a boundary before it —
+# which is exactly what reading the whole identifier run gives.
+_CSS_IMAGE_SET_NAMES = frozenset({"image-set", "-webkit-image-set"})
 
 
 def _css_unescape(text: str) -> str:
@@ -596,9 +608,97 @@ def _css_url_targets(text: str) -> Iterator[Optional[str]]:
             yield None  # something other than ``)`` follows the string
 
 
+def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
+    """The bare-string candidate of each ``image-set(`` /
+    ``-webkit-image-set(`` in `text`, in order: the content of every
+    quoted string at nesting depth 0 of the construct — the candidate
+    form ``image-set("b.png" 1x)`` that fetches on load without ever
+    writing ``url(``. None for a construct this scanner cannot read
+    (no closing ``)``, or a depth-0 candidate string that never
+    closes), which the caller reports, failing closed exactly as it
+    does for ``url(`.
+
+    One forward pass, one character at a time, after the manner of
+    _css_url_targets (jimemo#ay7w): no regex with overlapping
+    quantifiers, and every branch advances, so no input can spin it.
+    A stack of open ``(`` records, for each one, whether it opened an
+    image-set; a quoted string is a candidate exactly when the TOP of
+    that stack is an image-set open, which is what "nesting depth 0 of
+    the image-set" means mechanically. That one rule also leaves a
+    ``url("...")`` candidate to _css_url_targets — which already
+    reads it, so it is not yielded twice — and skips a
+    ``type("image/png")`` string, which is a format hint, not a
+    resource. A nested image-set inside an image-set is scanned the
+    same way (its own strings sit on top of the stack), because a
+    browser resolves the inner one as an <image> candidate too.
+
+    The function name is the whole identifier run ending at the ``(``,
+    read with _CSS_IDENT_CHAR_RE (so ``ximage-set(`` is not a match),
+    with one correction a browser forces: the hyphens of a CDO token
+    (``<!--``) do not continue an identifier, so ``x<!--image-set(`` is
+    CDO + a real image-set function and must match. Strings are read
+    escape-aware — a backslash inside one consumes the character after
+    it, so a ``)`` behind an escaped quote cannot close the construct
+    early and hide the candidates after it — and a bare newline ends
+    one as a bad-string with the walk resuming after it, which is
+    where a browser's tokenizer resumes. A string that runs to EOF
+    unclosed ends the scan: a browser reads no token after it either,
+    so there is nothing later to miss — the one difference is that at
+    image-set depth 0 it yields None first, failing closed."""
+    opens: List[bool] = []
+    index = len(text)
+    position = 0
+    while position < index:
+        char = text[position]
+        if char == "(":
+            # The whole function name a browser reads: the identifier
+            # run ending just before this ``(``.
+            name_start = position
+            while name_start > 0 and _CSS_IDENT_CHAR_RE.match(text[name_start - 1]):
+                if text[name_start - 4:name_start] == _CSS_CDO:
+                    break  # that hyphen ends a CDO token, not an ident
+                name_start -= 1
+            opens.append(
+                text[name_start:position].lower() in _CSS_IMAGE_SET_NAMES
+            )
+            position += 1
+            continue
+        if char == ")":
+            if opens:
+                opens.pop()
+            position += 1
+            continue
+        if char in "\"'":
+            close = position + 1
+            while close < index:
+                inner = text[close]
+                if inner == "\\":
+                    close += 2  # an escape consumes the character after it
+                    continue
+                if inner == char or inner == "\n":
+                    break
+                close += 1
+            if close >= index:
+                # The string runs to EOF and never closes.
+                if opens and opens[-1]:
+                    yield None
+                return
+            if text[close] == "\n":
+                position = close + 1  # a bad-string ends at the newline
+                continue
+            if opens and opens[-1]:
+                yield text[position + 1:close]
+            position = close + 1
+            continue
+        position += 1
+    if True in opens:
+        # EOF with an image-set( still open: its ``)`` never came.
+        yield None
+
+
 def css_reference_errors(css: str) -> List[str]:
-    """Error strings for every url()/@import reference in `css` that
-    violates the allowlist (see the section comment above)."""
+    """Error strings for every url()/image-set()/@import reference in
+    `css` that violates the allowlist (see the section comment above)."""
     errors: List[str] = []
 
     def add(message: str) -> None:
@@ -621,6 +721,18 @@ def css_reference_errors(css: str) -> List[str]:
                 )
                 continue
             problem = _css_url_problem(url)
+            if problem is not None:
+                add(problem)
+        for target in _css_image_set_targets(text):
+            # A bare-string image-set() candidate is judged by exactly
+            # the url() allowlist — only its extraction differs.
+            if target is None:
+                add(
+                    "unparseable image-set( construct — its candidates "
+                    "cannot be validated, failing closed"
+                )
+                continue
+            problem = _css_url_problem(target)
             if problem is not None:
                 add(problem)
         for import_match in _CSS_IMPORT_RE.finditer(text):
