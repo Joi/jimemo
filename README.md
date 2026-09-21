@@ -391,7 +391,10 @@ names its family in a font stack (any position: a browser falls back
 per character, so a second family supplies the glyphs the first lacks)
 and states its weight and style,
 and a theme that states no weight (every generated theme today) gets the
-regular face — weight 400, style normal — of each family it names. An
+regular face — weight 400, style normal — of each family it names. A
+family the export ships without that exact face (a display family in
+Bold only) gets the nearest weight of the same style, as a browser
+would choose it. An
 export with a dozen weights therefore adds one or two faces to the theme
 instead of all twelve; bold and italic text on the page is then
 synthesized by the browser. The import summary lists every skipped face

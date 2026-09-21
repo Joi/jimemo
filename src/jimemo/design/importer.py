@@ -294,6 +294,10 @@ def _font_face_block(font: FontFace, export_dir: Path) -> "tuple[str, int]":
 #              build_theme generates today, its roles being family
 #              stacks — uses the regular face alone: weight
 #              400 / normal / regular / unspecified, style normal.
+#              A referenced family with NO exact match gets the face a
+#              browser would settle on instead: the nearest weight of
+#              the stated style, in CSS matching order (see
+#              _nearest_weight_fallbacks).
 #
 # An unreferenced face is dropped from the EMBED only; the export on
 # disk is never touched, and neither is the face's file — a skipped
@@ -483,6 +487,65 @@ def _face_is_referenced(
     return key in variants
 
 
+def _nearest_weight(wanted: int, available: Set[int]) -> Optional[int]:
+    """The weight CSS font matching settles on when no face has
+    `wanted` (CSS Fonts 4, font-matching algorithm, font-weight step):
+    a wanted weight of 400-500 looks upward as far as 500 first, then
+    downward, then above 500; below 400 it looks downward then upward;
+    above 500, upward then downward. None when `available` is empty."""
+    below = sorted((w for w in available if w < wanted), reverse=True)
+    above = sorted(w for w in available if w > wanted)
+    if 400 <= wanted <= 500:
+        order = [w for w in above if w <= 500] + below + [w for w in above if w > 500]
+    elif wanted < 400:
+        order = below + above
+    else:
+        order = above + below
+    return order[0] if order else None
+
+
+def _nearest_weight_fallbacks(
+    fonts: List[FontFace],
+    families: Set[str],
+    variants: Set[Tuple[Union[int, str], str]],
+) -> Set[int]:
+    """Indexes into `fonts` of the faces embedded by FALLBACK: for a
+    referenced family in which no file-backed face matches any stated
+    (weight, style) exactly, the face a browser would settle on instead
+    -- the nearest weight, in CSS matching order, among the family's
+    faces of the stated style. Without this a display family the export
+    ships only in Bold gets no @font-face at all under a theme that
+    states no weight, and the page silently renders a system font.
+
+    A family with any exact match is left alone, so an export that
+    ships the regular face embeds exactly what it did before. The style
+    is never substituted (no italic standing in for normal), and a
+    relative weight (`lighter` / `bolder`) has no number to be near, on
+    either side -- those stay skipped and are listed as such."""
+    by_family: "dict[str, List[int]]" = {}
+    for i, font in enumerate(fonts):
+        if font.files:
+            by_family.setdefault(_normalize_family(font.family), []).append(i)
+    chosen: Set[int] = set()
+    for family in families:
+        indexes = by_family.get(family, [])
+        if any(_face_is_referenced(fonts[i], families, variants) for i in indexes):
+            continue
+        for wanted_weight, wanted_style in variants:
+            if not isinstance(wanted_weight, int):
+                continue
+            weights = {
+                i: _canonical_font_weight(fonts[i].weight)
+                for i in indexes
+                if _canonical_font_style(fonts[i].style) == wanted_style
+            }
+            nearest = _nearest_weight(
+                wanted_weight, {w for w in weights.values() if isinstance(w, int)}
+            )
+            chosen.update(i for i, w in weights.items() if w == nearest)
+    return chosen
+
+
 def _embed_fonts(
     css: str, export: DesignExport, export_dir: Path
 ) -> "tuple[str, List[str], int, List[SkippedFontFace]]":
@@ -503,10 +566,11 @@ def _embed_fonts(
     families: List[str] = []
     skipped: List[SkippedFontFace] = []
     total_bytes = 0
-    for font in export.fonts:
+    fallbacks = _nearest_weight_fallbacks(export.fonts, referenced, variants)
+    for index, font in enumerate(export.fonts):
         if not font.files:
             continue
-        if not _face_is_referenced(font, referenced, variants):
+        if index not in fallbacks and not _face_is_referenced(font, referenced, variants):
             # Dropped from the embed only -- the export itself is never
             # touched -- and the file is never resolved or opened, so a
             # missing or traversal path on a skipped face cannot fail

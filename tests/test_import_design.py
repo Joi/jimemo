@@ -580,6 +580,71 @@ def test_embed_fonts_embeds_the_italic_and_oblique_faces_a_theme_states(tmp_path
     assert [f.style for f in skipped] == ["normal", "italic"]
 
 
+def test_embed_fonts_family_without_the_stated_weight_gets_the_nearest(tmp_path, monkeypatch):
+    # A referenced family with no exact match embeds the face a browser
+    # would settle on (CSS Fonts 4 weight matching), not nothing. The
+    # theme states no weight, so 400 is wanted: 400 looks up to 500
+    # first, then down, then above 500.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cases = [
+        (["700"], "700"),                  # the Bold-only display family
+        (["300", "500", "700"], "500"),    # up to 500 before down
+        (["300", "600"], "300"),           # then down before above 500
+    ]
+    for i, (shipped, expected) in enumerate(cases):
+        export_dir = _faces_export(
+            tmp_path,
+            dirname="nearest-{}".format(i),
+            faces=[
+                ("Testy", w, "normal", "Testy-{}.ttf".format(w)) for w in shipped
+            ],
+        )
+
+        result = import_design(
+            export_dir, name="nearest-{}".format(i), embed_fonts=True
+        )
+
+        assert _EMBEDDED_FACE_RE.findall(result.css) == [
+            ("Testy", expected, "normal")
+        ], shipped
+        assert sorted(f.weight for f in result.skipped_font_faces) == sorted(
+            w for w in shipped if w != expected
+        )
+
+
+def test_embed_fonts_nearest_weight_leaves_exact_matches_and_styles_alone(
+    tmp_path, monkeypatch
+):
+    # The fallback is per family and only for a family with NO exact
+    # match: Testy has its 400, so its 700 stays skipped while Display
+    # (Bold only) embeds its 700. A style is never substituted: Slanty
+    # ships italics only and the theme wants normal, so nothing of it
+    # embeds.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[
+            ("Testy", "400", "normal", "Testy-Regular.ttf"),
+            ("Testy", "700", "normal", "Testy-Bold.ttf"),
+            ("Display", "700", "normal", "Display-Bold.ttf"),
+            ("Slanty", "400", "italic", "Slanty-Italic.ttf"),
+        ],
+        font_token_value='"Testy", "Display", "Slanty", sans-serif',
+        brand_fonts=[],
+    )
+
+    result = import_design(export_dir, name="mixed", embed_fonts=True)
+
+    assert _EMBEDDED_FACE_RE.findall(result.css) == [
+        ("Testy", "400", "normal"),
+        ("Display", "700", "normal"),
+    ]
+    assert [(f.family, f.weight, f.style) for f in result.skipped_font_faces] == [
+        ("Testy", "700", "normal"),
+        ("Slanty", "400", "italic"),
+    ]
+
+
 def test_embed_fonts_skips_family_the_theme_never_names(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     export_dir = _faces_export(
@@ -959,8 +1024,10 @@ def test_cli_embed_fonts_all_faces_skipped_is_not_reported_as_no_files(
     # would be false, so the summary says nothing was embedded and names
     # the faces.
     monkeypatch.setenv("HOME", str(tmp_path))
+    # (italic, because a lone upright weight would embed as the nearest
+    # weight; a style is never substituted)
     export_dir = _faces_export(
-        tmp_path, faces=[("Testy", "700", "normal", "Testy-Bold.ttf")]
+        tmp_path, faces=[("Testy", "700", "italic", "Testy-BoldItalic.ttf")]
     )
 
     rc = main(["import-design", str(export_dir), "--name", "testy", "--embed-fonts"])
@@ -969,7 +1036,7 @@ def test_cli_embed_fonts_all_faces_skipped_is_not_reported_as_no_files(
     out = capsys.readouterr().out
     assert "lists no font files" not in out
     assert "nothing was embedded" in out
-    assert "  'Testy' / 700 / normal" in out
+    assert "  'Testy' / 700 / italic" in out
     assert "LICENSING" not in out
 
 
