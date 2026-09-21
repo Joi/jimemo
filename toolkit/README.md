@@ -243,7 +243,7 @@ A mono chip row for masthead facts (host, uptime, version). Items are
 plain strings.
 
 ```jinja
-{{ ui.meta_pills(["host: azbd2", "uptime 41d", "v0.0.2"]) }}
+{{ ui.meta_pills(["host: web-01", "uptime 41d", "v0.0.2"]) }}
 ```
 
 ### entity-card
@@ -254,9 +254,9 @@ optional badge, tag chips, label/value fields, free text. `variant` in
 
 ```jinja
 {{ ui.entity_cards([
-     {"title": "azbd2", "badge": "live", "badge_tone": "positive",
-      "variant": "positive", "tags": ["mac", "always-on"],
-      "fields": [{"label": "role", "value": "gate host"}]},
+     {"title": "web-01", "badge": "live", "badge_tone": "positive",
+      "variant": "positive", "tags": ["linux", "always-on"],
+      "fields": [{"label": "role", "value": "edge"}]},
    ]) }}
 ```
 

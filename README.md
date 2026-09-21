@@ -554,15 +554,12 @@ git push -u origin <branch>
 <cell-fleet>/ops/repoman/bin/repoman-submit -r jimemo -p jimemo [-i <kata-ref>]
 ```
 
-GitHub enforces this with repository ruleset `repoman-only-main (rm3m)`
-(id 20598600, restrict updates on `refs/heads/main`); the sole bypass is
-the repo's deploy keys — repoman's push identity (deploy key
-`merge-marshal azbd2 (rm3m)`, private key `azbd2:~/.ssh/marshal_deploy_jimemo`,
-ssh alias `github-marshal-jimemo`). Direct pushes and web-UI PR merges to
-`main` are rejected with GH013; retarget finished PR branches through
-`repoman-submit`. Break-glass: disable the ruleset in Settings → Rules →
-Rulesets, or
-`gh api repos/Joi/jimemo/rulesets/20598600 -X PUT -f enforcement=disabled`.
+A GitHub repository ruleset enforces this. Direct pushes and web-UI PR
+merges to `main` are rejected with GH013; the only identity that bypasses
+the ruleset is repoman's own push credential. Retarget finished PR branches
+through `repoman-submit`. The ruleset's identifiers, repoman's credential
+and the break-glass procedure are operator detail and live in the private
+runbook, not in this repo.
 
 ## License
 
