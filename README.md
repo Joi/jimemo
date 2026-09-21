@@ -396,7 +396,8 @@ export with a dozen weights therefore adds one or two faces to the theme
 instead of all twelve; bold and italic text on the page is then
 synthesized by the browser. The import summary lists every skipped face
 as family / weight / style, so a weight you wanted is visibly dropped
-and not silently missing, and a skipped face's file is never opened.
+and not silently missing, and the embed step never opens a skipped
+face's file.
 
 Imported themes are written to `~/.jimemo/themes/<name>.css`, never
 into the repo, and take precedence over a repo theme of the same

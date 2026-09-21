@@ -551,6 +551,35 @@ def test_embed_fonts_embeds_only_weights_and_styles_the_theme_uses(tmp_path, mon
     ]
 
 
+def test_embed_fonts_embeds_the_italic_and_oblique_faces_a_theme_states(tmp_path, monkeypatch):
+    # The style half of the rule, positively: a theme stating
+    # font-style italic (or oblique, with an angle) gets that face, and
+    # the normal face it no longer states is skipped.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[
+            ("Testy", "400", "normal", "Testy-Regular.ttf"),
+            ("Testy", "400", "italic", "Testy-Italic.ttf"),
+            ("Testy", "400", "oblique 10deg", "Testy-Oblique.ttf"),
+        ],
+    )
+    export = read_export(export_dir)
+    theme = ':root {\n  --tb-font: "Testy", sans-serif;\n  font-style: %s;\n}\n'
+
+    embedded, _families, _nbytes, skipped = _embed_fonts(
+        theme % "italic", export, export_dir
+    )
+    assert _EMBEDDED_FACE_RE.findall(embedded) == [("Testy", "400", "italic")]
+    assert [f.style for f in skipped] == ["normal", "oblique 10deg"]
+
+    embedded, _families, _nbytes, skipped = _embed_fonts(
+        theme % "oblique", export, export_dir
+    )
+    assert _EMBEDDED_FACE_RE.findall(embedded) == [("Testy", "400", "oblique 10deg")]
+    assert [f.style for f in skipped] == ["normal", "italic"]
+
+
 def test_embed_fonts_skips_family_the_theme_never_names(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     export_dir = _faces_export(
@@ -1219,6 +1248,32 @@ def test_embed_fonts_css_fallback_real_escape_still_rejected(tmp_path, monkeypat
     with pytest.raises(DesignImportError, match="escapes"):
         import_design(export_dir, name="evil", embed_fonts=True)
     assert not (tmp_path / ".jimemo" / "themes" / "evil.css").exists()
+
+
+def test_embed_fonts_css_fallback_escape_on_an_unreferenced_face_still_rejected(
+    tmp_path, monkeypatch
+):
+    # "A skipped face's file is never touched" is _embed_fonts' promise.
+    # The manifest-less READER confines every @font-face url to the export
+    # before any face is selected, so an escaping url fails the import
+    # even on a family the theme never names. That stays fail-closed.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "outside.ttf").write_bytes(b"SHOULD-NEVER-BE-READ")
+    export_dir = _manifestless_font_export(tmp_path)
+    fonts_css = export_dir / "tokens" / "fonts.css"
+    fonts_css.write_text(
+        fonts_css.read_text()
+        + "@font-face {\n"
+        '  font-family: "Ghost";\n'
+        '  src: url("../../outside.ttf") format("truetype");\n'
+        "  font-weight: 400;\n"
+        "  font-style: normal;\n"
+        "}\n"
+    )
+
+    with pytest.raises(DesignImportError, match="escapes"):
+        import_design(export_dir, name="ghosty", embed_fonts=True)
+    assert not (tmp_path / ".jimemo" / "themes" / "ghosty.css").exists()
 
 
 # -- security: token-name / namespace CSS injection (end-to-end) ----------

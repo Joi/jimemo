@@ -103,7 +103,11 @@ class SkippedFontFace:
     theme's CSS, or its weight/style is not one the CSS states. Carries
     family/weight/style exactly as the export declared them, so a user
     who wanted a dropped weight can see that it was dropped. The face's
-    files were never resolved, opened, or read."""
+    files were never resolved, opened, or read by the embed step. (The
+    manifest-less reader is a separate, earlier boundary: it confines
+    every `@font-face` url to the export directory before any face is
+    selected, so an escaping url there fails the import whether or not
+    its face would have been skipped.)"""
 
     family: str
     weight: str
@@ -295,6 +299,9 @@ def _font_face_block(font: FontFace, export_dir: Path) -> "tuple[str, int]":
 # disk is never touched, and neither is the face's file — a skipped
 # face's path is never resolved or opened, so a missing or traversal
 # path on a skipped face cannot fail (or reach) the import.
+# (That is the embed step's promise. The manifest-less reader confines
+# every @font-face url to the export before selection, and an escaping
+# url there still fails the import.)
 
 _THEME_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
