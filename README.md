@@ -373,7 +373,8 @@ validated before it lands in the generated theme (rejecting anything
 that could break out of a CSS declaration or point at a remote
 resource), and the theme itself is checked against the same
 self-contained-page rule every other jimemo output follows: no remote
-`url()`, no `@import`, no script.
+`url()`, no remote `image-set()` / `-webkit-image-set()` candidate (a bare
+string there fetches exactly like a `url()`), no `@import`, no script.
 
 Fonts map to family name + a generic fallback stack by default, so the
 theme names the brand's typeface but renders correctly only where that
