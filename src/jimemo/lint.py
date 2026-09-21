@@ -304,13 +304,23 @@ _CSS_WS_RE = re.compile(r"\s*")
 # ``@importurl(#g)``, which ``@import\b`` would not match -- the one way
 # comment removal could LOSE a finding instead of merely over-rejecting.
 _CSS_IMPORT_RE = re.compile(r"@import[^;{]*", re.IGNORECASE)
-# The function names whose bare-string arguments are image-set()
-# candidates: the WHOLE identifier a browser reads before the ``(`` must
-# be one of these, compared case-insensitively. ``ximage-set(`` and
-# ``-image-set(`` are different functions and fetch nothing, while the
-# ``-webkit-`` prefix is part of the name, not a boundary before it —
-# which is exactly what reading the whole identifier run gives.
-_CSS_IMAGE_SET_NAMES = frozenset({"image-set", "-webkit-image-set"})
+# A function whose name ENDS in this (case-insensitively) is read as an
+# image-set: ``image-set(`` and ``-webkit-image-set(``, and also
+# ``redimage-set(`` and ``#fffimage-set(``. The whole-identifier match a
+# browser makes is not available here, because the comment stripper
+# deletes a comment without leaving a separator: ``red/**/image-set(``
+# -- two tokens and a live fetch in a browser -- arrives joined. So the
+# match is on the suffix, as ``url(`` is matched anywhere, and a real
+# ``ximage-set(`` (a function no engine defines) is over-rejected.
+_CSS_IMAGE_SET_SUFFIX = "image-set"
+# The only functions whose arguments this scanner can account for inside
+# an image-set: ``url(`` is judged by _css_url_targets and ``type(``
+# holds a format hint. Anything else -- ``var(--x, "https://e.x/p")``
+# above all, whose fallback or referenced value becomes the candidate at
+# computed-value time -- cannot be established statically and fails
+# closed. That over-rejects a gradient candidate, which no jimemo
+# template uses.
+_CSS_IMAGE_SET_INNER_FUNCTIONS = frozenset({"url", "type"})
 
 
 def _css_unescape(text: str) -> str:
@@ -629,8 +639,10 @@ def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
     not yielded twice — and skips a ``type("image/png")`` string, which
     is a format hint, not a resource. A nested image-set inside an
     image-set is scanned the same way (its own strings sit on top of
-    the stack), because a browser resolves the inner one as an <image>
-    candidate too.
+    the stack). CSS Images 4 forbids that nesting, so a browser drops
+    the declaration: reporting it over-rejects, in the safe direction.
+    Any other function inside an image-set (``var()``, ``env()``, a
+    gradient) yields None: see _CSS_IMAGE_SET_INNER_FUNCTIONS.
 
     Token boundaries are read the way _css_comments_stripped reads
     them, with the same helpers, because `text` is that function's
@@ -659,25 +671,28 @@ def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
         names one (escapes decoded).
 
     ``#`` or ``@`` + a name is a hash token or at-keyword, so its ``(``
-    opens an ordinary block: never a url token, never an image-set.
+    opens an ordinary block and never a url token -- but it is still
+    read as an image-set when the name ends that way, because
+    ``#fff/**/image-set(`` arrives joined (_CSS_IMAGE_SET_SUFFIX).
     ``<!--`` is one CDO token, so ``x<!--image-set(`` is a real
     image-set function. A string that runs to EOF unclosed ends the
     scan: a browser reads no token after it either, so there is
     nothing later to miss — at image-set depth 0 it yields None first.
 
-    The comment-split name ``image-/**/set("x" 1x)`` is reported: the
-    stripper deletes a comment without leaving a separator, so the
-    name arrives joined. A browser reads two tokens there and fetches
-    nothing, so this over-rejects, in the safe direction, a spelling no
-    real stylesheet uses; telling the two apart would mean changing
-    what the stripper emits for url( and @import as well."""
+    The comment-split name ``image-/**/set("x" 1x)`` is reported for
+    the same reason: the name arrives joined. A browser reads two
+    tokens there and fetches nothing, so this over-rejects, in the safe
+    direction, a spelling no real stylesheet uses; telling the two
+    apart would mean changing what the stripper emits for url( and
+    @import as well."""
     opens: List[bool] = []
+    inside = 0  # how many entries of `opens` are image-set opens
     index = len(text)
     position = 0
     while position < index:
         if text.startswith("/*", position):
             rest = _css_unescape(text[position:]).lower()
-            if True in opens or "image-set" in rest:
+            if inside or _CSS_IMAGE_SET_SUFFIX in rest:
                 yield None
             return
         if text.startswith(_CSS_CDO, position):
@@ -721,7 +736,13 @@ def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
             position = after + 1
             name = _css_unescape(raw).lower()
             if prefixed or name != "url":
-                opens.append(not prefixed and name in _CSS_IMAGE_SET_NAMES)
+                is_image_set = name.endswith(_CSS_IMAGE_SET_SUFFIX)
+                if inside and not is_image_set and (
+                    prefixed or name not in _CSS_IMAGE_SET_INNER_FUNCTIONS
+                ):
+                    yield None  # e.g. var(): its value is the candidate
+                opens.append(is_image_set)
+                inside += is_image_set
                 continue
             argument = position
             while argument < index and text[argument] in " \t\n":
@@ -743,9 +764,9 @@ def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
         if char == "(":
             opens.append(False)
         elif char == ")" and opens:
-            opens.pop()
+            inside -= opens.pop()
         position += 1
-    if True in opens:
+    if inside:
         # EOF with an image-set( still open: its ``)`` never came.
         yield None
 

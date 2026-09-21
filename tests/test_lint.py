@@ -1404,11 +1404,45 @@ def test_image_set_unterminated_construct_fails_closed():
     ]
 
 
-def test_image_set_name_must_be_the_whole_identifier():
-    for name in ("ximage-set", "-image-set", "image-setx", "#image-set"):
-        css = f'a{{background:{name}("{EVIL_PNG}")}}'
-        assert list(lint._css_image_set_targets(css)) == [], name
-        assert lint.css_reference_errors(css) == [], name
+def test_image_set_is_matched_on_the_end_of_the_name():
+    # A browser matches the whole identifier, but the comment stripper
+    # joins the tokens either side of a deleted comment, so
+    # ``red/**/image-set(`` -- two tokens and a live fetch -- arrives as
+    # ``redimage-set(``. The name is therefore matched on its suffix
+    # (as ``url(`` is matched anywhere), which over-rejects a literal
+    # ``ximage-set(``, a function no engine defines.
+    for before in ("red/**/", "#fff/**/", "x", "-", "#"):
+        css = f'a{{background:{before}image-set("{EVIL_PNG}" 1x)}}'
+        assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)], before
+        css = f'a{{background:{before}-webkit-image-set("{EVIL_PNG}" 1x)}}'
+        assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)], before
+    # A name that merely CONTAINS it is a different function.
+    css = f'a{{background:image-setx("{EVIL_PNG}")}}'
+    assert list(lint._css_image_set_targets(css)) == []
+    assert lint.css_reference_errors(css) == []
+
+
+@pytest.mark.parametrize(
+    "css",
+    [
+        # the fallback becomes the candidate when --missing is undefined
+        f'a{{background:image-set(var(--missing, "{EVIL_PNG}") 1x)}}',
+        # ...and a defined custom property supplies it from outside
+        f'a{{--u:"{EVIL_PNG}";background:image-set(var(--u) 1x)}}',
+        f'a{{background:-webkit-image-set(VAR(--u) 1x)}}',
+        f'a{{background:image-set(env(x, "{EVIL_PNG}") 1x)}}',
+        f'a{{background:image-set("{DATA_PNG}" type(var(--t)))}}',
+        # a gradient candidate is over-rejected by the same rule
+        f'a{{background:image-set(linear-gradient(red, blue) 1x)}}',
+    ],
+)
+def test_image_set_with_a_function_it_cannot_account_for_fails_closed(css):
+    assert lint.css_reference_errors(css) == [IMAGE_SET_UNPARSEABLE]
+
+
+def test_var_outside_an_image_set_is_not_an_image_set_finding():
+    css = f'a{{color:var(--c, red);background:image-set("{DATA_PNG}" 1x)}}'
+    assert lint.css_reference_errors(css) == []
 
 
 @pytest.mark.parametrize(
@@ -1434,6 +1468,8 @@ def test_image_set_single_quoted_candidate_is_an_error():
 
 
 def test_image_set_nested_image_set_candidate_is_an_error():
+    # CSS Images 4 forbids the nesting, so a browser drops this
+    # declaration; reporting it is an over-rejection kept on purpose.
     css = f'a{{background:image-set(image-set("{EVIL_PNG}" 1x) 1x)}}'
     assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
 
