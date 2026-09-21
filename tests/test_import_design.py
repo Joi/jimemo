@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import re
@@ -12,12 +13,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from jimemo import inline
 from jimemo.cli import main
 from jimemo.design.importer import (
+    SkippedFontFace,
+    _embed_fonts,
     design_systems_dir,
     import_design,
     resolve_from_name,
     slugify_name,
 )
-from jimemo.design.reader import THEME_NAME_RE
+from jimemo.design.reader import (
+    THEME_NAME_RE,
+    DesignExport,
+    FontFace,
+    read_export,
+)
 from jimemo.errors import DesignImportError
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "design-export"
@@ -77,6 +85,68 @@ def _manual_export(
         font_path = export_dir / font_rel_path
         font_path.parent.mkdir(parents=True, exist_ok=True)
         font_path.write_bytes(font_bytes)
+    return export_dir
+
+
+# The (family, weight, style) of every @font-face block _font_face_block
+# emits, in order -- identity assertions for face-selection tests (count
+# alone can't tell WHICH faces were embedded).
+_EMBEDDED_FACE_RE = re.compile(
+    r'@font-face \{\n  font-family: "([^"]+)";\n'
+    r"  font-weight: ([^;]+);\n  font-style: ([^;]+);"
+)
+
+
+def _faces_export(
+    tmp_path: Path,
+    *,
+    dirname: str = "faces-export",
+    faces,
+    font_token_value: str = '"Testy", sans-serif',
+    brand_family: str = "Testy",
+    brand_fonts=None,
+) -> Path:
+    """A manifest export carrying an arbitrary fonts[] list -- the shape
+    face-selection needs, since a real export lists many faces of one
+    family across weights and styles. `faces` is a list of (family,
+    weight, style, filename) tuples; each face's file is written with
+    DISTINCT bytes ("FACE-<family>-<weight>-<style>") so a test can
+    prove the right face's payload landed in the theme, not just any
+    font-family-shaped text. A filename beginning with "../" becomes
+    the files[] entry verbatim (export-root-relative) for the traversal
+    cases; its bytes are still written where they land. `brand_fonts`
+    overrides the default single-entry brandFonts list ([] exercises
+    the no-brand-metadata inference path)."""
+    export_dir = tmp_path / dirname
+    export_dir.mkdir(parents=True)
+    fonts = []
+    for family, weight, style, filename in faces:
+        rel = filename if filename.startswith("../") else "assets/fonts/" + filename
+        fonts.append(
+            {"family": family, "weight": weight, "style": style, "files": [rel]}
+        )
+        font_path = export_dir / rel
+        font_path.parent.mkdir(parents=True, exist_ok=True)
+        font_path.write_bytes(
+            "FACE-{family}-{weight}-{style}".format(
+                family=family, weight=weight, style=style
+            ).encode("ascii")
+        )
+    if brand_fonts is None:
+        brand_fonts = [{"family": brand_family, "status": "ok", "tokens": ["--tb-font"]}]
+    manifest = {
+        "namespace": "TestBrand",
+        "tokens": [
+            {"name": "--tb-ink", "value": "#111111", "kind": "color"},
+            {"name": "--tb-paper", "value": "#eeeeee", "kind": "color"},
+            {"name": "--tb-font", "value": font_token_value, "kind": "font"},
+        ],
+        "fonts": fonts,
+        "brandFonts": brand_fonts,
+        "globalCssPaths": [],
+        "themes": [],
+    }
+    (export_dir / "_ds_manifest.json").write_text(json.dumps(manifest))
     return export_dir
 
 
@@ -419,6 +489,289 @@ def test_embed_fonts_with_no_files_listed_notes_nothing_to_embed(tmp_path, monke
     result = import_design(export_dir, name="testy", embed_fonts=True)
     assert result.embedded_font_families == []
     assert "@font-face" not in result.css
+
+
+# -- --embed-fonts: embed only faces the theme references ---------------
+#
+# _embed_fonts used to append a block for EVERY face the export listed;
+# a real export carries a dozen faces across weights and styles and a
+# self-contained theme came to megabytes for faces the generated theme
+# never uses. A face is embedded only when the theme's own CSS names its
+# family (font declarations / custom properties, quote- and
+# case-insensitively; a family list references only its first concrete
+# family) AND its weight/style is one the theme states -- a theme that
+# states no weight keeps the regular face (400 / normal) and nothing
+# else. Skipped faces are reported on ImportResult, and a skipped face's
+# file is never resolved, opened, or read.
+
+
+def test_embed_fonts_embeds_only_weights_and_styles_the_theme_uses(tmp_path, monkeypatch):
+    # build_theme's own output states no weight (its font roles are
+    # family stacks), so this drives _embed_fonts directly with a theme
+    # CSS that DOES -- the same shape build_theme emits, plus the two
+    # font-weight declarations a hand-refined theme carries.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[
+            ("Testy", "400", "normal", "Testy-Regular.ttf"),
+            ("Testy", "400", "italic", "Testy-Italic.ttf"),
+            ("Testy", "700", "normal", "Testy-Bold.ttf"),
+            ("Testy", "300", "normal", "Testy-Light.ttf"),
+        ],
+    )
+    export = read_export(export_dir)
+    css = (
+        "/* jimemo theme 'testy' -- auto-generated */\n"
+        ":root {\n"
+        '  --tb-font: "Testy", sans-serif;\n'
+        "  font-weight: 400;\n"
+        "  font-weight: 700;\n"
+        "}\n"
+    )
+
+    embedded, families, nbytes, skipped = _embed_fonts(css, export, export_dir)
+
+    # face COUNT ... (never a byte size: identity, not bulk, is the contract)
+    assert embedded.count("@font-face {") == 2
+    # ... and IDENTITY: exactly the 400/700 normal faces, in export order
+    assert _EMBEDDED_FACE_RE.findall(embedded) == [
+        ("Testy", "400", "normal"),
+        ("Testy", "700", "normal"),
+    ]
+    # the embedded payloads really are those faces' bytes, not just any
+    # two font-family-shaped blocks
+    for weight in ("400", "700"):
+        payload = "FACE-Testy-{weight}-normal".format(weight=weight)
+        assert base64.b64encode(payload.encode("ascii")).decode("ascii") in embedded
+    assert families == ["Testy", "Testy"]
+    assert skipped == [
+        SkippedFontFace(family="Testy", weight="400", style="italic"),
+        SkippedFontFace(family="Testy", weight="300", style="normal"),
+    ]
+
+
+def test_embed_fonts_skips_family_the_theme_never_names(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[
+            ("Testy", "400", "normal", "Testy-Regular.ttf"),
+            ("Ghost", "400", "normal", "Ghost-Regular.ttf"),
+        ],
+    )
+
+    result = import_design(export_dir, name="ghosty", embed_fonts=True)
+
+    assert result.embedded_font_families == ["Testy"]
+    assert 'font-family: "Ghost"' not in result.css
+    assert _EMBEDDED_FACE_RE.findall(result.css) == [("Testy", "400", "normal")]
+    assert [(f.family, f.weight, f.style) for f in result.skipped_font_faces] == [
+        ("Ghost", "400", "normal")
+    ]
+
+
+def test_skipped_font_faces_reported_on_import_result(tmp_path, monkeypatch):
+    # A user who wanted one of the dropped weights must be able to see
+    # it was dropped: ImportResult carries family/weight/style for every
+    # face the reference rule removed, in export order.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[
+            ("Testy", "400", "normal", "Testy-Regular.ttf"),
+            ("Testy", "400", "italic", "Testy-Italic.ttf"),
+            ("Testy", "700", "normal", "Testy-Bold.ttf"),
+            ("Testy", "300", "normal", "Testy-Light.ttf"),
+        ],
+    )
+
+    result = import_design(export_dir, name="skippy", embed_fonts=True)
+
+    assert result.embedded_font_families == ["Testy"]
+    assert _EMBEDDED_FACE_RE.findall(result.css) == [("Testy", "400", "normal")]
+    assert [(f.family, f.weight, f.style) for f in result.skipped_font_faces] == [
+        ("Testy", "400", "italic"),
+        ("Testy", "700", "normal"),
+        ("Testy", "300", "normal"),
+    ]
+
+
+def test_embed_fonts_no_weight_stated_keeps_only_regular_face(tmp_path, monkeypatch):
+    # The theme states no font-weight anywhere (every theme build_theme
+    # generates today), so only the regular face survives -- weight 400
+    # spelled any of the ways an export spells it (400 / "normal" /
+    # "regular" / unspecified), style normal. "regular" cannot pass
+    # read_export's weight allowlist, so this export is hand-built the
+    # way a looser reader would have shaped it and driven into
+    # _embed_fonts directly.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = tmp_path / "regfaces"
+    export_dir.mkdir()
+    faces = [
+        FontFace("Testy", "400", "normal", ["assets/fonts/Testy-400.ttf"]),
+        FontFace("Testy", "", "normal", ["assets/fonts/Testy-empty.ttf"]),
+        FontFace("Testy", "normal", "normal", ["assets/fonts/Testy-normal.ttf"]),
+        FontFace("Testy", "regular", "", ["assets/fonts/Testy-regular.ttf"]),
+        FontFace("Testy", "700", "normal", ["assets/fonts/Testy-700.ttf"]),
+        FontFace("Testy", "400", "italic", ["assets/fonts/Testy-italic.ttf"]),
+    ]
+    for face in faces:
+        font_path = export_dir / face.files[0]
+        font_path.parent.mkdir(parents=True, exist_ok=True)
+        font_path.write_bytes(b"FAKEFONTDATA-NOT-A-REAL-FONT")
+    export = DesignExport(
+        tokens=[], fonts=faces, brand_fonts=[], namespace="TestBrand"
+    )
+    css = (
+        "/* jimemo theme 'reggy' -- auto-generated */\n"
+        ":root {\n"
+        '  --jm-font-prose: "Testy", sans-serif;\n'
+        "}\n"
+    )
+
+    embedded, families, nbytes, skipped = _embed_fonts(css, export, export_dir)
+
+    # every regular spelling embeds (each is its own FontFace entry);
+    # the 700 and the italic do not. _font_face_block prints an empty
+    # weight/style as "normal".
+    assert _EMBEDDED_FACE_RE.findall(embedded) == [
+        ("Testy", "400", "normal"),
+        ("Testy", "normal", "normal"),
+        ("Testy", "normal", "normal"),
+        ("Testy", "regular", "normal"),
+    ]
+    assert [(f.family, f.weight, f.style) for f in skipped] == [
+        ("Testy", "700", "normal"),
+        ("Testy", "400", "italic"),
+    ]
+
+
+def test_family_matching_robust_to_quotes_and_case(tmp_path, monkeypatch):
+    # The theme may name the family double-quoted ("Inter"),
+    # single-quoted ('Inter'), unquoted (Inter), or in a different case
+    # (inter) than the export's FontFace.family -- all must match.
+    # brandFonts is empty so the family reaches the theme through the
+    # inference path (the token's own stack value), which is where the
+    # unquoted and case-varied spellings actually occur.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    spellings = [
+        '"Inter", sans-serif',
+        "'Inter', sans-serif",
+        "Inter, sans-serif",
+        '"inter", sans-serif',
+    ]
+    for i, token_value in enumerate(spellings):
+        export_dir = _faces_export(
+            tmp_path,
+            dirname="q-export-{}".format(i),
+            faces=[("Inter", "400", "normal", "Inter-Regular.ttf")],
+            font_token_value=token_value,
+            brand_fonts=[],
+        )
+
+        result = import_design(
+            export_dir, name="quotey-{}".format(i), embed_fonts=True
+        )
+
+        assert _EMBEDDED_FACE_RE.findall(result.css) == [
+            ("Inter", "400", "normal")
+        ], token_value
+        assert result.skipped_font_faces == []
+
+
+def test_family_list_references_only_its_first_concrete_family(tmp_path, monkeypatch):
+    # `font-family: "Inter", system-ui, sans-serif` references Inter
+    # only: the entries after it are fallbacks, and generics never name
+    # a shippable face -- even one the export actually ships files for.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[
+            ("Inter", "400", "normal", "Inter-Regular.ttf"),
+            ("system-ui", "400", "normal", "SystemUI-Regular.ttf"),
+        ],
+        font_token_value='"Inter", system-ui, sans-serif',
+        brand_family="Inter",
+    )
+
+    result = import_design(export_dir, name="listy", embed_fonts=True)
+
+    assert result.embedded_font_families == ["Inter"]
+    assert _EMBEDDED_FACE_RE.findall(result.css) == [("Inter", "400", "normal")]
+    assert [(f.family, f.weight, f.style) for f in result.skipped_font_faces] == [
+        ("system-ui", "400", "normal")
+    ]
+
+
+def test_skipped_face_missing_or_traversal_file_never_touched(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    # a SKIPPED face whose file is missing: never resolved or opened,
+    # so its absence cannot fail the import
+    export_dir = _faces_export(
+        tmp_path,
+        dirname="miss-skipped",
+        faces=[
+            ("Testy", "400", "normal", "Testy-Regular.ttf"),
+            ("Ghost", "400", "normal", "Ghost-Regular.ttf"),
+        ],
+    )
+    (export_dir / "assets" / "fonts" / "Ghost-Regular.ttf").unlink()
+
+    result = import_design(export_dir, name="missskip", embed_fonts=True)
+
+    assert result.embedded_font_families == ["Testy"]
+    assert [(f.family, f.weight, f.style) for f in result.skipped_font_faces] == [
+        ("Ghost", "400", "normal")
+    ]
+
+    # a SKIPPED face with a traversal path: same -- and a spy proves the
+    # file is never read at all
+    export_dir = _faces_export(
+        tmp_path,
+        dirname="trav-skipped",
+        faces=[
+            ("Testy", "400", "normal", "Testy-Regular.ttf"),
+            ("Ghost", "400", "normal", "../outside/evil.ttf"),
+        ],
+    )
+    original_read_bytes = Path.read_bytes
+
+    def spying_read_bytes(self, *args, **kwargs):
+        assert "evil" not in self.name, f"skipped face file was read: {self}"
+        return original_read_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", spying_read_bytes)
+
+    result = import_design(export_dir, name="travskip", embed_fonts=True)
+
+    assert result.embedded_font_families == ["Testy"]
+    assert [(f.family, f.weight, f.style) for f in result.skipped_font_faces] == [
+        ("Ghost", "400", "normal")
+    ]
+    monkeypatch.setattr(Path, "read_bytes", original_read_bytes)
+
+    # the same problems on a REFERENCED face still raise exactly as
+    # before -- nothing about the guards changed, only who reaches them
+    missing_ref = _faces_export(
+        tmp_path,
+        dirname="miss-ref",
+        faces=[("Testy", "400", "normal", "Testy-Regular.ttf")],
+    )
+    (missing_ref / "assets" / "fonts" / "Testy-Regular.ttf").unlink()
+    with pytest.raises(DesignImportError, match="not found"):
+        import_design(missing_ref, name="missref", embed_fonts=True)
+
+    trav_ref = _faces_export(
+        tmp_path,
+        dirname="trav-ref",
+        faces=[("Testy", "400", "normal", "../outside/evil.ttf")],
+    )
+    with pytest.raises(DesignImportError, match="escapes"):
+        import_design(trav_ref, name="travref", embed_fonts=True)
 
 
 def test_cli_embed_fonts_prints_licensing_warning(tmp_path, monkeypatch, capsys):
