@@ -498,8 +498,8 @@ def test_embed_fonts_with_no_files_listed_notes_nothing_to_embed(tmp_path, monke
 # self-contained theme came to megabytes for faces the generated theme
 # never uses. A face is embedded only when the theme's own CSS names its
 # family (font declarations / custom properties, quote- and
-# case-insensitively; a family list references only its first concrete
-# family) AND its weight/style is one the theme states -- a theme that
+# case-insensitively; a family list references every concrete family in
+# it, never a generic) AND its weight/style is one the theme states -- a theme that
 # states no weight keeps the regular face (400 / normal) and nothing
 # else. Skipped faces are reported on ImportResult, and a skipped face's
 # file is never resolved, opened, or read.
@@ -680,10 +680,10 @@ def test_family_matching_robust_to_quotes_and_case(tmp_path, monkeypatch):
         assert result.skipped_font_faces == []
 
 
-def test_family_list_references_only_its_first_concrete_family(tmp_path, monkeypatch):
+def test_family_list_generics_are_not_references(tmp_path, monkeypatch):
     # `font-family: "Inter", system-ui, sans-serif` references Inter
-    # only: the entries after it are fallbacks, and generics never name
-    # a shippable face -- even one the export actually ships files for.
+    # only: unquoted generics never name a shippable face -- even one
+    # the export actually ships files for.
     monkeypatch.setenv("HOME", str(tmp_path))
     export_dir = _faces_export(
         tmp_path,
@@ -702,6 +702,56 @@ def test_family_list_references_only_its_first_concrete_family(tmp_path, monkeyp
     assert [(f.family, f.weight, f.style) for f in result.skipped_font_faces] == [
         ("system-ui", "400", "normal")
     ]
+
+
+def test_family_list_references_every_concrete_family(tmp_path, monkeypatch):
+    # Fallback is per character: `"Latin Brand", "CJK Brand", sans-serif`
+    # draws its kana from the second family while the first is available,
+    # so both embed. A family the stack does not name is still skipped.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[
+            ("Latin Brand", "400", "normal", "Latin-Regular.ttf"),
+            ("CJK Brand", "400", "normal", "CJK-Regular.otf"),
+            ("Decor", "400", "normal", "Decor.ttf"),
+        ],
+        font_token_value='"Latin Brand", "CJK Brand", sans-serif',
+        brand_fonts=[],
+    )
+
+    result = import_design(export_dir, name="stacky", embed_fonts=True)
+
+    assert _EMBEDDED_FACE_RE.findall(result.css) == [
+        ("Latin Brand", "400", "normal"),
+        ("CJK Brand", "400", "normal"),
+    ]
+    assert [(f.family, f.weight, f.style) for f in result.skipped_font_faces] == [
+        ("Decor", "400", "normal")
+    ]
+
+
+def test_quoted_family_is_a_name_whatever_it_spells(tmp_path, monkeypatch):
+    # Families the reader accepts and CSS reads as plain names: a comma
+    # or parentheses inside the quotes, and a quoted generic keyword.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for i, family in enumerate(["ACME, Inc", "Brand (Display)", "serif"]):
+        export_dir = _faces_export(
+            tmp_path,
+            dirname="named-export-{}".format(i),
+            faces=[(family, "400", "normal", "Face-{}.ttf".format(i))],
+            font_token_value='"{}", sans-serif'.format(family),
+            brand_family=family,
+        )
+
+        result = import_design(
+            export_dir, name="named-{}".format(i), embed_fonts=True
+        )
+
+        assert _EMBEDDED_FACE_RE.findall(result.css) == [
+            (family, "400", "normal")
+        ], family
+        assert result.skipped_font_faces == []
 
 
 def test_skipped_face_missing_or_traversal_file_never_touched(
@@ -850,7 +900,7 @@ def test_cli_embed_fonts_lists_skipped_faces_after_the_embedded_summary(
     assert rc == 0
 
     lines = capsys.readouterr().out.splitlines()
-    embedded_at = next(i for i, l in enumerate(lines) if l.startswith("embedded fonts: Testy"))
+    embedded_at = next(i for i, l in enumerate(lines) if l.startswith("embedded fonts: 'Testy'"))
     assert lines[embedded_at + 1].startswith("skipped font faces: 3 ")
     assert lines[embedded_at + 2 : embedded_at + 5] == [
         "  'Testy' / 700 / normal",
@@ -918,6 +968,30 @@ def test_cli_embed_fonts_skipped_family_is_escaped_for_the_terminal(
     assert "\u009b" not in out[skipped_at:]
     assert "\u202e" not in out[skipped_at:]
     assert "'Dec\\x9b31m\\u202eor' / 400 / normal" in out
+
+
+def test_cli_embed_fonts_embedded_family_is_escaped_for_the_terminal(
+    tmp_path, monkeypatch, capsys
+):
+    # The same hostile family, this time the one the theme references:
+    # the "embedded fonts:" line escapes it too.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    hostile = "Tes\u009b31m\u202ety"
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[(hostile, "400", "normal", "Testy-Regular.ttf")],
+        font_token_value='"{}", sans-serif'.format(hostile),
+        brand_family=hostile,
+    )
+
+    rc = main(["import-design", str(export_dir), "--name", "testy", "--embed-fonts"])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    embedded_line = next(l for l in out.splitlines() if l.startswith("embedded fonts:"))
+    assert "\u009b" not in embedded_line
+    assert "\u202e" not in embedded_line
+    assert "'Tes\\x9b31m\\u202ety'" in embedded_line
 
 
 def test_cli_without_embed_fonts_notes_family_only(tmp_path, monkeypatch, capsys):

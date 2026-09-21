@@ -267,13 +267,19 @@ def _font_face_block(font: FontFace, export_dir: Path) -> "tuple[str, int]":
 #              (`font-family:`) or any custom property whose value is a
 #              font stack (the theme re-declares the export's own
 #              `--*-font*` tokens verbatim, so a family can be named by
-#              a property jimemo's roles never mention). Only the FIRST
-#              concrete family of each comma-separated list counts:
-#              later entries are fallbacks, which render only when the
-#              families ahead of them are unavailable — and embedding
-#              exists precisely to make the first one available. Generic
-#              families (serif, sans-serif, system-ui, ...) and var()
-#              references name no shippable face and never count.
+#              a property jimemo's roles never mention). EVERY concrete
+#              family of a comma-separated list counts, not the first
+#              alone: a browser falls back per CHARACTER, so
+#              `"Latin Brand", "CJK Brand", sans-serif` draws its kana
+#              from the second family while the first is installed and
+#              embedded. jimemo's own fallback stacks (`Roboto`,
+#              `"Segoe UI"`, ...) cost nothing by this: a candidate
+#              only ever selects a face the export ships under that
+#              name. Unquoted generic families (serif, sans-serif,
+#              system-ui, ...) and var() references name no shippable
+#              face and never count; a QUOTED entry is always a family
+#              name, whatever it spells (`"serif"`, `"Brand (Display)"`,
+#              `"ACME, Inc"`), as CSS reads it.
 #              Comparison is case-insensitive and quote-insensitive
 #              ("Inter" / 'Inter' / Inter / inter), with whitespace
 #              runs collapsed.
@@ -293,8 +299,8 @@ def _font_face_block(font: FontFace, export_dir: Path) -> "tuple[str, int]":
 _THEME_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 # CSS generic family keywords (incl. the ui-* system aliases): never a
-# face an export could ship, so they are skipped when picking the first
-# concrete family out of a stack.
+# face an export could ship, so an UNQUOTED one is skipped when reading
+# the concrete families out of a stack.
 _GENERIC_FAMILIES = frozenset(
     {
         "serif",
@@ -342,26 +348,50 @@ def _normalize_family(name: str) -> str:
     return re.sub(r"\s+", " ", name.strip()).casefold()
 
 
-def _first_concrete_family(value: str) -> Optional[str]:
-    """The first family in a comma-separated font-stack `value` that
-    could name a shippable face, normalized (see `_normalize_family`),
-    or None. Quoted (double or single, matching pair) entries are
-    unquoted first; empty entries, parenthesized constructs (var(),
-    url(), ...), and CSS generic families are skipped. Later entries of
-    a stack are fallbacks that only render when the earlier ones are
-    unavailable, so only the first concrete family is one the theme
-    actually uses."""
-    for entry in value.split(","):
-        entry = entry.strip()
-        if not entry or "(" in entry:
+def _split_font_stack(value: str) -> List[str]:
+    """`value` split on the commas that separate font-stack entries --
+    a comma inside a quoted family (`"ACME, Inc"`) is part of the name,
+    not a separator. The reader refuses a backslash in a family, so no
+    escape handling is needed to find where a string ends."""
+    entries: List[str] = []
+    current: List[str] = []
+    quote = ""
+    for ch in value:
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in ("\"", "'"):
+            quote = ch
+        elif ch == ",":
+            entries.append("".join(current))
+            current = []
             continue
+        current.append(ch)
+    entries.append("".join(current))
+    return entries
+
+
+def _concrete_families(value: str) -> List[str]:
+    """Every family in a comma-separated font-stack `value` that could
+    name a shippable face, normalized (see `_normalize_family`), in
+    order. A quoted entry (double or single, matching pair) is a family
+    name as CSS reads it, whatever it spells -- `"serif"` is a family
+    called serif, not the generic. An unquoted entry counts unless it is
+    empty, a parenthesized construct (var(), url(), ...), or a CSS
+    generic family. Later entries count as much as the first: fallback
+    is per character, so a second family supplies the glyphs the first
+    lacks even while the first is available."""
+    families: List[str] = []
+    for entry in _split_font_stack(value):
+        entry = entry.strip()
         quoted = _QUOTED_FAMILY_RE.match(entry)
         if quoted:
             entry = quoted.group(2).strip()
-        if not entry or entry.casefold() in _GENERIC_FAMILIES:
+        elif "(" in entry or entry.casefold() in _GENERIC_FAMILIES:
             continue
-        return _normalize_family(entry)
-    return None
+        if entry:
+            families.append(_normalize_family(entry))
+    return families
 
 
 def _referenced_font_families(css: str) -> Set[str]:
@@ -373,9 +403,7 @@ def _referenced_font_families(css: str) -> Set[str]:
     text = _THEME_COMMENT_RE.sub("", css)
     families: Set[str] = set()
     for match in _FONT_VALUE_DECL_RE.finditer(text):
-        family = _first_concrete_family(match.group(2))
-        if family is not None:
-            families.add(family)
+        families.update(_concrete_families(match.group(2)))
     return families
 
 

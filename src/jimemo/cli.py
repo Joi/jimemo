@@ -929,18 +929,20 @@ def cmd_publish(args) -> int:
 def _print_skipped_font_faces(skipped) -> None:
     """The --embed-fonts summary's account of what was NOT embedded: one
     line per skipped face (family / weight / style, as the export declared
-    them), or one line saying nothing was skipped. A user who wanted a
+    them), or one line saying nothing was skipped (a face the export names
+    without a file is neither embedded nor skipped, so that line speaks of
+    faces with a file). A user who wanted a
     dropped weight reads here that it was dropped. The family comes from
     an untrusted export and is printed with ``!r``, which is exact and
     escapes what a terminal would act on (the reader already refuses C0
     controls; ``!r`` covers U+009B and the bidi overrides too). Weight and
     style need nothing: the reader allowlists both."""
     if not skipped:
-        print("skipped font faces: none (every face the export lists was embedded)")
+        print("skipped font faces: none (every face the export ships a file for was embedded)")
         return
     print(
         f"skipped font faces: {len(skipped)} (the theme does not name the "
-        "family first in a font stack, or does not state the weight/style):"
+        "family, or does not state the weight/style):"
     )
     for face in skipped:
         weight = face.weight or "unspecified"
@@ -984,7 +986,9 @@ def cmd_import_design(args) -> int:
 
     if result.embedded_font_families:
         kb = result.embedded_bytes / 1024
-        families = ", ".join(sorted(set(result.embedded_font_families)))
+        # !r for the same reason as the skipped lines below: an export's
+        # family name can carry U+009B or a bidi override.
+        families = ", ".join(repr(f) for f in sorted(set(result.embedded_font_families)))
         print(f"embedded fonts: {families} (+{kb:.0f} KB of font data in the theme)")
         _print_skipped_font_faces(result.skipped_font_faces)
         print(

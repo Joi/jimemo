@@ -139,7 +139,7 @@ contract in detail.
     `~/.jimemo/themes/<name>.css` (via `inline.personal_themes_dir`).
     Fonts are family-name-only by default; `--embed-fonts` reads the
     export's font files for the faces the generated theme references
-    (family named first in a font stack, weight/style stated, regular
+    (family named in a font stack, weight/style stated, regular
     by default; the rest are reported as `skipped_font_faces` and
     never opened), confines each path to the export
     directory (rejecting absolute paths or `..` traversal) and to a

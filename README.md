@@ -387,7 +387,9 @@ rendered with that theme.
 
 `--embed-fonts` embeds only the faces the generated theme uses, not
 every file the export ships: a face is embedded when the theme's CSS
-names its family first in a font stack and states its weight and style,
+names its family in a font stack (any position: a browser falls back
+per character, so a second family supplies the glyphs the first lacks)
+and states its weight and style,
 and a theme that states no weight (every generated theme today) gets the
 regular face — weight 400, style normal — of each family it names. An
 export with a dozen weights therefore adds one or two faces to the theme
