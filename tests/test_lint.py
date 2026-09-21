@@ -1299,6 +1299,217 @@ def test_css_url_targets_read_the_replaced_regex_language():
     assert cases == sum(7 ** n for n in range(7))
 
 
+# --- image-set(): the bare-string candidate (jimemo#ktmx) -------------------
+#
+# image-set("x.png" 1x) fetches on load without ever writing url(, so
+# every quoted string directly inside image-set()/-webkit-image-set()
+# is judged by the url() allowlist. Error tests name the offending
+# target; passing tests assert no finding at all.
+
+EVIL_PNG = "https://evil.example/a.png"
+IMAGE_SET_UNPARSEABLE = (
+    "unparseable image-set( construct — its candidates cannot be "
+    "validated, failing closed"
+)
+
+
+def _remote(target):
+    return f"url({target!r}) is a remote resource and would fetch at view time"
+
+
+def test_image_set_bare_string_remote_candidate_is_an_error():
+    css = f'a{{background:image-set("{EVIL_PNG}" 1x)}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_image_set_bare_string_local_sidecar_is_an_error():
+    errors = lint.css_reference_errors(
+        'a{background:image-set("photo.png" 1x, "photo@2x.png" 2x)}'
+    )
+    assert len(errors) == 2
+    assert "'photo.png'" in errors[0] and "sidecar" in errors[0]
+    assert "'photo@2x.png'" in errors[1] and "sidecar" in errors[1]
+
+
+def test_image_set_protocol_relative_candidate_is_an_error():
+    errors = lint.css_reference_errors(
+        'a{background:image-set("//evil.example/a.png" 1x)}'
+    )
+    assert errors == [_remote("//evil.example/a.png")]
+
+
+def test_image_set_url_form_candidate_is_an_error():
+    css = f"a{{background:image-set(url({EVIL_PNG}) 1x)}}"
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+    css = f'a{{background:image-set(url("{EVIL_PNG}") 1x)}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_webkit_image_set_is_treated_identically():
+    css = f'a{{background:-webkit-image-set("{EVIL_PNG}" 1x)}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_image_set_name_is_case_insensitive():
+    css = f'a{{background:IMAGE-SET("{EVIL_PNG}" 1x)}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+    css = f'a{{background:-WebKit-Image-Set("{EVIL_PNG}" 1x)}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_image_set_of_inlined_raster_candidates_passes():
+    css = f'a{{background:image-set("{DATA_PNG}" 1x, "{DATA_PNG}" 2x)}}'
+    assert lint.css_reference_errors(css) == []
+    css = f"a{{background:-webkit-image-set(url({DATA_PNG}) 1x)}}"
+    assert lint.css_reference_errors(css) == []
+
+
+def test_image_set_type_hint_string_is_not_a_candidate():
+    css = f'a{{background:image-set("{DATA_PNG}" type("image/png"))}}'
+    assert lint.css_reference_errors(css) == []
+
+
+def test_image_set_comment_split_name_is_reported():
+    # A browser reads image-/**/set( as two tokens, not an image-set
+    # call, and fetches nothing. The comment stripper deletes a comment
+    # without leaving a separator, so the name arrives joined and the
+    # candidate is reported: an over-rejection, in the safe direction,
+    # of a spelling no real stylesheet uses. Pinned so that a change to
+    # it is a decision (see _css_image_set_targets' docstring).
+    css = f'a{{background:image-/**/set("{EVIL_PNG}" 1x)}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_image_set_escape_hidden_name_is_an_error():
+    css = f'a{{background:image-\\73 et("{EVIL_PNG}" 1x)}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+    # ...and the raw walk reads it without the decoded copy's help.
+    assert list(lint._css_image_set_targets(css)) == [EVIL_PNG]
+
+
+def test_image_set_close_paren_inside_a_candidate_does_not_truncate_it():
+    errors = lint.css_reference_errors('a{background:image-set("a)b.png" 1x)}')
+    assert len(errors) == 1
+    assert "'a)b.png'" in errors[0]
+
+
+def test_image_set_unterminated_construct_fails_closed():
+    css = f'a{{background:image-set("{EVIL_PNG}" 1x'
+    assert lint.css_reference_errors(css) == [
+        _remote(EVIL_PNG), IMAGE_SET_UNPARSEABLE,
+    ]
+    # A candidate string that never closes is unreadable too.
+    assert lint.css_reference_errors('a{background:image-set("https://evil') == [
+        IMAGE_SET_UNPARSEABLE
+    ]
+
+
+def test_image_set_name_must_be_the_whole_identifier():
+    for name in ("ximage-set", "-image-set", "image-setx", "#image-set"):
+        css = f'a{{background:{name}("{EVIL_PNG}")}}'
+        assert list(lint._css_image_set_targets(css)) == [], name
+        assert lint.css_reference_errors(css) == [], name
+
+
+@pytest.mark.parametrize(
+    "css",
+    [
+        "image-set(" * 20000,
+        "x" * 200000 + "(",
+        "ab(" * 20000,
+        "\\" * 200000,
+        '"' * 200001,
+        "/*" + "image-set(" * 20000,
+    ],
+)
+def test_image_set_scan_is_work_bounded(css):
+    started = time.perf_counter()
+    lint.css_reference_errors(css)
+    assert time.perf_counter() - started < 5.0
+
+
+def test_image_set_single_quoted_candidate_is_an_error():
+    css = f"a{{background:image-set('{EVIL_PNG}' 1x)}}"
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_image_set_nested_image_set_candidate_is_an_error():
+    css = f'a{{background:image-set(image-set("{EVIL_PNG}" 1x) 1x)}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_image_set_escaped_quote_inside_a_candidate_does_not_end_it():
+    css = f'a{{background:image-set("a\\"b.png" 1x, "{EVIL_PNG}" 2x)}}'
+    assert list(lint._css_image_set_targets(css)) == ['a\\"b.png', EVIL_PNG]
+    assert _remote(EVIL_PNG) in lint.css_reference_errors(css)
+
+
+def test_image_set_after_a_cdo_token_is_a_match():
+    # ``<!--`` is one CDO token, so its hyphens do not join the name.
+    css = f'x<!--image-set("{EVIL_PNG}" 1x)'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+    css = f'x<!---webkit-image-set("{EVIL_PNG}" 1x)'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_string_outside_any_image_set_is_not_a_candidate():
+    css = (
+        f'a{{content:"{EVIL_PNG}";background:image-set("{DATA_PNG}" 1x);'
+        f"font-family:'{EVIL_PNG}'}}"
+    )
+    assert list(lint._css_image_set_targets(css)) == [DATA_PNG]
+    assert lint.css_reference_errors(css) == []
+
+
+# Each of these returned no finding from the first draft of the scanner
+# while a browser fetches EVIL_PNG: the walk disagreed with
+# _css_comments_stripped about where a string or a ``)`` is.
+@pytest.mark.parametrize(
+    "css",
+    [
+        # an escaped quote outside a string is ident text, not an opener
+        f".a\\'{{}} b{{background:image-set(\"{EVIL_PNG}\" 1x)}} .c\\'{{}}",
+        # ...and decoding the name must not depend on the decoded copy,
+        # where that escaped quote has become a real one
+        f".a\\'{{}} b{{background:image-\\73 et(\"{EVIL_PNG}\" 1x)}} .c\\'{{}}",
+        # an unquoted url token ends at the first UNESCAPED ``)``
+        f'b{{background:image-set(url(#g\\)) 1x, "{EVIL_PNG}" 1x)}}',
+        # a hex escape eats the newline after it; the string goes on
+        f'a{{--x:"\\a\n"}} b{{background:image-set("{EVIL_PNG}" 1x)}} c{{--y:"}}',
+    ],
+)
+def test_image_set_walk_agrees_with_the_stripper_on_boundaries(css):
+    assert _remote(EVIL_PNG) in lint.css_reference_errors(css)
+
+
+def test_image_set_behind_an_unstripped_comment_fails_closed():
+    # After a name ending in ``url`` the stripper stops stripping, so a
+    # real comment -- here one holding a ``)`` -- reaches the walk.
+    css = f'a{{b:foourl(#g)}} b{{background:image-set(/*)*/"{EVIL_PNG}" 1x)}}'
+    assert lint.css_reference_errors(css) == [IMAGE_SET_UNPARSEABLE]
+    css = f'a{{b:foourl(#g)}} /*)*/ b{{background:image-\\73 et("{EVIL_PNG}" 1x)}}'
+    assert lint.css_reference_errors(css) == [IMAGE_SET_UNPARSEABLE]
+    # No image-set after the comment: nothing to fail closed about.
+    assert lint.css_reference_errors('a{b:foourl(#g)} /* c */ b{content:"x"}') == []
+
+
+def test_image_set_is_checked_in_style_elements_and_style_attributes():
+    errors, _ = lint_html(
+        "<html><body><style>"
+        f'.x{{background:image-set("{EVIL_PNG}" 1x)}}'
+        "</style></body></html>",
+        {},
+    )
+    assert any(EVIL_PNG in e for e in errors)
+    errors, _ = lint_html(
+        "<html><body>"
+        f"<p style=\"background:-webkit-image-set('{EVIL_PNG}' 1x)\">x</p>"
+        "</body></html>",
+        {},
+    )
+    assert any(EVIL_PNG in e for e in errors)
+
+
 # --- charts declared: the one controlled opening (Phase 4) -----------------
 #
 # When the manifest declares charts, an inline src-less <script> (and the

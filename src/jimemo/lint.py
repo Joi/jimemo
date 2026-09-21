@@ -614,82 +614,136 @@ def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
     quoted string at nesting depth 0 of the construct — the candidate
     form ``image-set("b.png" 1x)`` that fetches on load without ever
     writing ``url(``. None for a construct this scanner cannot read
-    (no closing ``)``, or a depth-0 candidate string that never
-    closes), which the caller reports, failing closed exactly as it
-    does for ``url(`.
+    (no closing ``)``, a depth-0 candidate string that never closes, or
+    a ``/*`` it cannot place — see below), which the caller reports,
+    failing closed exactly as it does for ``url(``.
 
-    One forward pass, one character at a time, after the manner of
-    _css_url_targets (jimemo#ay7w): no regex with overlapping
-    quantifiers, and every branch advances, so no input can spin it.
-    A stack of open ``(`` records, for each one, whether it opened an
-    image-set; a quoted string is a candidate exactly when the TOP of
-    that stack is an image-set open, which is what "nesting depth 0 of
-    the image-set" means mechanically. That one rule also leaves a
-    ``url("...")`` candidate to _css_url_targets — which already
-    reads it, so it is not yielded twice — and skips a
-    ``type("image/png")`` string, which is a format hint, not a
-    resource. A nested image-set inside an image-set is scanned the
-    same way (its own strings sit on top of the stack), because a
-    browser resolves the inner one as an <image> candidate too.
+    One forward pass in which every branch advances, after the manner
+    of _css_url_targets (jimemo#ay7w): no regex with overlapping
+    quantifiers, so no input can spin it. A stack of open ``(``
+    records, for each one, whether it opened an image-set; a quoted
+    string is a candidate exactly when the TOP of that stack is an
+    image-set open, which is what "nesting depth 0 of the image-set"
+    means mechanically. That one rule also leaves a ``url("...")``
+    candidate to _css_url_targets — which already reads it, so it is
+    not yielded twice — and skips a ``type("image/png")`` string, which
+    is a format hint, not a resource. A nested image-set inside an
+    image-set is scanned the same way (its own strings sit on top of
+    the stack), because a browser resolves the inner one as an <image>
+    candidate too.
 
-    The function name is the whole identifier run ending at the ``(``,
-    read with _CSS_IDENT_CHAR_RE (so ``ximage-set(`` is not a match),
-    with one correction a browser forces: the hyphens of a CDO token
-    (``<!--``) do not continue an identifier, so ``x<!--image-set(`` is
-    CDO + a real image-set function and must match. Strings are read
-    escape-aware — a backslash inside one consumes the character after
-    it, so a ``)`` behind an escaped quote cannot close the construct
-    early and hide the candidates after it — and a bare newline ends
-    one as a bad-string with the walk resuming after it, which is
-    where a browser's tokenizer resumes. A string that runs to EOF
-    unclosed ends the scan: a browser reads no token after it either,
-    so there is nothing later to miss — the one difference is that at
-    image-set depth 0 it yields None first, failing closed."""
+    Token boundaries are read the way _css_comments_stripped reads
+    them, with the same helpers, because `text` is that function's
+    output and any disagreement about where a string or a ``)`` is
+    hides a candidate. Each of these returned no finding while a
+    browser fetched, before the walk agreed with the stripper
+    (jimemo#ktmx):
+
+      * ``.a\\'{} b{background:image-set("https://e.x/p" 1x)} .c\\'{}``
+        -- an escaped quote outside a string is part of an ident, not a
+        string opener. Scanning the escape-decoded copy does not
+        rescue this: decoding turns ``\\'`` into a real quote there.
+        So the function name is decoded HERE, from the raw ident run
+        (``image-\\73 et(`` is a match in the raw text too).
+      * ``image-set(url(#g\\)) 1x, "https://e.x/p" 1x)`` -- an unquoted
+        url token ends at the first UNESCAPED ``)``; it is consumed
+        whole, so nothing inside it opens, closes or quotes.
+      * ``"\\a`` + newline + ``"`` -- a hex escape eats the one
+        whitespace after it, so that newline does not end the string.
+      * ``foourl(#g)`` and then ``image-set(/*)*/"https://e.x/p" 1x)``
+        -- after a name ending in ``url`` the stripper stops stripping
+        on purpose, so a real comment can arrive here with a ``)`` in
+        it. A ``/*`` outside a string or url token therefore means the
+        boundaries after it are not known: the scan ends there, with
+        None if an image-set is open or the rest of the text still
+        names one (escapes decoded).
+
+    ``#`` or ``@`` + a name is a hash token or at-keyword, so its ``(``
+    opens an ordinary block: never a url token, never an image-set.
+    ``<!--`` is one CDO token, so ``x<!--image-set(`` is a real
+    image-set function. A string that runs to EOF unclosed ends the
+    scan: a browser reads no token after it either, so there is
+    nothing later to miss — at image-set depth 0 it yields None first.
+
+    The comment-split name ``image-/**/set("x" 1x)`` is reported: the
+    stripper deletes a comment without leaving a separator, so the
+    name arrives joined. A browser reads two tokens there and fetches
+    nothing, so this over-rejects, in the safe direction, a spelling no
+    real stylesheet uses; telling the two apart would mean changing
+    what the stripper emits for url( and @import as well."""
     opens: List[bool] = []
     index = len(text)
     position = 0
     while position < index:
+        if text.startswith("/*", position):
+            rest = _css_unescape(text[position:]).lower()
+            if True in opens or "image-set" in rest:
+                yield None
+            return
+        if text.startswith(_CSS_CDO, position):
+            position += len(_CSS_CDO)
+            continue
         char = text[position]
-        if char == "(":
-            # The whole function name a browser reads: the identifier
-            # run ending just before this ``(``.
-            name_start = position
-            while name_start > 0 and _CSS_IDENT_CHAR_RE.match(text[name_start - 1]):
-                if text[name_start - 4:name_start] == _CSS_CDO:
-                    break  # that hyphen ends a CDO token, not an ident
-                name_start -= 1
-            opens.append(
-                text[name_start:position].lower() in _CSS_IMAGE_SET_NAMES
-            )
-            position += 1
-            continue
-        if char == ")":
-            if opens:
-                opens.pop()
-            position += 1
-            continue
         if char in "\"'":
-            close = position + 1
-            while close < index:
-                inner = text[close]
-                if inner == "\\":
-                    close += 2  # an escape consumes the character after it
+            start = position + 1
+            position = start
+            while position < index:
+                # Backslash + newline continues a string; any other
+                # valid escape is consumed whole (see the stripper).
+                if text.startswith("\\\n", position):
+                    position += 2
                     continue
-                if inner == char or inner == "\n":
+                escape_end = _css_valid_escape_end(text, position)
+                if escape_end is not None:
+                    position = escape_end
+                    continue
+                if text[position] in (char, "\n"):
                     break
-                close += 1
-            if close >= index:
+                position += 1
+            if position >= index:
                 # The string runs to EOF and never closes.
                 if opens and opens[-1]:
                     yield None
                 return
-            if text[close] == "\n":
-                position = close + 1  # a bad-string ends at the newline
-                continue
-            if opens and opens[-1]:
-                yield text[position + 1:close]
-            position = close + 1
+            if text[position] == char and opens and opens[-1]:
+                yield text[start:position]
+            position += 1  # past the quote, or the bad-string's newline
             continue
+        prefixed = char in "#@"
+        name_start = position + 1 if prefixed else position
+        if _css_valid_escape_end(text, name_start) is not None or (
+            name_start < index and _CSS_IDENT_CHAR_RE.match(text[name_start])
+        ):
+            raw, after = _css_ident_run(text, name_start)
+            position = after
+            if not (after < index and text[after] == "("):
+                continue
+            position = after + 1
+            name = _css_unescape(raw).lower()
+            if prefixed or name != "url":
+                opens.append(not prefixed and name in _CSS_IMAGE_SET_NAMES)
+                continue
+            argument = position
+            while argument < index and text[argument] in " \t\n":
+                argument += 1
+            if argument < index and text[argument] in "\"'":
+                opens.append(False)  # url("...") is a function
+                continue
+            # An unquoted url token: everything up to the first
+            # unescaped ``)`` is URL text.
+            while position < index:
+                escape_end = _css_valid_escape_end(text, position)
+                if escape_end is not None:
+                    position = escape_end
+                    continue
+                position += 1
+                if text[position - 1] == ")":
+                    break
+            continue
+        if char == "(":
+            opens.append(False)
+        elif char == ")" and opens:
+            opens.pop()
         position += 1
     if True in opens:
         # EOF with an image-set( still open: its ``)`` never came.
