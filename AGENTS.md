@@ -1,5 +1,7 @@
 # AGENTS.md
 
+CLAUDE.md is a symlink to this file: the claude-glm lane cannot read AGENTS.md directly (jibot-code#1ea1); edit only AGENTS.md.
+
 Instructions for any coding agent or harness (Claude Code, Codex, Cowork,
 Amplifier, or a plain shell) working with jimemo. This is the CLI contract;
 `README.md` is the human-facing tour and `docs/architecture.md` is the
