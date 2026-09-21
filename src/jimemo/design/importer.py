@@ -12,8 +12,10 @@ Fonts are family-name-only by default: the mapped theme already sets
 (mapping.py), which renders correctly only if that family happens to be
 installed on the viewer's machine — no font bytes are read or embedded
 unless `embed_fonts=True` is passed, in which case each font file the
-manifest lists is read, base64-encoded, and appended as an `@font-face`
-rule with a `data:font/...` `src`. That embedding step is intentionally
+manifest lists FOR A FACE THE GENERATED THEME REFERENCES (family named
+in its CSS, weight/style it states — see the face-selection section
+below) is read, base64-encoded, and appended as an `@font-face` rule
+with a `data:font/...` `src`. That embedding step is intentionally
 separate from `build_theme`: it operates on font FILES (binary, on
 disk), which are a different trust/licensing concern from the token
 VALUES `build_theme` already validated, and it is the one part of this
@@ -26,7 +28,7 @@ import base64
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set, Tuple, Union
 
 from ..errors import DesignImportError
 from ..inline import personal_themes_dir
@@ -42,6 +44,7 @@ from .reader import (
 
 __all__ = [
     "ImportResult",
+    "SkippedFontFace",
     "import_design",
     "slugify_name",
     "design_systems_dir",
@@ -93,6 +96,20 @@ _FONT_EXT_INFO = {
 }
 
 
+@dataclass(frozen=True)
+class SkippedFontFace:
+    """A face `--embed-fonts` declined to embed because the generated
+    theme does not reference it — its family is never named in the
+    theme's CSS, or its weight/style is not one the CSS states. Carries
+    family/weight/style exactly as the export declared them, so a user
+    who wanted a dropped weight can see that it was dropped. The face's
+    files were never resolved, opened, or read."""
+
+    family: str
+    weight: str
+    style: str
+
+
 @dataclass
 class ImportResult:
     name: str
@@ -101,6 +118,7 @@ class ImportResult:
     header: str
     embedded_font_families: List[str] = field(default_factory=list)
     embedded_bytes: int = 0
+    skipped_font_faces: List[SkippedFontFace] = field(default_factory=list)
 
 
 def design_systems_dir() -> Path:
@@ -238,21 +256,231 @@ def _font_face_block(font: FontFace, export_dir: Path) -> "tuple[str, int]":
     return "\n".join(blocks), total_bytes
 
 
-def _embed_fonts(css: str, export: DesignExport, export_dir: Path) -> "tuple[str, List[str], int]":
+# -- which faces the generated theme actually references ------------------
+#
+# _embed_fonts used to append a block for every face the export listed;
+# a real export carries a dozen faces across weights and styles and the
+# self-contained theme ballooned to megabytes for faces the theme never
+# uses. The rule below decides which faces earn their bytes:
+#
+#   family  -- the theme's own CSS names it, in a font declaration
+#              (`font-family:`) or any custom property whose value is a
+#              font stack (the theme re-declares the export's own
+#              `--*-font*` tokens verbatim, so a family can be named by
+#              a property jimemo's roles never mention). Only the FIRST
+#              concrete family of each comma-separated list counts:
+#              later entries are fallbacks, which render only when the
+#              families ahead of them are unavailable — and embedding
+#              exists precisely to make the first one available. Generic
+#              families (serif, sans-serif, system-ui, ...) and var()
+#              references name no shippable face and never count.
+#              Comparison is case-insensitive and quote-insensitive
+#              ("Inter" / 'Inter' / Inter / inter), with whitespace
+#              runs collapsed.
+#   weight/style -- the (weight, style) pairs the theme's CSS states in
+#              `font-weight:` / `font-style:` declarations, read as one
+#              global set (a theme :root cannot scope a weight to one
+#              family). A theme stating neither — every theme
+#              build_theme generates today, its roles being family
+#              stacks — uses the regular face alone: weight
+#              400 / normal / regular / unspecified, style normal.
+#
+# An unreferenced face is dropped from the EMBED only; the export on
+# disk is never touched, and neither is the face's file — a skipped
+# face's path is never resolved or opened, so a missing or traversal
+# path on a skipped face cannot fail (or reach) the import.
+
+_THEME_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+# CSS generic family keywords (incl. the ui-* system aliases): never a
+# face an export could ship, so they are skipped when picking the first
+# concrete family out of a stack.
+_GENERIC_FAMILIES = frozenset(
+    {
+        "serif",
+        "sans-serif",
+        "monospace",
+        "cursive",
+        "fantasy",
+        "system-ui",
+        "ui-serif",
+        "ui-sans-serif",
+        "ui-monospace",
+        "ui-rounded",
+        "math",
+        "emoji",
+        "fangsong",
+    }
+)
+
+# One declaration the reference rule reads: a custom property (any
+# name) or a `font-family:` property. The head must sit at a declaration
+# boundary (start of the css, after `{`, `;`, or a newline) so a value
+# merely CONTAINING e.g. `font-family:` cannot pose as a declaration;
+# the value stops at the next `;` / `}` / `{`. A value carrying a `;`
+# inside a url(data:...) therefore truncates early — harmless here,
+# because the truncated fragment (`url(data:font/ttf`) can never equal a
+# family an export lists, and a candidate that matches nothing in
+# export.fonts embeds nothing.
+_FONT_VALUE_DECL_RE = re.compile(
+    r"(?:^|[;{\n])\s*(--[a-zA-Z0-9_-]+|font-family)\s*:\s*([^;{}]*)",
+    re.IGNORECASE,
+)
+_FONT_WEIGHT_DECL_RE = re.compile(
+    r"(?:^|[;{\n])\s*font-weight\s*:\s*([^;{}]*)", re.IGNORECASE
+)
+_FONT_STYLE_DECL_RE = re.compile(
+    r"(?:^|[;{\n])\s*font-style\s*:\s*([^;{}]*)", re.IGNORECASE
+)
+_QUOTED_FAMILY_RE = re.compile(r"""^(['\"])(.*)\1$""")
+
+
+def _normalize_family(name: str) -> str:
+    """`name` as a family-comparison key: whitespace runs collapsed to
+    single spaces, trimmed, casefolded — so `"Inter"`, `'Inter'`,
+    `Inter`, and `inter` all compare equal."""
+    return re.sub(r"\s+", " ", name.strip()).casefold()
+
+
+def _first_concrete_family(value: str) -> Optional[str]:
+    """The first family in a comma-separated font-stack `value` that
+    could name a shippable face, normalized (see `_normalize_family`),
+    or None. Quoted (double or single, matching pair) entries are
+    unquoted first; empty entries, parenthesized constructs (var(),
+    url(), ...), and CSS generic families are skipped. Later entries of
+    a stack are fallbacks that only render when the earlier ones are
+    unavailable, so only the first concrete family is one the theme
+    actually uses."""
+    for entry in value.split(","):
+        entry = entry.strip()
+        if not entry or "(" in entry:
+            continue
+        quoted = _QUOTED_FAMILY_RE.match(entry)
+        if quoted:
+            entry = quoted.group(2).strip()
+        if not entry or entry.casefold() in _GENERIC_FAMILIES:
+            continue
+        return _normalize_family(entry)
+    return None
+
+
+def _referenced_font_families(css: str) -> Set[str]:
+    """Every family the theme CSS names in a font declaration or a
+    custom property (see the section comment), as normalized
+    comparison keys. Comments are stripped first: build_theme's header
+    carries review notes that NAME families the mapping deliberately
+    did not apply, and a comment is not a reference."""
+    text = _THEME_COMMENT_RE.sub("", css)
+    families: Set[str] = set()
+    for match in _FONT_VALUE_DECL_RE.finditer(text):
+        family = _first_concrete_family(match.group(2))
+        if family is not None:
+            families.add(family)
+    return families
+
+
+def _canonical_font_weight(weight: str) -> Union[int, str]:
+    """`weight` as a comparison key against a theme-stated
+    font-weight: the regular-face spellings (empty / normal / regular)
+    fold to 400, bold to 700, a plain number to its int. `lighter` and
+    `bolder` are RELATIVE keywords with no absolute value, so they
+    compare verbatim — a face and a theme stating the same keyword
+    still match each other."""
+    w = weight.strip().casefold()
+    if w in ("", "normal", "regular"):
+        return 400
+    if w == "bold":
+        return 700
+    if w.isdigit():
+        return int(w)
+    return w
+
+
+def _canonical_font_style(style: str) -> str:
+    """`style` as a comparison key: its leading keyword, casefolded —
+    `oblique 10deg` compares as `oblique`, since CSS font matching
+    treats any oblique angle as an oblique face. Empty is the
+    unspecified sentinel and folds to normal (matching
+    `_font_face_block`'s `style or "normal"`)."""
+    s = style.strip().casefold()
+    return s.split()[0] if s else "normal"
+
+
+def _used_font_variants(css: str) -> Set[Tuple[Union[int, str], str]]:
+    """The (weight, style) pairs the theme CSS states, as the cartesian
+    product of its distinct `font-weight:` and `font-style:`
+    declaration values — a theme :root cannot scope either property to
+    one family, so the pairing cannot be tighter than that (the product
+    may over-embed when the theme states a weight and a style in
+    different rules; over-embedding is the safe direction). A theme
+    stating neither — every theme build_theme generates today — uses
+    the regular face alone: (400, normal)."""
+    text = _THEME_COMMENT_RE.sub("", css)
+    weights = {
+        _canonical_font_weight(w)
+        for w in _FONT_WEIGHT_DECL_RE.findall(text)
+        if w.strip()
+    }
+    styles = {
+        _canonical_font_style(s)
+        for s in _FONT_STYLE_DECL_RE.findall(text)
+        if s.strip()
+    }
+    if not weights:
+        weights = {400}
+    if not styles:
+        styles = {"normal"}
+    return {(w, s) for w in weights for s in styles}
+
+
+def _face_is_referenced(
+    font: FontFace,
+    families: Set[str],
+    variants: Set[Tuple[Union[int, str], str]],
+) -> bool:
+    """True if `font` is a face the theme CSS actually uses: its family
+    is one the CSS names, and its (weight, style) is one the CSS
+    states. A face failing this is skipped without its file ever being
+    resolved, opened, or read."""
+    if _normalize_family(font.family) not in families:
+        return False
+    key = (_canonical_font_weight(font.weight), _canonical_font_style(font.style))
+    return key in variants
+
+
+def _embed_fonts(
+    css: str, export: DesignExport, export_dir: Path
+) -> "tuple[str, List[str], int, List[SkippedFontFace]]":
     """`css` with one `@font-face` block appended per font file the
-    export lists, plus the family names embedded and total bytes (for
-    the CLI's size/licensing warning). Re-validates the result against
+    export lists FOR A FACE THE THEME REFERENCES (see the
+    face-selection section above), plus the family names embedded, the
+    total bytes read (for the CLI's size/licensing warning), and the
+    faces that were skipped. Re-validates the result against
     the same self-contained-CSS check `build_theme` already ran, since
     an embedded font is new content `build_theme` never saw -- this is
     defense in depth, not expected to ever fire (every appended `url()`
     is a data:font URI `lint.css_reference_errors` allows), but a
     silent hole here would ship the exact resource-loading risk this
     whole pipeline exists to prevent."""
+    referenced = _referenced_font_families(css)
+    variants = _used_font_variants(css)
     blocks: List[str] = []
     families: List[str] = []
+    skipped: List[SkippedFontFace] = []
     total_bytes = 0
     for font in export.fonts:
         if not font.files:
+            continue
+        if not _face_is_referenced(font, referenced, variants):
+            # Dropped from the embed only -- the export itself is never
+            # touched -- and the file is never resolved or opened, so a
+            # missing or traversal path on a skipped face cannot fail
+            # (or reach) the import.
+            skipped.append(
+                SkippedFontFace(
+                    family=font.family, weight=font.weight, style=font.style
+                )
+            )
             continue
         block, nbytes = _font_face_block(font, export_dir)
         if not block:
@@ -262,7 +490,7 @@ def _embed_fonts(css: str, export: DesignExport, export_dir: Path) -> "tuple[str
         total_bytes += nbytes
 
     if not blocks:
-        return css, families, total_bytes
+        return css, families, total_bytes, skipped
 
     embedded_css = (
         css.rstrip("\n")
@@ -287,7 +515,7 @@ def _embed_fonts(css: str, export: DesignExport, export_dir: Path) -> "tuple[str
             "theme with embedded fonts failed structural safety check: "
             + "; ".join(structure_errors)
         )
-    return embedded_css, families, total_bytes
+    return embedded_css, families, total_bytes, skipped
 
 
 def import_design(
@@ -332,8 +560,11 @@ def import_design(
 
     embedded_font_families: List[str] = []
     embedded_bytes = 0
+    skipped_font_faces: List[SkippedFontFace] = []
     if embed_fonts:
-        css, embedded_font_families, embedded_bytes = _embed_fonts(css, export, export_dir)
+        css, embedded_font_families, embedded_bytes, skipped_font_faces = _embed_fonts(
+            css, export, export_dir
+        )
 
     themes_dir = personal_themes_dir()
     theme_path = themes_dir / f"{theme_name}.css"
@@ -350,4 +581,5 @@ def import_design(
         header=header,
         embedded_font_families=embedded_font_families,
         embedded_bytes=embedded_bytes,
+        skipped_font_faces=skipped_font_faces,
     )
