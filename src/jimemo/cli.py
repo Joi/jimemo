@@ -926,6 +926,28 @@ def cmd_publish(args) -> int:
     return 0
 
 
+def _print_skipped_font_faces(skipped) -> None:
+    """The --embed-fonts summary's account of what was NOT embedded: one
+    line per skipped face (family / weight / style, as the export declared
+    them), or one line saying nothing was skipped. A user who wanted a
+    dropped weight reads here that it was dropped. The family comes from
+    an untrusted export and is printed with ``!r``, which is exact and
+    escapes what a terminal would act on (the reader already refuses C0
+    controls; ``!r`` covers U+009B and the bidi overrides too). Weight and
+    style need nothing: the reader allowlists both."""
+    if not skipped:
+        print("skipped font faces: none (every face the export lists was embedded)")
+        return
+    print(
+        f"skipped font faces: {len(skipped)} (the theme does not name the "
+        "family first in a font stack, or does not state the weight/style):"
+    )
+    for face in skipped:
+        weight = face.weight or "unspecified"
+        style = face.style or "unspecified"
+        print(f"  {face.family!r} / {weight} / {style}")
+
+
 def cmd_import_design(args) -> int:
     # Lazy, like render/content/suggest above: jimemo.design.importer
     # itself imports no vendored python today, but the design package is
@@ -964,11 +986,18 @@ def cmd_import_design(args) -> int:
         kb = result.embedded_bytes / 1024
         families = ", ".join(sorted(set(result.embedded_font_families)))
         print(f"embedded fonts: {families} (+{kb:.0f} KB of font data in the theme)")
+        _print_skipped_font_faces(result.skipped_font_faces)
         print(
             "LICENSING: only embed fonts you are licensed to redistribute -- "
             "embedding publishes the font bytes in every page rendered with "
             "this theme."
         )
+    elif args.embed_fonts and result.skipped_font_faces:
+        print(
+            "--embed-fonts requested, but the theme references none of the "
+            "font faces the export lists; nothing was embedded."
+        )
+        _print_skipped_font_faces(result.skipped_font_faces)
     elif args.embed_fonts:
         print("--embed-fonts requested, but the export lists no font files to embed.")
     else:

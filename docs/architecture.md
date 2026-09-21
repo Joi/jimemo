@@ -138,7 +138,10 @@ contract in detail.
     orchestrates reader → mapping → install to
     `~/.jimemo/themes/<name>.css` (via `inline.personal_themes_dir`).
     Fonts are family-name-only by default; `--embed-fonts` reads the
-    export's actual font files, confines each path to the export
+    export's font files for the faces the generated theme references
+    (family named first in a font stack, weight/style stated, regular
+    by default; the rest are reported as `skipped_font_faces` and
+    never opened), confines each path to the export
     directory (rejecting absolute paths or `..` traversal) and to a
     real font extension, base64-encodes it, and appends an `@font-face`
     with a `data:font/...` `src` — the one place in this package that

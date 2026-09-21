@@ -130,7 +130,7 @@ def _faces_export(
         font_path.write_bytes(
             "FACE-{family}-{weight}-{style}".format(
                 family=family, weight=weight, style=style
-            ).encode("ascii")
+            ).encode("utf-8")
         )
     if brand_fonts is None:
         brand_fonts = [{"family": brand_family, "status": "ok", "tokens": ["--tb-font"]}]
@@ -789,6 +789,135 @@ def test_cli_embed_fonts_prints_licensing_warning(tmp_path, monkeypatch, capsys)
     theme_path = tmp_path / ".jimemo" / "themes" / "testy.css"
     assert theme_path.is_file()
     assert "@font-face" in theme_path.read_text(encoding="utf-8")
+
+
+def test_embed_fonts_checked_in_fixture_embeds_two_of_eight_faces(tmp_path, monkeypatch):
+    # The checked-in export lists 8 faces with files (the shape behind the
+    # 12MB theme) and ships no font binaries, so stand-in bytes are written
+    # for each listed file. Count and identity, never a byte size.
+    #
+    # This also pins one judgment call. "Northwind Gothic JP" is named only
+    # by --nw-font-jp, an export token the theme re-declares and no jimemo
+    # role uses; the rule counts it as referenced, so its regular face
+    # embeds. Over-embedding is the safe failure, and it costs one face
+    # here (2 of 8, against 1 of 8 for a rule that followed role tokens
+    # only). Narrowing the rule has to change this test.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _copy_fixture(tmp_path)
+    manifest = json.loads((export_dir / "_ds_manifest.json").read_text())
+    listed = [f for f in manifest["fonts"] if f.get("files")]
+    assert len(listed) == 8
+    for face in listed:
+        for rel in face["files"]:
+            path = export_dir / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"STAND-IN-" + rel.encode("ascii"))
+
+    result = import_design(export_dir, name="northwind", embed_fonts=True)
+
+    assert _EMBEDDED_FACE_RE.findall(result.css) == [
+        ("Northwind Sans", "400", "normal"),
+        ("Northwind Gothic JP", "400", "normal"),
+    ]
+    assert sorted((f.family, f.weight, f.style) for f in result.skipped_font_faces) == [
+        ("Northwind Gothic JP", "700", "normal"),
+        ("Northwind Mono", "400", "normal"),
+        ("Northwind Sans", "300", "normal"),
+        ("Northwind Sans", "700", "normal"),
+        ("Northwind Sans Cond", "400", "normal"),
+        ("Northwind Sans Cond", "700", "normal"),
+    ]
+
+
+def test_cli_embed_fonts_lists_skipped_faces_after_the_embedded_summary(
+    tmp_path, monkeypatch, capsys
+):
+    # One line per skipped face (family / weight / style), after the
+    # embedded families and byte count: a user who wanted the dropped
+    # weight reads that it was dropped.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[
+            ("Testy", "400", "normal", "Testy-Regular.ttf"),
+            ("Testy", "700", "normal", "Testy-Bold.ttf"),
+            ("Testy", "400", "italic", "Testy-Italic.ttf"),
+            ("Decor", "", "", "Decor.ttf"),
+        ],
+    )
+
+    rc = main(["import-design", str(export_dir), "--name", "testy", "--embed-fonts"])
+    assert rc == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    embedded_at = next(i for i, l in enumerate(lines) if l.startswith("embedded fonts: Testy"))
+    assert lines[embedded_at + 1].startswith("skipped font faces: 3 ")
+    assert lines[embedded_at + 2 : embedded_at + 5] == [
+        "  'Testy' / 700 / normal",
+        "  'Testy' / 400 / italic",
+        # the reader turns an empty style into "normal"; an empty weight
+        # stays empty and prints as "unspecified"
+        "  'Decor' / unspecified / normal",
+    ]
+    assert any(l.startswith("LICENSING") for l in lines[embedded_at + 5 :])
+
+
+def test_cli_embed_fonts_says_when_nothing_was_skipped(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _manual_export(tmp_path)
+
+    rc = main(["import-design", str(export_dir), "--name", "testy", "--embed-fonts"])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "skipped font faces: none" in out
+
+
+def test_cli_embed_fonts_all_faces_skipped_is_not_reported_as_no_files(
+    tmp_path, monkeypatch, capsys
+):
+    # Every listed face is unreferenced: "the export lists no font files"
+    # would be false, so the summary says nothing was embedded and names
+    # the faces.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = _faces_export(
+        tmp_path, faces=[("Testy", "700", "normal", "Testy-Bold.ttf")]
+    )
+
+    rc = main(["import-design", str(export_dir), "--name", "testy", "--embed-fonts"])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "lists no font files" not in out
+    assert "nothing was embedded" in out
+    assert "  'Testy' / 700 / normal" in out
+    assert "LICENSING" not in out
+
+
+def test_cli_embed_fonts_skipped_family_is_escaped_for_the_terminal(
+    tmp_path, monkeypatch, capsys
+):
+    # The reader refuses C0 controls in a family; U+009B (CSI) and U+202E
+    # (right-to-left override) pass it. The skipped line prints the
+    # family with !r, so neither reaches the terminal raw.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    hostile = "Dec\u009b31m\u202eor"
+    export_dir = _faces_export(
+        tmp_path,
+        faces=[
+            ("Testy", "400", "normal", "Testy-Regular.ttf"),
+            (hostile, "400", "normal", "Decor.ttf"),
+        ],
+    )
+
+    rc = main(["import-design", str(export_dir), "--name", "testy", "--embed-fonts"])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    skipped_at = out.index("skipped font faces:")
+    assert "\u009b" not in out[skipped_at:]
+    assert "\u202e" not in out[skipped_at:]
+    assert "'Dec\\x9b31m\\u202eor' / 400 / normal" in out
 
 
 def test_cli_without_embed_fonts_notes_family_only(tmp_path, monkeypatch, capsys):

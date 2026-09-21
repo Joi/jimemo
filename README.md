@@ -385,6 +385,17 @@ gets larger, and only makes sense for fonts you're licensed to
 redistribute, since embedding publishes the font bytes in every page
 rendered with that theme.
 
+`--embed-fonts` embeds only the faces the generated theme uses, not
+every file the export ships: a face is embedded when the theme's CSS
+names its family first in a font stack and states its weight and style,
+and a theme that states no weight (every generated theme today) gets the
+regular face — weight 400, style normal — of each family it names. An
+export with a dozen weights therefore adds one or two faces to the theme
+instead of all twelve; bold and italic text on the page is then
+synthesized by the browser. The import summary lists every skipped face
+as family / weight / style, so a weight you wanted is visibly dropped
+and not silently missing, and a skipped face's file is never opened.
+
 Imported themes are written to `~/.jimemo/themes/<name>.css`, never
 into the repo, and take precedence over a repo theme of the same
 name — a theme you just imported wins even on a name collision.
