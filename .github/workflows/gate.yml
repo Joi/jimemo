@@ -1,0 +1,135 @@
+# gate.yml — the repo gate as a required check (kata jibot-code#q4av).
+#
+# INERT until this repo is in the organisation AND its .repoman-managed marker
+# says `lane: pr-queue`. The lane guard is the first step of every job here for
+# exactly that reason: a file in .github/workflows runs as soon as a runner
+# exists, whether or not anybody meant it to, and triggers carry no lane
+# condition.
+#
+# This is the UNTRUSTED half of the design. It runs code that arrived in a pull
+# request, so it holds no secret, declares `contents: read`, and runs on the
+# mujin-gate runner — a different account from the bridge runner that holds
+# KATA_AUTH_TOKEN. See docs/superpowers/specs/2026-09-21-q4av-pr-landing-path-design.md
+# in cell-fleet, "Secrets and the two trust domains".
+#
+# It triggers on `pull_request` AND `merge_group` because a required check has
+# to report in both: the pull request must go green to be added to the queue,
+# and the merge group must go green to leave it.
+name: gate
+
+on:
+  pull_request:
+  merge_group:
+
+concurrency:
+  # Keyed on the ref, not the repo: two different pull requests may gate in
+  # parallel on the two runners. What this prevents is a re-push piling a
+  # second run on the same ref behind the first.
+  group: gate-${{ github.repository }}-${{ github.event.merge_group.head_ref || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    # Evaluated by GitHub BEFORE a runner is asked for. Under any other owner
+    # this repo has no self-hosted runners, and a job that asks for one queues
+    # for a day on every event; the lane guard cannot help, because it runs ON
+    # the runner. Rollback to the user account therefore needs no edit here.
+    if: github.repository_owner == 'ito-works'
+    runs-on: [self-hosted, macOS, mujin-gate]
+    # This gate takes about a minute on the runner host against a 300 s
+    # registry budget (measured 2026-09-22: 1712 tests in 51 s). The job
+    # budget must sit UNDER the queue's check_response_timeout_minutes, or a
+    # run that is still working correctly is evicted while the job is still
+    # allowed to continue — the two numbers are one decision, not two. 14 here
+    # (an 11-minute gate step and the steps around it; no warm — this gate
+    # has no dependency store), so the ruleset needs at least 15.
+    timeout-minutes: 14
+    env:
+      # Homebrew's python3 (3.14, with pytest), the interpreter repoman's gate
+      # uses too. The runner's own PATH is the bare system one, whose
+      # /usr/bin/python3 is 3.9 with no pytest and below jimemo's floor.
+      GATE_TOOLS: /opt/homebrew/bin
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # No token in .git/config: the gate reads the working tree, never the
+          # remote, and a credential left here is readable by every test.
+          persist-credentials: false
+          # A workspace carrying a cache from the previous job counts as dirty
+          # to the gate's pristineness probe, which silently costs the full
+          # battery (cell-fleet test-gate.sh:1646-1658).
+          clean: true
+          # Gives us refs/remotes/origin/* without a second fetch.
+          fetch-depth: 0
+
+      - id: lane
+        env:
+          # The BASE ref is the lane authority, never the checked-out tree: on
+          # a pull_request event the checkout is the candidate's, and a marker
+          # it wrote is not the repository's landing authority. The object is
+          # already present from fetch-depth: 0, so this needs no credential.
+          LANE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: ci/lane-guard.sh
+
+      - name: the gate account can read nothing it must not
+        if: steps.lane.outputs.active == 'true'
+        # The paths live in the script, not here: this file must never name
+        # the other runner account, in any position (test_workflows.py).
+        run: ci/isolation-check.sh
+
+      - name: pin the base ref
+        if: steps.lane.outputs.active == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          # The gate reads refs/remotes/origin/main for change scoping
+          # (cell-fleet test-gate.sh:1702) and gated suites read it directly.
+          # repoman recreates it by hand in its isolated checkout (cell-fleet
+          # gitops.py:407-411); here the objects are already present from
+          # fetch-depth: 0, so this is a local ref write and NOT a fetch — a
+          # fetch would have no credential after persist-credentials: false,
+          # which is the point of that flag.
+          git update-ref "refs/remotes/origin/${GITHUB_BASE_REF:-main}" "$BASE_SHA"
+
+      - name: gate
+        id: gate
+        if: steps.lane.outputs.active == 'true'
+        # Two attempts at the registry row's 300 s each (run-gate.sh permits
+        # one defer retry and has no per-attempt supervisor), plus a minute.
+        timeout-minutes: 11
+        env:
+          # No GATE_HOST_LOCK_PATH: this repo's gate takes no per-host lock.
+          # The wrapper's python3 probe only starts an interpreter, and the
+          # bare runner PATH has one that starts and cannot run this gate
+          # (3.9, no pytest); ci/gate-ready.sh asks the real question, and a
+          # host that fails it defers instead of bouncing the producer.
+          RUN_GATE_PREFLIGHT: python3 ci/gate-ready.sh
+          GATE_OUTCOME_FILE: ${{ runner.temp }}/gate-outcome
+          # The head the bridge must compare against the head NOW, to tell a
+          # current verdict from one the world has moved past. The submission
+          # attempt is NOT passed here: it lives in the pull request body, which
+          # the bridge parses anyway, and reading it from a workflow expression
+          # would mean trusting a field the gate never validated.
+          GATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        # The registry row's command, verbatim (cell-fleet
+        # ops/repoman/registry/repos.tsv, jimemo). PATH is the one thing the
+        # step adds, and run-gate.sh passes it through its `env -i`.
+        run: |
+          PATH="$GATE_TOOLS:$PATH" ci/run-gate.sh "${{ runner.temp }}/gate-scratch" \
+            "python3 -m pytest tests -q"
+
+      - name: publish the outcome
+        # always(): the outcome matters MOST when the gate step failed, and
+        # `deferred` in particular must reach the bridge. Without this
+        # condition the artifact is never uploaded on exactly the outcomes the
+        # bridge has to distinguish.
+        if: always() && steps.lane.outputs.active == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-outcome
+          path: ${{ runner.temp }}/gate-outcome
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,86 @@
+# review-evidence.yml — publishes the required check `mujin/review-evidence`
+# under the GitHub App (kata jibot-code#q4av).
+#
+# This is the TRUSTED half. It runs on the mujin-bridge runner, which holds the
+# App's private key AND the kata token on its own filesystem (~/.mujin, 0600).
+# Neither is stored in GitHub: this file reads nothing from the secrets
+# context, so there is nothing for GitHub to hand to the wrong job. It must
+# never run a pull request's copy of this file and never execute anything a
+# pull request wrote. Three things enforce that, and they are independent:
+#
+#   1. Every trigger below runs the workflow definition from the DEFAULT BRANCH:
+#      pull_request_target, workflow_dispatch, workflow_run. There is no
+#      `pull_request` and no `merge_group` here, and there must never be.
+#   2. The org runner group `mujin-bridge` is restricted to this file pinned at
+#      refs/heads/main, so a pull request that rewrites gate.yml to ask for the
+#      bridge runner is refused by GitHub before a job is scheduled.
+#   3. The job checks out the base branch only. What it takes from the pull
+#      request is its number, head sha and body text.
+#
+# The merge-group leg is a workflow_run on `gate` being REQUESTED for a
+# merge_group event: that is the moment a merge-group commit exists and needs
+# the required check, and workflow_run is the trigger that runs main's YAML for
+# it. A pull request that renames or removes its gate workflow gets no check on
+# its merge group and times out of the queue — fail closed.
+name: review-evidence
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: pull request number to re-verify
+        required: true
+  workflow_run:
+    workflows: [gate]
+    types: [requested]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+concurrency:
+  group: review-evidence-${{ github.event.pull_request.number || inputs.pr || github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    # Evaluated by GitHub BEFORE a runner is asked for. Under any other owner
+    # this repo has no self-hosted runners, and a job that asks for one queues
+    # for a day on every event; the lane guard cannot help, because it runs ON
+    # the runner. Rollback to the user account therefore needs no edit here.
+    if: github.repository_owner == 'ito-works' && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'merge_group')
+    runs-on: [self-hosted, macOS, mujin-bridge]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The default branch, explicitly. Never the pull request.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          clean: true
+
+      - id: lane
+        run: ci/lane-guard.sh
+
+      - name: verify and publish
+        if: steps.lane.outputs.active == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MUJIN_APP_ID: ${{ vars.MUJIN_APP_ID }}
+          MUJIN_APP_INSTALLATION_ID: ${{ vars.MUJIN_APP_INSTALLATION_ID }}
+          KATA_SERVER: ${{ vars.KATA_SERVER }}
+          KATA_TRUST_PRIVATE_NETWORK: "1"
+          KATA_AUTHOR: mujin-bridge
+          KATA_BIN: /opt/homebrew/bin/kata
+          # Values from the event travel as environment variables and are read
+          # by Python. None of them is interpolated into a shell line.
+          BRIDGE_EVENT: ${{ github.event_name == 'workflow_run' && 'merge_group' || github.event_name }}
+          BRIDGE_PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          BRIDGE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BRIDGE_GROUP_SHA: ${{ github.event.workflow_run.head_sha }}
+          BRIDGE_QUEUE_REF: ${{ github.event.workflow_run.head_branch }}
+          BRIDGE_BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 ci/bridge/review_evidence.py

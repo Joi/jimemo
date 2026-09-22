@@ -1,0 +1,84 @@
+# kata-bridge.yml — tells kata what GitHub did (kata jibot-code#q4av).
+#
+# TRUSTED half, same rules as review-evidence.yml: it runs on the mujin-bridge
+# runner, reads the kata token from that runner's filesystem, and therefore runs
+# only on triggers that use the DEFAULT BRANCH's copy of this file:
+#
+#   push to main              a pull request landed -> close its kata issue with
+#                             the landed commit, or comment when close is false
+#   pull_request_target,      a pull request left the merge queue without
+#   dequeued                  landing -> say so on its kata issue (a conflict
+#                             bounces; a CI failure is a comment only, because
+#                             it may be a gate that could not run)
+#   workflow_run on gate,     a gate finished -> a FAILED gate bounces the
+#   completed                 producer (comment, then merge-blocked); anything
+#                             else that is not a pass is infrastructure and
+#                             kata is not touched (jp90)
+#
+# `push` runs the pushed commit's copy of this file, and the only way a commit
+# reaches main is the merge queue, after the gate and the review check. There is
+# no pull_request and no merge_group trigger here, and there must never be.
+name: kata-bridge
+
+on:
+  push:
+    branches: [main]
+  pull_request_target:
+    types: [dequeued]
+  workflow_run:
+    workflows: [gate]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: kata-bridge-${{ github.event.workflow_run.id || github.event.pull_request.number || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  tell-kata:
+    # Evaluated by GitHub BEFORE a runner is asked for. Under any other owner
+    # this repo has no self-hosted runners, and a job that asks for one queues
+    # for a day on every event; the lane guard cannot help, because it runs ON
+    # the runner. Rollback to the user account therefore needs no edit here.
+    if: github.repository_owner == 'ito-works'
+    runs-on: [self-hosted, macOS, mujin-bridge]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The default branch, explicitly. Never the pull request.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          clean: true
+
+      - id: lane
+        run: ci/lane-guard.sh
+
+      - name: tell kata
+        if: steps.lane.outputs.active == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          KATA_SERVER: ${{ vars.KATA_SERVER }}
+          KATA_TRUST_PRIVATE_NETWORK: "1"
+          KATA_AUTHOR: mujin-bridge
+          KATA_BIN: /opt/homebrew/bin/kata
+          # Event values travel as environment variables, never in a shell line.
+          BRIDGE_MODE: ${{ github.event_name == 'push' && 'landed' || (github.event_name == 'pull_request_target' && 'dequeued' || 'outcome') }}
+          BRIDGE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRIDGE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BRIDGE_DEQUEUE_REASON: ${{ github.event.reason }}
+          BRIDGE_BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          BRIDGE_BEFORE: ${{ github.event.before }}
+          BRIDGE_AFTER: ${{ github.event.after }}
+          BRIDGE_RUN_ID: ${{ github.event.workflow_run.id }}
+          BRIDGE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          BRIDGE_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          BRIDGE_RUN_EVENT: ${{ github.event.workflow_run.event }}
+          BRIDGE_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BRIDGE_RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          BRIDGE_RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: python3 ci/bridge/kata_bridge.py "$BRIDGE_MODE"
