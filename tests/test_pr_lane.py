@@ -26,6 +26,10 @@ def test_pr_lane_unit_suites(suite):
     _run(sys.executable, "-m", "unittest", "discover", "-s", suite, "-t", suite)
 
 
+@pytest.mark.skipif(sys.platform != "darwin",
+                    reason="pins the gate wrapper on the macOS runner host; "
+                           "its control case runs `sh --version`, which dash "
+                           "(Ubuntu's sh) rejects")
 def test_pr_lane_gate_wrapper_and_lane_guard():
     _run("/bin/bash", "tests/test_ci_gate.sh")
 
