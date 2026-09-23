@@ -28,13 +28,20 @@ contract in detail.
     keys and types every field as `text` or `markdown` (`ITEM_TYPES` in
     `manifest.py`), while a `data` slot without `items` is only checked
     to be a list and reaches the template as the content file wrote it.
-    Nested shapes (data-table columns and rows, tree children, toc
-    children) therefore have no schema: a wrong shape shows up as a
-    blank cell or node, or as a Jinja error at render time, not as a
-    `ContentError` naming the path. The values are still autoescaped
-    by Jinja, so this costs error quality, not safety. Chart data is
-    the exception: `charts.py` validates `{labels, series}` when it
-    builds the config.
+    Anything below that first level (table columns and rows, tree and
+    toc `children`, entity-card `tags` and `fields`, or any other
+    structure a template reads out of a schema-free slot) has no schema.
+    A wrong shape is caught only when the template reads it: the
+    renderer's `StrictUndefined` turns a missing key or a wrong type
+    into `ContentError: template referenced an undefined value: ...`,
+    which names the key or index that failed but not where in the
+    content file it sits. A value of the wrong scalar type can also
+    render without complaint. Safety does not depend on this
+    validation: Jinja autoescapes every value, and `lint_html` refuses a
+    page carrying an executable URL scheme or a remote reference, so
+    what the check misses is error quality. Chart data is the
+    exception: `charts.py` validates `{labels, series}` when it builds
+    the config.
   - `render.py` — `render_page`/`write_output`: Jinja2 render, then image
     inlining, then lint, fail-closed on lint errors.
   - `inline.py` — `assemble_css`/`inline_images`: concatenates the
