@@ -613,8 +613,10 @@ def _css_url_targets(
     `url_tokens`, the reading css_reference_errors uses, a browser's
     reading applies instead (jimemo#j7mv): a bare target is one url
     token, the ``url(`` opens inside it are URL text, and the scan
-    resumes after the token's ``)``, so the targets yielded are disjoint
-    and their total length is at most the text's. Only a cleanly matched
+    resumes after the token's ``)``. The url tokens read are disjoint,
+    and each yields its target plus at most one nested target inside it
+    (see below), so the targets yielded total at most twice the text's
+    length. Only a cleanly matched
     bare target moves the resume point; a quoted target and the three
     None branches keep the character after the open, so an unreadable
     construct can never make the scan skip a later well-formed url(.
