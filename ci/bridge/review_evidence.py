@@ -151,7 +151,6 @@ QUEUE_QUERY = """
 query($owner:String!, $name:String!, $branch:String!) {
   repository(owner:$owner, name:$name) {
     mergeQueue(branch:$branch) {
-      configuration { mergeMethod }
       entries(first:100) {
         nodes { position state headCommit { oid } baseCommit { oid }
                 pullRequest { number headRefOid commits { totalCount } } }
@@ -183,8 +182,8 @@ def group_members(repo, base_branch, group_sha, token, opener=None):
     if a stacked entry's base turns out to be the entry ahead, this count fails
     closed and says so, which is the safe way to find out.
 
-    The count depends on the queue's merge method, read from the queue's own
-    configuration in the same reply — never from anything a pull request
+    The count depends on the queue's merge method, read from the branch's
+    rules (`queue_merge_method`) — never from anything a pull request
     controls. REBASE adds each member's commits and nothing else. MERGE adds
     them plus one merge commit per member, so it is checked as a chain: from
     the group commit, walking first parents, each merge (last member first)
@@ -199,13 +198,10 @@ def group_members(repo, base_branch, group_sha, token, opener=None):
     if doc.get("errors"):
         raise BridgeError("the merge queue query failed")
     try:
-        queue = doc["data"]["repository"]["mergeQueue"]
-        entries = queue["entries"]["nodes"]
-        method = queue["configuration"]["mergeMethod"]
+        entries = doc["data"]["repository"]["mergeQueue"]["entries"]["nodes"]
     except (KeyError, TypeError):
         raise BridgeError("the merge queue query returned no queue for %s" % base_branch)
-    if not isinstance(method, str):
-        raise BridgeError("the merge queue for %s names no merge method" % base_branch)
+    method = queue_merge_method(repo, base_branch, token, opener=opener)
     mine = [e for e in entries if (e.get("headCommit") or {}).get("oid") == group_sha]
     if len(mine) != 1:
         raise BridgeError("commit %s is not the head of exactly one merge queue entry"
@@ -238,6 +234,33 @@ def group_members(repo, base_branch, group_sha, token, opener=None):
         members.append({"number": None, "head_sha": None, "attributed": False,
                         "commit": fault})
     return members
+
+
+def queue_merge_method(repo, base_branch, token, opener=None):
+    """The merge method of the branch's merge queue, from the branch's rules.
+
+    Not GraphQL `mergeQueue.configuration`: MEASURED 2026-09-23, the workflow
+    token gets FORBIDDEN on that field while the entries stay readable. The
+    rules endpoint needs only metadata read. Exactly one method, named by the
+    branch's merge_queue rule(s); anything else raises, and nothing is published.
+    """
+    url = "%s/repos/%s/rules/branches/%s" % (
+        API, repo, urllib.parse.quote(base_branch, safe=""))
+    methods = set()
+    for rule in _pages(url, token, opener=opener):
+        if not (isinstance(rule, dict) and isinstance(rule.get("type"), str)):
+            raise BridgeError("the rules for %s hold a malformed rule" % base_branch)
+        if rule["type"] == "merge_queue":
+            params = rule.get("parameters")
+            method = params.get("merge_method") if isinstance(params, dict) else None
+            if not isinstance(method, str):
+                raise BridgeError("the merge queue for %s names no merge method"
+                                  % base_branch)
+            methods.add(method)
+    if len(methods) != 1:
+        raise BridgeError("the rules for %s name %d merge queue methods, not one"
+                          % (base_branch, len(methods)))
+    return methods.pop()
 
 
 def _merge_chain_fault(commits, members, group_sha, base_oid):
