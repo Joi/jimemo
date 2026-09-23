@@ -96,18 +96,23 @@ never runs, so a byte-perfect body wrapped in one would silently draw
 nothing. (2) The library body must appear, in document order, before
 every init body -- ``new Chart(...)`` needs the ``Chart`` global
 already defined. (3) Every manifest-declared chart id must have a
-matching ``<canvas id="...">`` somewhere on the page; the id showing up
-on some other element (a ``<div>``, say) does not count -- the init
-script's ``getElementById`` call would resolve to nothing Chart.js can
-draw on. These are not new security boundaries -- the body allowlist
-above is the boundary -- they complete the guarantee that an exact-mode
-pass means the page actually renders the charts it declares.
+matching ``<canvas id="...">`` somewhere on the page. (4) That canvas
+must appear, in document order, before the chart's init script -- an
+init that runs first finds no element yet (``getElementById`` returns
+null) and draws nothing. (5) The canvas must be the FIRST element
+carrying that id; the id showing up earlier on some other element (a
+``<div>`` or an ``<img>``, say) does not count -- the init script's
+``getElementById`` call would resolve to that element, which Chart.js
+cannot draw on. These are not new security boundaries -- the body
+allowlist above is the boundary -- they complete the guarantee that an
+exact-mode pass means the page actually renders the charts it
+declares.
 """
 import json
 import re
 from html import unescape
 from html.parser import HTMLParser
-from typing import Any, Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, Iterator, List, Optional, Tuple
 
 from ._parser_floor import (
     assert_interpreter_is_supported as _assert_interpreter_is_supported,
@@ -911,23 +916,33 @@ class _Linter(HTMLParser):
         self._script_parts: Optional[List[str]] = None
         # The current <script>'s `type` attribute (captured at the start
         # tag, read back at flush time -- scripts never nest, so one
-        # slot suffices) and a monotonic per-tag sequence number, both
-        # feeding the exact-mode completeness checks below.
+        # slot suffices) and the seq of the most recent <script> start
+        # tag, both feeding the exact-mode completeness checks below.
         self._script_type: Any = _NO_TYPE
-        self._script_seq = 0
         self._current_script_seq: Optional[int] = None
-        # Exact-mode completeness checks 2 and 3 (see module docstring):
+        # One document-order sequence number for EVERY start tag (both
+        # handle_starttag and handle_startendtag bump it in _check_tag).
+        # Script-vs-script comparisons (check 2) worked with a
+        # scripts-only counter; canvas-vs-init and first-id-vs-canvas
+        # comparisons (checks 4 and 5) cross element kinds, so all
+        # positions must come from the ONE counter to be comparable.
+        self._tag_seq = 0
+        # Exact-mode completeness checks 2-5 (see module docstring):
         # the document-order position of the matched library body (None
         # until/unless one is matched) and every matched init body's
-        # (chart_id, position) pair, plus every <canvas id="..."> found
-        # anywhere on the page. Populated only via _record_script_order,
-        # which only exact-mode acceptance calls -- structural mode and
-        # chartless pages never touch these, so their close()-time
-        # checks (both guarded on self._lib_seq / exact mode) are inert
-        # there.
+        # (chart_id, position) pair; the position of the FIRST <canvas>
+        # carrying each id (getElementById returns the first, so a
+        # second canvas with the same id never counts); and, per id
+        # value, the (tag, seq) of the FIRST element carrying it, any
+        # tag. The script-order pair is populated only via
+        # _record_script_order, which only exact-mode acceptance calls
+        # -- structural mode and chartless pages never touch these, so
+        # their close()-time checks (all guarded on exact mode / the
+        # values exact mode alone can set) are inert there.
         self._lib_seq: Optional[int] = None
         self._init_seqs: List[Tuple[str, int]] = []
-        self._canvas_ids: Set[str] = set()
+        self._canvas_seqs: Dict[str, int] = {}
+        self._first_id: Dict[str, Tuple[str, int]] = {}
         self._chart_lib_cache: Any = _UNSET
 
     def handle_starttag(self, tag, attrs):
@@ -999,13 +1014,49 @@ class _Linter(HTMLParser):
             # <canvas> would have its init script's getElementById call
             # resolve to nothing Chart.js can draw on. An id present on
             # some other element (e.g. a <div>) does not satisfy this --
-            # only _canvas_ids (populated from <canvas> tags alone)
-            # counts.
+            # only _canvas_seqs (populated from <canvas> tags alone)
+            # counts. Checks 4 and 5 below judge declared charts that
+            # DO have a canvas, so this stays the one error a chart
+            # with no canvas at all reports.
+            #
+            # Completeness checks 4 and 5: a canvas SOMEWHERE still
+            # admits two page shapes whose charts never draw, both
+            # judged only for a declared id whose init body was matched
+            # on the page (_init_seqs -- exact mode alone populates it):
+            # (4) the canvas appears after the init, so getElementById
+            # returns null when the init runs; (5) the FIRST element
+            # carrying the id is not the canvas, so getElementById
+            # resolves to an element Chart.js cannot draw on.
+            init_seq: Dict[str, int] = {}
+            for cid, seq in self._init_seqs:
+                if cid not in init_seq:
+                    init_seq[cid] = seq
             for chart_id in sorted(self.chart_ids):
-                if chart_id not in self._canvas_ids:
+                canvas_seq = self._canvas_seqs.get(chart_id)
+                if canvas_seq is None:
                     self.errors.append(
                         f"no <canvas id={chart_id!r}> found for declared "
                         "chart -- its init script has nothing to draw on"
+                    )
+                    continue
+                seq = init_seq.get(chart_id)
+                if seq is None:
+                    continue
+                if canvas_seq > seq:
+                    self.errors.append(
+                        f"chart init for {chart_id!r} appears before its "
+                        f"<canvas id={chart_id!r}> in document order -- "
+                        "the init's getElementById call would return null "
+                        "when it runs, so the chart would not draw"
+                    )
+                first = self._first_id.get(chart_id)
+                if first is not None and first[1] != canvas_seq:
+                    self.errors.append(
+                        f"chart id {chart_id!r} first appears on a "
+                        f"<{first[0]}>, not on the <canvas id={chart_id!r}>"
+                        f" -- the init's getElementById call would resolve "
+                        f"to that <{first[0]}>, which Chart.js cannot "
+                        "draw on"
                     )
 
     def _flush_style(self) -> None:
@@ -1153,6 +1204,10 @@ class _Linter(HTMLParser):
             self._init_seqs.append((chart_id, seq))
 
     def _check_tag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        # This tag's document-order position (both handle_starttag and
+        # handle_startendtag route here, so every start tag -- void and
+        # self-closing included -- gets exactly one number).
+        self._tag_seq += 1
         raw_tag = self.get_starttag_text() or ""
         for match in _NUMERIC_CHARREF_RE.finditer(raw_tag):
             if unescape(match.group(0)) == "":
@@ -1179,9 +1234,9 @@ class _Linter(HTMLParser):
         if tag == "script":
             # Document-order position of this tag, read back at flush
             # time by _record_script_order (completeness check 2).
-            # Scripts never nest, so one counter/slot pair suffices.
-            self._script_seq += 1
-            self._current_script_seq = self._script_seq
+            # Scripts never nest, so one slot suffices; the counter is
+            # the shared _tag_seq (see __init__).
+            self._current_script_seq = self._tag_seq
             if _has_src_attr(attrs):
                 # Never allowed, remote, local, or valueless/empty: a
                 # src-bearing script is an external fetch/file
@@ -1216,13 +1271,19 @@ class _Linter(HTMLParser):
             # fetch-on-load and CSS allowlists) still applies on chart
             # pages, unchanged.
 
-        if tag == "canvas":
-            # Fed to completeness check 3 (close()): a declared chart id
-            # must land on an actual <canvas>, not merely appear as some
-            # other element's id.
-            canvas_id = next((v for n, v in attrs if n.lower() == "id"), None)
-            if canvas_id:
-                self._canvas_ids.add(canvas_id)
+        # getElementById resolves ids by FIRST occurrence across every
+        # element, any tag. Record, per id value, the (tag, seq) of the
+        # first element carrying it and the seq of the first <canvas>
+        # carrying it -- both read by the exact-mode completeness checks
+        # 4 and 5 in close(). (Written even in structural mode, where
+        # nothing reads them: the bookkeeping is per-tag and cheap, and
+        # close() guards the checks on exact mode alone.)
+        id_value = next((v for n, v in attrs if n.lower() == "id"), None)
+        if id_value:
+            if id_value not in self._first_id:
+                self._first_id[id_value] = (tag, self._tag_seq)
+            if tag == "canvas" and id_value not in self._canvas_seqs:
+                self._canvas_seqs[id_value] = self._tag_seq
 
         if tag == "meta":
             http_equiv = next(
