@@ -12,7 +12,7 @@ steps.
 ## Install
 
 ```
-git clone https://github.com/Joi/jimemo.git jimemo
+git clone https://github.com/ito-works/jimemo.git jimemo
 cd jimemo
 ./install.sh
 jimemo doctor
