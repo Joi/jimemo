@@ -121,13 +121,14 @@ light-palette colors.
   tables scroll inside `.jm-data-table__scroll`, never the page.
 - Nothing in the toolkit imports other stylesheets, references remote
   URLs, or emits script tags — pages render identically offline.
-- Macros that take nested data (`data_table`, `toc`, `tree`) get it
-  from schema-free `data` slots, which jimemo does not validate below
-  the top-level list (jimemo#m6hw). A content file with the wrong shape
-  (a row missing a column's key, a `children` that is not a list)
-  renders a blank cell or node, or fails in Jinja, rather than raising
-  a `ContentError`. The shapes each macro accepts are documented below
-  and are the only contract.
+- Macros validate nothing. A template that passes them values from a
+  schema-free `data` slot (for example `data_table` columns and rows,
+  `tree` children, `entity_cards` tags and fields) passes whatever the
+  content file wrote, because jimemo checks such a slot only for being
+  a list (jimemo#m6hw). A wrong shape fails at render time with
+  `template referenced an undefined value: ...`, which names the key
+  but not its place in the content file. The input shapes documented
+  under each component below are the only contract.
 
 ## Components and macros
 
