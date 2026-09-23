@@ -318,8 +318,13 @@ PATH="$PF/bin:$PATH" GATE_OUTCOME_FILE="$PF/outcome4" RUN_GATE_PREFLIGHT="python
     "$RUN_GATE" "$PF/scratch4" "sh $WORK/gate.sh $PF/state" > "$PF/log4" 2>&1
 has "$PF/outcome4" "outcome=deferred" "a python that answers --version but cannot start is DEFERRED"
 # And the control: with a working preflight a FAILING gate is still a failure.
+# The working interpreter is a fixture, not `sh`: the preflight probes a
+# non-python tool with `--version`, which dash (Ubuntu's sh) rejects, and this
+# suite runs in the hosted gate on Linux (jimemo#n5tz).
+printf '#!/bin/sh\necho "ok-interpreter 1.0"\n' > "$PF/bin/ok-interpreter"
+chmod +x "$PF/bin/ok-interpreter"
 echo 1 > "$PF/state/rc"
-GATE_OUTCOME_FILE="$PF/outcome3" RUN_GATE_PREFLIGHT="sh" \
+PATH="$PF/bin:$PATH" GATE_OUTCOME_FILE="$PF/outcome3" RUN_GATE_PREFLIGHT="ok-interpreter" \
     "$RUN_GATE" "$PF/scratch3" "sh $WORK/gate.sh $PF/state" > "$PF/log3" 2>&1
 has "$PF/outcome3" "outcome=failed" "a working host and a failing gate is still FAILED"
 
