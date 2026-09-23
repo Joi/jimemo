@@ -23,7 +23,18 @@ contract in detail.
     `manifest.json` against the Manifest v1 schema.
   - `content.py` — `load_content`: parses a `.md`/`.json`/`.yaml`/`.yml` content
     file against a manifest's slots; renders `markdown`-typed slots to
-    sanitized HTML.
+    sanitized HTML. Validation stops at one level of nesting, by design
+    (jimemo#m6hw): a `data` slot with `items` checks each list item's
+    keys and types every field as `text` or `markdown` (`ITEM_TYPES` in
+    `manifest.py`), while a `data` slot without `items` is only checked
+    to be a list and reaches the template as the content file wrote it.
+    Nested shapes (data-table columns and rows, tree children, toc
+    children) therefore have no schema: a wrong shape shows up as a
+    blank cell or node, or as a Jinja error at render time, not as a
+    `ContentError` naming the path. The values are still autoescaped
+    by Jinja, so this costs error quality, not safety. Chart data is
+    the exception: `charts.py` validates `{labels, series}` when it
+    builds the config.
   - `render.py` — `render_page`/`write_output`: Jinja2 render, then image
     inlining, then lint, fail-closed on lint errors.
   - `inline.py` — `assemble_css`/`inline_images`: concatenates the
