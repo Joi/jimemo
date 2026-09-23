@@ -12,8 +12,8 @@
 # KATA_AUTH_TOKEN. See docs/superpowers/specs/2026-09-21-q4av-pr-landing-path-design.md
 # in cell-fleet, "Secrets and the two trust domains". jimemo is public, and the
 # organisation's own gate machines take no public repository, so this gate
-# runs on GitHub's (kata jibot-code#bden). A pull request from a fork runs it
-# only after a maintainer approves the run.
+# runs on GitHub's (kata jibot-code#bden). A pull request from an outside
+# contributor's fork runs it only after a maintainer approves the run.
 #
 # It triggers on `pull_request` AND `merge_group` because a required check has
 # to report in both: the pull request must go green to be added to the queue,

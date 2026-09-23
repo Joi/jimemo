@@ -333,6 +333,8 @@ class ThisReposGate(unittest.TestCase):
         # A pull request runs this file, but what it `uses:` is fetched by
         # tag; a moved tag would change the gate without a diff here.
         uses = re.findall(r"^\s+(?:- )?uses: (.*)$", self.text, re.M)
+        # Exactly three (checkout, setup-python, upload-artifact), so the test
+        # cannot pass on nothing; a new action step updates this count.
         self.assertEqual(len(uses), 3, uses)
         for ref in uses:
             self.assertIsNotNone(re.match(
