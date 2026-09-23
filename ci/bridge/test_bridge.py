@@ -192,7 +192,8 @@ class GroupRun:
     BASE = "f" * 40
 
     def run_group(self, entries, runs_by_head, n_commits=None, queue_ref=None,
-                  graphql=None, base_oid=BASE, merge_method="REBASE", commits=None):
+                  graphql=None, base_oid=BASE, merge_method="REBASE", commits=None,
+                  rules=None):
         """entries: [(position, group_sha, pr_number, pr_head, pr_commit_count)]"""
         nodes = [{"position": pos, "state": "AWAITING_CHECKS",
                   "headCommit": {"oid": gsha}, "baseCommit": {"oid": base_oid},
@@ -204,9 +205,15 @@ class GroupRun:
         if commits is None:
             commits = [{"sha": "%040d" % i} for i in range(n_commits)]
         queue = {"entries": {"nodes": nodes}}
-        if merge_method is not None:
-            queue["configuration"] = {"mergeMethod": merge_method}
+        if rules is None:
+            rules = [{"type": "required_status_checks", "parameters": {}},
+                     {"type": "merge_queue",
+                      "parameters": {"merge_method": merge_method,
+                                     "grouping_strategy": "ALLGREEN"}}]
         routes = {
+            # The method comes from the branch's rules, never from GraphQL
+            # `configuration` (the workflow token is refused that field).
+            ("GET", "/repos/%s/rules/branches/main" % REPO): rules,
             ("POST", "/graphql"): graphql if graphql is not None else {"data": {
                 "repository": {"mergeQueue": queue}}},
             # The comparison is against the entry's immutable base commit. A
@@ -434,7 +441,9 @@ class MergeMethodIsReadFromTheQueue(GroupRun, unittest.TestCase):
                                          merge_method="REBASE")
         self.assertEqual(bodies[0]["conclusion"], "success")
         query = json.loads([c for c in gh.calls if c[1] == "/graphql"][0][2])["query"]
-        self.assertIn("configuration { mergeMethod }", query)
+        self.assertNotIn("configuration", query)
+        self.assertTrue(any(c[1].startswith("/repos/%s/rules/branches/main" % REPO)
+                            for c in gh.calls))
 
     def test_rebase_does_not_accept_the_merge_shape(self):
         _rc, bodies, _ = self.run_group([(1, SHA_G, 7, SHA_A, 1)], {SHA_A: [check_run()]},
@@ -456,31 +465,37 @@ class MergeMethodIsReadFromTheQueue(GroupRun, unittest.TestCase):
         self.assertIn("merge method FAST_FORWARD is not one this check verifies",
                       bodies[0]["output"]["summary"])
 
-    def queue_reply(self, queue_extra):
-        queue = {"entries": {"nodes": [
-            {"position": 1, "state": "AWAITING_CHECKS", "headCommit": {"oid": SHA_G},
-             "baseCommit": {"oid": self.BASE},
-             "pullRequest": {"number": 7, "headRefOid": SHA_A,
-                             "commits": {"totalCount": 1}}}]}}
-        queue.update(queue_extra)
-        return {"data": {"repository": {"mergeQueue": queue}}}
-
-    def test_a_queue_that_names_no_method_publishes_nothing(self):
-        # An otherwise valid, reviewed group: only the method is wrong.
-        for extra in ({}, {"configuration": None}, {"configuration": {}},
-                      {"configuration": {"mergeMethod": None}},
-                      {"configuration": {"mergeMethod": 7}}):
+    def test_rules_that_name_no_single_method_publish_nothing(self):
+        # An otherwise valid, reviewed group: only the rules are wrong.
+        mq = lambda params: {"type": "merge_queue", "parameters": params}
+        for rules in ([], [{"type": "deletion"}],
+                      [{"type": "merge_queue"}], [mq(None)], [mq({})],
+                      [mq({"merge_method": None})], [mq({"merge_method": 7})],
+                      [mq({"merge_method": ["MERGE"]})],
+                      [mq({"merge_method": "REBASE"}), mq({"merge_method": "MERGE"})],
+                      [mq({"merge_method": "REBASE"}), mq({})],
+                      # A valid rule does not excuse a malformed neighbour.
+                      [mq({"merge_method": "REBASE"}), None],
+                      [mq({"merge_method": "REBASE"}), {}],
+                      [mq({"merge_method": "REBASE"}), "merge_queue"],
+                      [mq({"merge_method": "REBASE"}),
+                       {"type": ["merge_queue"], "parameters": {"merge_method": "MERGE"}}],
+                      {"message": "Not Found"}):
             rc, bodies, _ = self.run_group([(1, SHA_G, 7, SHA_A, 1)],
-                                           {SHA_A: [check_run()]},
-                                           graphql=self.queue_reply(extra))
-            self.assertEqual((rc, bodies), (1, []), extra)
+                                           {SHA_A: [check_run()]}, rules=rules)
+            self.assertEqual((rc, bodies), (1, []), rules)
 
-    def test_the_same_reply_with_a_method_publishes_success(self):
-        # Control for the test above: the fixture is valid once a method is named.
-        _rc, bodies, _ = self.run_group(
-            [(1, SHA_G, 7, SHA_A, 1)], {SHA_A: [check_run()]},
-            graphql=self.queue_reply({"configuration": {"mergeMethod": "REBASE"}}))
+    def test_two_rulesets_that_agree_on_the_method_are_one_method(self):
+        rules = [{"type": "merge_queue", "parameters": {"merge_method": "REBASE"}},
+                 {"type": "merge_queue", "parameters": {"merge_method": "REBASE"}}]
+        _rc, bodies, _ = self.run_group([(1, SHA_G, 7, SHA_A, 1)],
+                                        {SHA_A: [check_run()]}, rules=rules)
         self.assertEqual(bodies[0]["conclusion"], "success")
+
+    def test_an_unreadable_rules_endpoint_publishes_nothing(self):
+        rc, bodies, _ = self.run_group([(1, SHA_G, 7, SHA_A, 1)],
+                                       {SHA_A: [check_run()]}, rules=403)
+        self.assertEqual((rc, bodies), (1, []))
 
 
 class KataToken(unittest.TestCase):
