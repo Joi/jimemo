@@ -12,7 +12,7 @@ What this wizard can and cannot automate, and why
 wrangler.py's Wrangler seam is deliberately narrow: it exposes the
 Pages project list/create calls setup needs, plus ``pages_deploy``,
 ``kv_put``, ``kv_get``, ``kv_list`` for the steady-state
-publish/purge/list/gc path. Since jibot-code#efw6 it also exposes
+publish/purge/list/gc path. It also exposes
 `curl_version`, `pages_project_fail_open`, and
 `pages_project_set_fail_closed` (Pages project config via curl; wrangler
 has no subcommand for fail_open). There is still no "create a KV namespace" or
@@ -34,11 +34,9 @@ Concretely, this wizard:
     this repo's ``publish/cloudflare/`` and setup deployed THAT directory
     instead, the very next ordinary ``publish()`` call would redeploy the
     state directory in its place -- silently dropping the Functions
-    bundle and making ``?purge`` start 405ing with no warning. That is
-    exactly the incident this design ports its security model away from
-    (notes-ito-com's own `check_deploy_freshness()` exists because of a
-    close call in the same shape). Cloudflare only picks up Functions
-    from a ``functions/`` directory at the deploy root, so the layout
+    bundle and making ``?purge`` start 405ing with no warning.
+    Cloudflare only picks up Functions from a ``functions/`` directory at
+    the deploy root, so the layout
     installed is ``<state_dir>/functions/_middleware.js``,
     ``<state_dir>/_headers``, ``<state_dir>/index.html`` -- NOT a flat
     copy of ``publish/cloudflare/``, whose ``_middleware.js`` sits at its
@@ -74,8 +72,7 @@ Concretely, this wizard:
 Multi-machine sync (publish/gitsync.py)
 ---------------------------------------
 The state directory deploys wholesale, so a stale copy silently wipes
-other machines' pages. The fix mirrors notes-ito-com's git-committed
-``public/`` tree: make ``~/.jimemo/cloudflare/<project>/`` itself a git
+other machines' pages. The fix is git as the sync channel: make ``~/.jimemo/cloudflare/<project>/`` itself a git
 repo with an ``origin`` remote (see docs/publish-setup.md), and every
 deploying operation — publish, gc, refresh-assets, and this wizard's
 own deploy step — refuses a dirty tree, fast-forwards to the union,
@@ -288,9 +285,8 @@ def _print_single_machine_warning(io: SetupIO, state_dir: Path) -> None:
         "\n"
         "IMPORTANT -- single-machine limitation:\n"
         f"Deploys come from the LOCAL state directory {state_dir}, not "
-        "from git (unlike\n"
-        "notes-ito-com's committed public/ tree). That directory is the "
-        "one source of\n"
+        "from git.\n"
+        "That directory is the one source of\n"
         "truth for what's currently deployed. Publish from ONE machine "
         "per project, or\n"
         f"sync {state_dir} (e.g. via git or Dropbox) across every "
@@ -576,7 +572,7 @@ def run_setup(dry_run: bool, wrangler, config_path: Path, io: SetupIO,
     # Cloudflare's default is fail_open=true: a Functions outage (free-plan
     # allowance exhausted, execution error) would serve the static files
     # WITHOUT the tombstone middleware, so purged hashes would come back.
-    # Set both environments fail-closed now and verify (jibot-code#efw6).
+    # Set both environments fail-closed now and verify.
     if dry_run:
         io.print("  [dry-run] would set fail_open=false on production and preview via: "
                  f"{_fail_closed_argv(account_id, project)}")

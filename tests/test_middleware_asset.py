@@ -46,13 +46,11 @@ def test_middleware_references_tombstone_kv_binding():
 
 
 def test_middleware_fails_closed_on_missing_tombstone_binding():
-    """jimemo deliberately diverges from the notes-ito-com original here:
-    a missing/misconfigured TOMBSTONES binding must refuse to serve
+    """A missing/misconfigured TOMBSTONES binding must refuse to serve
     (fail CLOSED) rather than silently pass through to next() and serve
     the page anyway (fail OPEN) -- see the middleware's own header
-    comment and CREDITS.md for why this matters more for jimemo's
-    auto-provisioned-per-friend deployments than it did for the single
-    hand-configured original."""
+    comment and CREDITS.md for why this matters for jimemo's
+    auto-provisioned-per-friend deployments."""
     src = _middleware_source()
     hash_idx = src.index("const hash = m[1]")
     guard_idx = src.index("!env.TOMBSTONES", hash_idx)

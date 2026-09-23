@@ -4,9 +4,8 @@ The cloudflare backend deploys its whole local state directory
 (`~/.jimemo/cloudflare/<project>/`) wholesale, so the live site is only
 ever as complete as the machine that deployed last. Publishing from a
 second machine whose copy is missing hashes silently 404s them — the
-wipe-by-deploy hazard notes.ito.com hit in production three times before
-fixing it with git as the sync channel (its kata `notes-ito-com#v8f0`).
-This module ports that fix, with the same ordering:
+wipe-by-deploy hazard. The fix is to use git as the sync channel for
+the state dir, with this ordering:
 
 1. **Refuse a dirty tree, then pull, before staging.** Local edits or
    deletions of tracked files would silently reach production on the
