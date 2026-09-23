@@ -4,8 +4,8 @@ The row is `python3 -m pytest tests -q` and stays so; these three tests are how
 that row also gates a change to a workflow or to ci/, on both lanes. Each one
 is the exact command jibot-ops's gate runs. The bridge suite is verbatim from
 jibot-ops 8f46f7e and needs nothing beyond the stdlib; the shell suite wants
-/bin/bash 3.2, which every Mac has, so it runs on ci.yml's macOS leg and in
-repoman's gate on a Mac, and is skipped in the hosted gate job, which is Linux.
+/bin/bash (3.2 or later) and runs everywhere the gate does, including the
+hosted gate job on Ubuntu, where /bin/sh is dash (jimemo#n5tz).
 """
 import subprocess
 import sys
@@ -27,10 +27,6 @@ def test_pr_lane_unit_suites(suite):
     _run(sys.executable, "-m", "unittest", "discover", "-s", suite, "-t", suite)
 
 
-@pytest.mark.skipif(sys.platform != "darwin",
-                    reason="the gate wrapper's shell suite needs macOS: "
-                           "its control case runs `sh --version`, which dash "
-                           "(Ubuntu's sh) rejects")
 def test_pr_lane_gate_wrapper_and_lane_guard():
     _run("/bin/bash", "tests/test_ci_gate.sh")
 
