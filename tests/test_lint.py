@@ -1299,6 +1299,129 @@ def test_css_url_targets_read_the_replaced_regex_language():
     assert cases == sum(7 ** n for n in range(7))
 
 
+# --- url( opens nested inside one bare target (jimemo#j7mv) ----------------
+#
+# A browser reads url(url(x)) as ONE url token whose target is ``url(x``:
+# the nested open is URL text, not a token of its own. Reporting one
+# target per open made n opens sharing one ``)`` hand the caller n
+# overlapping targets, each copied and judged in full — work
+# proportional to opens x length (measured: ``url(`` x 4000 + ``)``
+# cost 4.7 s, 4x per doubling). After a bare target is read up to its
+# closing ``)``, the scan therefore resumes AFTER that ``)``. A quoted
+# target (url("url(x)")) is a function taking a string, not url-token
+# text, and keeps the replaced regex's reading: one target per open.
+
+NESTED_Y = "https://evil.example/y"
+
+
+def test_nested_url_opens_in_one_bare_target_are_bounded():
+    # ``url(`` x 20000 sharing one ``)``: minutes before jimemo#j7mv
+    # (n=50000 did not finish in 10); one url token is read once.
+    css = "a{b:" + "url(" * 20000 + ")}"
+    started = time.perf_counter()
+    errors = lint.css_reference_errors(css)
+    assert time.perf_counter() - started < 10.0
+    assert errors  # the one url token is still judged, not skipped
+
+
+def test_nested_open_inside_an_outer_target_still_errors():
+    # The outer token's target is url(https://evil.example/x — judged
+    # by itself, and rejected: its scheme is not an allowed one. The
+    # nested open being URL text removes a second message, never the
+    # outer one.
+    errors = lint.css_reference_errors("url(url(https://evil.example/x))")
+    assert errors == [
+        "url('url(https://evil.example/x'): scheme 'url(https' "
+        "is not allowed in CSS"
+    ]
+
+
+@pytest.mark.parametrize(
+    "css, needle",
+    [
+        # Every outer target a browser would FETCH is rejected by
+        # itself, so skipping the nested open accepts nothing: remote
+        # text inside makes the outer target's scheme not-allowed,
+        ("url(url(https://evil.example/x))", "evil.example"),
+        ("url(url(//evil.example/x))", "evil.example"),
+        # a local path inside leaves the outer target a local path,
+        ("url(url(x))", "sidecar"),
+        # and a data: URI inside gives the outer target a scheme of
+        # its own that is not data:.
+        ("url(url(data:text/html,x))", "not allowed"),
+    ],
+)
+def test_fetching_outer_target_is_rejected_by_itself(css, needle):
+    errors = lint.css_reference_errors(css)
+    assert len(errors) == 1, errors
+    assert needle in errors[0]
+
+
+def test_nested_open_does_not_hide_a_later_reference():
+    # The skip lands after the token's OWN ``)``, never past it, so a
+    # separate later url() is still read — and reported by name.
+    css = f"a{{b:url(url(x))}} c{{d:url({NESTED_Y})}}"
+    assert lint.css_reference_errors(css) == [
+        "url('url(x') is a local path that was not inlined — the "
+        "output would depend on a sidecar file",
+        f"url({NESTED_Y!r}) is a remote resource and would fetch at "
+        "view time",
+    ]
+
+
+def test_unterminated_url_does_not_hide_a_later_remote_url():
+    # An unreadable construct keeps today's resume point — the
+    # character after the open — so a hostile page cannot make the
+    # scan skip a later well-formed remote url(. Here the quoted
+    # target never closes (no second quote exists), which fails
+    # closed, and the later reference is still read.
+    css = f'a{{b:url("x}} c{{d:url({NESTED_Y})}}'
+    assert lint.css_reference_errors(css) == [
+        UNPARSEABLE,
+        f"url({NESTED_Y!r}) is a remote resource and would fetch at "
+        "view time",
+    ]
+
+
+def test_remote_nested_inside_a_bare_target_is_reported_by_the_target():
+    # The inner reference sits inside the outer token, so it is not
+    # read separately — but the outer target CONTAINS it, and that
+    # target is itself rejected: never accepted.
+    css = f"url(x url({NESTED_Y}))"
+    errors = lint.css_reference_errors(css)
+    assert errors == [
+        "url('x url(https://evil.example/y'): scheme 'xurl(https' "
+        "is not allowed in CSS"
+    ]
+
+
+def test_quoted_target_keeps_one_target_per_open():
+    # A url("...") is a function taking a string, not a url token: the
+    # string's text is not URL text, and the regex this scanner
+    # replaced read one target per open here. Pinned to today's
+    # output (run before jimemo#j7mv; recorded in FIXES.md): both the
+    # string url(x) and the bare x inside it are reported.
+    assert lint.css_reference_errors('url("url(x)")') == [
+        "url('url(x)') is a local path that was not inlined — the "
+        "output would depend on a sidecar file",
+        "url('x') is a local path that was not inlined — the output "
+        "would depend on a sidecar file",
+    ]
+
+
+def test_nested_open_inside_a_non_fetching_target_fetches_nothing():
+    # The one place skipping changes ACCEPTANCE, recorded on purpose.
+    # A fragment target and an inlined data: payload are the two forms
+    # the allowlist accepts that can also contain a nested url(; a
+    # browser reads either as ONE url token that loads nothing — a
+    # #fragment resolves inside the document, a data: URI is inline —
+    # so the nested open (reported before jimemo#j7mv as a phantom
+    # local path) was never a separate fetch. See FIXES.md.
+    assert lint.css_reference_errors("url(#url(x))") == []
+    assert lint.css_reference_errors("url(#url(https://evil.example/x))") == []
+    assert lint.css_reference_errors("url(data:image/png,url(x))") == []
+
+
 # --- image-set(): the bare-string candidate (jimemo#ktmx) -------------------
 #
 # image-set("x.png" 1x) fetches on load without ever writing url(, so
