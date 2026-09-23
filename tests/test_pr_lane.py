@@ -4,7 +4,8 @@ The row is `python3 -m pytest tests -q` and stays so; these three tests are how
 that row also gates a change to a workflow or to ci/, on both lanes. Each one
 is the exact command jibot-ops's gate runs. The bridge suite is verbatim from
 jibot-ops 8f46f7e and needs nothing beyond the stdlib; the shell suite wants
-/bin/bash 3.2, which every Mac has.
+/bin/bash 3.2, which every Mac has, so it runs on ci.yml's macOS leg and in
+repoman's gate on a Mac, and is skipped in the hosted gate job, which is Linux.
 """
 import subprocess
 import sys
@@ -27,7 +28,7 @@ def test_pr_lane_unit_suites(suite):
 
 
 @pytest.mark.skipif(sys.platform != "darwin",
-                    reason="pins the gate wrapper on the macOS runner host; "
+                    reason="the gate wrapper's shell suite needs macOS: "
                            "its control case runs `sh --version`, which dash "
                            "(Ubuntu's sh) rejects")
 def test_pr_lane_gate_wrapper_and_lane_guard():
@@ -51,10 +52,10 @@ def _ready_with(tmp_path, python3_body):
 
 
 def test_gate_ready_accepts_a_python_that_can_run_the_gate(tmp_path):
-    # This interpreter, with pytest reachable the way the gate host reaches it
-    # (in site-packages, not under a HOME the probe's scratch HOME hides): the
-    # shim names pytest's own location, so the test holds wherever this Mac
-    # keeps it.
+    # This interpreter, with pytest reachable the way the gate's interpreter
+    # reaches it (in site-packages, not under a HOME the probe's scratch HOME
+    # hides): the shim names pytest's own location, so the test holds wherever
+    # this machine keeps it.
     site = str(Path(pytest.__file__).resolve().parent.parent)
     proc = _ready_with(tmp_path, 'PYTHONPATH="%s" exec "%s" "$@"\n'
                        % (site, sys.executable))
@@ -62,9 +63,9 @@ def test_gate_ready_accepts_a_python_that_can_run_the_gate(tmp_path):
 
 
 def test_gate_ready_refuses_a_python_below_the_floor(tmp_path):
-    # The runner host's /usr/bin/python3: starts, is 3.9, satisfies the
-    # wrapper's own probe, cannot run this gate. Skipped on a host whose
-    # system python is already at the floor (jimemo's hosted CI, one day).
+    # A system /usr/bin/python3 below the floor (3.9 on a Mac, 3.12 on
+    # ubuntu-latest): starts, satisfies the wrapper's own probe, cannot run
+    # this gate. Skipped on a host whose system python is already at the floor.
     if not Path("/usr/bin/python3").exists():
         pytest.skip("no /usr/bin/python3")
     ver = subprocess.run(["/usr/bin/python3", "-c",
@@ -78,7 +79,7 @@ def test_gate_ready_refuses_a_python_below_the_floor(tmp_path):
 
 
 def test_gate_ready_refuses_a_python_without_pytest(tmp_path):
-    # Same interpreter, pytest hidden: the other way a host ends up with a
+    # Same interpreter, pytest hidden: the other way the gate ends up with a
     # python3 that starts and a gate that exits 1.
     proc = _ready_with(
         tmp_path,

@@ -7,10 +7,13 @@
 # condition.
 #
 # This is the UNTRUSTED half of the design. It runs code that arrived in a pull
-# request, so it holds no secret, declares `contents: read`, and runs on the
-# mujin-gate runner — a different account from the bridge runner that holds
+# request, so it holds no secret, declares `contents: read`, and runs on a
+# GitHub-hosted runner — a different machine from the bridge runner that holds
 # KATA_AUTH_TOKEN. See docs/superpowers/specs/2026-09-21-q4av-pr-landing-path-design.md
-# in cell-fleet, "Secrets and the two trust domains".
+# in cell-fleet, "Secrets and the two trust domains". jimemo is public, and the
+# organisation's own gate machines take no public repository, so this gate
+# runs on GitHub's (kata jibot-code#bden). A pull request from a fork runs it
+# only after a maintainer approves the run.
 #
 # It triggers on `pull_request` AND `merge_group` because a required check has
 # to report in both: the pull request must go green to be added to the queue,
@@ -23,7 +26,7 @@ on:
 
 concurrency:
   # Keyed on the ref, not the repo: two different pull requests may gate in
-  # parallel on the two runners. What this prevents is a re-push piling a
+  # parallel on hosted runners. What this prevents is a re-push piling a
   # second run on the same ref behind the first.
   group: gate-${{ github.repository }}-${{ github.event.merge_group.head_ref || github.ref }}
   cancel-in-progress: false
@@ -34,26 +37,22 @@ permissions:
 jobs:
   gate:
     # Evaluated by GitHub BEFORE a runner is asked for. Under any other owner
-    # this repo has no self-hosted runners, and a job that asks for one queues
-    # for a day on every event; the lane guard cannot help, because it runs ON
-    # the runner. Rollback to the user account therefore needs no edit here.
+    # (a fork, or the user account after a rollback) there is no lane and no
+    # bridge to read the outcome, so the job must not run at all; the lane
+    # guard cannot stand in for this, because it only runs once a runner has
+    # started the job. Rollback to the user account therefore needs no edit here.
     if: github.repository_owner == 'ito-works'
-    runs-on: [self-hosted, macOS, mujin-gate]
-    # This gate takes about a minute on the runner host against a 300 s
-    # registry budget (measured 2026-09-22: 1712 tests in 51 s). The job
-    # budget must sit UNDER the queue's check_response_timeout_minutes, or a
-    # run that is still working correctly is evicted while the job is still
-    # allowed to continue — the two numbers are one decision, not two. 14 here
-    # (an 11-minute gate step and the steps around it; no warm — this gate
-    # has no dependency store), so the ruleset needs at least 15.
+    runs-on: ubuntu-latest
+    # This gate takes about a minute against a 300 s registry budget
+    # (measured 2026-09-22: 1712 tests in 51 s on a Mac). The job budget must
+    # sit UNDER the queue's check_response_timeout_minutes (30), or a run that
+    # is still working correctly is evicted while the job is still allowed to
+    # continue — the two numbers are one decision, not two. 14 here (an
+    # 11-minute gate step and the steps around it, including setting up Python;
+    # no warm — this gate has no dependency store).
     timeout-minutes: 14
-    env:
-      # Homebrew's python3 (3.14, with pytest), the interpreter repoman's gate
-      # uses too. The runner's own PATH is the bare system one, whose
-      # /usr/bin/python3 is 3.9 with no pytest and below jimemo's floor.
-      GATE_TOOLS: /opt/homebrew/bin
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           # No token in .git/config: the gate reads the working tree, never the
           # remote, and a credential left here is readable by every test.
@@ -74,11 +73,22 @@ jobs:
           LANE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: ci/lane-guard.sh
 
-      - name: the gate account can read nothing it must not
+      - name: python at jimemo's floor series
         if: steps.lane.outputs.active == 'true'
-        # The paths live in the script, not here: this file must never name
-        # the other runner account, in any position (test_workflows.py).
-        run: ci/isolation-check.sh
+        # The runner image's own python3 is below jimemo's 3.13.6 floor and has
+        # no pytest. setup-python puts its interpreter first on PATH; 3.13
+        # resolves to the newest 3.13 release, above the floor, and
+        # ci/gate-ready.sh refuses anything that is not.
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      - name: install the gate's one dependency
+        if: steps.lane.outputs.active == 'true'
+        # One version, the one ci.yml pins. It lands in setup-python's
+        # interpreter, not under HOME, so the scratch HOME the gate wrapper
+        # synthesises does not hide it.
+        run: python -m pip install pytest==8.4.2
 
       - name: pin the base ref
         if: steps.lane.outputs.active == 'true'
@@ -101,11 +111,11 @@ jobs:
         # one defer retry and has no per-attempt supervisor), plus a minute.
         timeout-minutes: 11
         env:
-          # No GATE_HOST_LOCK_PATH: this repo's gate takes no per-host lock.
-          # The wrapper's python3 probe only starts an interpreter, and the
-          # bare runner PATH has one that starts and cannot run this gate
-          # (3.9, no pytest); ci/gate-ready.sh asks the real question, and a
-          # host that fails it defers instead of bouncing the producer.
+          # The wrapper's own python3 probe only asks whether an interpreter
+          # starts. ci/gate-ready.sh asks the real question — a final release
+          # at or above the floor, with pytest importable — so a Python setup
+          # that went wrong defers instead of bouncing the producer. No
+          # per-host lock: a hosted runner runs one job.
           RUN_GATE_PREFLIGHT: python3 ci/gate-ready.sh
           GATE_OUTCOME_FILE: ${{ runner.temp }}/gate-outcome
           # The head the bridge must compare against the head NOW, to tell a
@@ -115,10 +125,11 @@ jobs:
           # would mean trusting a field the gate never validated.
           GATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         # The registry row's command, verbatim (cell-fleet
-        # ops/repoman/registry/repos.tsv, jimemo). PATH is the one thing the
-        # step adds, and run-gate.sh passes it through its `env -i`.
+        # ops/repoman/registry/repos.tsv, jimemo). run-gate.sh passes the
+        # job's PATH, with setup-python's interpreter first, through its
+        # `env -i`.
         run: |
-          PATH="$GATE_TOOLS:$PATH" ci/run-gate.sh "${{ runner.temp }}/gate-scratch" \
+          ci/run-gate.sh "${{ runner.temp }}/gate-scratch" \
             "python3 -m pytest tests -q"
 
       - name: publish the outcome
@@ -127,7 +138,7 @@ jobs:
         # condition the artifact is never uploaded on exactly the outcomes the
         # bridge has to distinguish.
         if: always() && steps.lane.outputs.active == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: gate-outcome
           path: ${{ runner.temp }}/gate-outcome

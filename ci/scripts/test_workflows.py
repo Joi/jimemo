@@ -1,13 +1,13 @@
 """Structural tests for the workflow files (kata jibot-code#q4av).
 
 Adapted from jibot-ops 8f46f7e (kata jibot-code#bden). This repo's parts are
-`HOSTED`, `HostedWorkflows`, the `IsolationStep` locator and `ThisReposGate`
-(jimemo's gate is pytest alone, so no warm step and no store);
-everything else is the source's, unchanged.
+`HOSTED`, `HostedWorkflows`, `Runners` and `ThisReposGate` (jimemo's gate is
+pytest alone on a GitHub-hosted runner, so no warm step, no store and no
+isolation check); everything else is the source's, unchanged.
 
-Stdlib only, on purpose: these run in the gate as plain python3 (3.9 on the
-runner host) from a clean checkout, before any install, so PyYAML is not
-available and must not be assumed. These are
+Stdlib only, on purpose: these run as plain python3 from a clean checkout,
+with nothing installed beyond pytest, so PyYAML is not available and must
+not be assumed. These are
 text assertions with explicit patterns rather than a YAML parse — narrower, but
 they hold in the environment the gate actually runs in, and a YAML parse would
 not have caught any of what they check anyway.
@@ -33,7 +33,7 @@ WF_DIR = os.path.join(REPO, ".github", "workflows")
 # fails the gate.
 #
 # UNTRUSTED runs the pull request's own copy of its YAML (pull_request,
-# merge_group), on the mujin-gate account, and holds nothing.
+# merge_group), on a GitHub-hosted runner, and holds nothing.
 # TRUSTED runs main's copy (pull_request_target, workflow_dispatch,
 # workflow_run, push, schedule), on the mujin-bridge account, and may hold a
 # secret — so it must never check out or execute anything a pull request wrote.
@@ -170,24 +170,6 @@ class SecurityInvariant(unittest.TestCase):
             self.assertNotIn(perm, text)
 
 
-class IsolationStep(unittest.TestCase):
-    def test_the_gate_proves_the_boundary_before_it_runs_candidate_code(self):
-        text = read("gate.yml")
-        step = "        run: ci/isolation-check.sh\n"
-        self.assertIn(step, text)
-        # Before the gate: a boundary that does not hold must stop the job
-        # before candidate code gets its turn on the host.
-        # The FIRST use of the wrapper is the warm, which is the first
-        # candidate code this job runs (and it runs with the network).
-        self.assertLess(text.index(step), text.index("ci/run-gate.sh"))
-        # The base-ref pin too: the warm goes after both.
-        self.assertLess(text.index("      - name: pin the base ref\n"),
-                        text.index("ci/run-gate.sh"))
-        # And guarded like every other step, so an inert repo stays inert.
-        block = text[:text.index(step)].rsplit("      - name:", 1)[1]
-        self.assertIn("steps.lane.outputs.active == 'true'", block)
-
-
 class OwnerGuard(unittest.TestCase):
     def test_every_job_is_skipped_outside_the_organisation(self):
         # One job per workflow, and its `if:` must START with the owner test:
@@ -287,12 +269,16 @@ class OutcomeTransport(unittest.TestCase):
 
 
 class Runners(unittest.TestCase):
-    def test_the_gate_runs_on_the_unprivileged_account(self):
-        self.assertIn("mujin-gate", read("gate.yml"))
-        # It must never be scheduled on the account that holds the token: a
-        # pull request controls this file, and code it leaves behind on that
-        # host could capture a later job's credential.
-        self.assertNotIn("mujin-bridge", read("gate.yml"))
+    def test_the_gate_runs_on_a_github_hosted_runner(self):
+        # jimemo is public, and the organisation's own gate machines take no
+        # public repository (kata jibot-code#bden): a job that asked for one
+        # would never be scheduled, and the required check would never report.
+        text = read("gate.yml")
+        self.assertIn("    runs-on: ubuntu-latest\n", text)
+        self.assertNotIn("self-hosted", text)
+        # It must never be scheduled on the account that holds the token, nor
+        # name either fleet runner account at all.
+        self.assertNotIn("mujin-", text)
 
 
 class ThisReposGate(unittest.TestCase):
@@ -321,22 +307,40 @@ class ThisReposGate(unittest.TestCase):
         self.assertNotIn("continue-on-error", self.text)
         self.assertTrue(self.before.startswith(" pin the base ref\n"),
                         self.before[:40])
+        # The base-ref pin precedes the first candidate code the job runs.
+        self.assertLess(self.text.index("      - name: pin the base ref\n"),
+                        self.text.index("ci/run-gate.sh"))
 
     def test_the_command_string_is_expanded_by_the_steps_shell(self):
         self.assertIn('\\\n            ' + self.ROW_CMD, self.gate)
         self.assertNotIn("'python3", self.text)
 
-    def test_homebrew_python_is_first_on_path(self):
-        # The runner's bare PATH has /usr/bin/python3 3.9 with no pytest,
-        # below jimemo's floor; the gate must see Homebrew's 3.14 first.
-        self.assertIn('PATH="$GATE_TOOLS:$PATH" ci/run-gate.sh', self.gate)
+    def test_python_comes_from_setup_python_at_the_floor_series(self):
+        # A hosted runner's system python3 is below jimemo's 3.13.6 floor and
+        # has no pytest. setup-python puts its interpreter first on PATH, and
+        # run-gate.sh passes PATH through its `env -i`; pytest is installed
+        # into that interpreter, pinned to one version.
+        self.assertIn("uses: actions/setup-python@", self.text)
         self.assertIsNotNone(re.search(
-            r"^      GATE_TOOLS: /opt/homebrew/bin$", self.text, re.M))
-        self.assertNotIn("/Users/joi", self.text)
+            r'^          python-version: "3\.13"$', self.text, re.M))
+        self.assertIn("run: python -m pip install pytest==8.4.2\n", self.text)
+        self.assertIn('run: |\n          ci/run-gate.sh "${{ runner.temp }}/gate-scratch" \\\n',
+                      self.gate)
+        for gone in ("GATE_TOOLS", "/opt/homebrew", "/Users/"):
+            self.assertNotIn(gone, self.text)
+
+    def test_every_action_is_pinned_to_a_commit(self):
+        # A pull request runs this file, but what it `uses:` is fetched by
+        # tag; a moved tag would change the gate without a diff here.
+        uses = re.findall(r"^\s+(?:- )?uses: (.*)$", self.text, re.M)
+        self.assertEqual(len(uses), 3, uses)
+        for ref in uses:
+            self.assertIsNotNone(re.match(
+                r"[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$", ref), ref)
 
     def test_the_budgets_are_the_registry_contract(self):
         # Two 300 s gate attempts and a job that holds them. The queue's
-        # check_response_timeout_minutes must be above the job's.
+        # check_response_timeout_minutes (30) must be above the job's.
         self.assertIn("        timeout-minutes: 11\n", self.gate)
         self.assertIn("\n    timeout-minutes: 14\n", self.text)
 
@@ -351,7 +355,8 @@ class ThisReposGate(unittest.TestCase):
 
     def test_no_prose_from_the_source_repo_survives(self):
         for stale in ("jibot-ops's gate", "15 for this repo", "10 here",
-                      "GATE_HOST_LOCK_PATH: /", "GATE_STORE"):
+                      "GATE_HOST_LOCK_PATH", "GATE_STORE", "GATE_TOOLS",
+                      "isolation-check", "mujin-gate"):
             self.assertNotIn(stale, self.text)
 
 
