@@ -12,13 +12,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from jimemo import PYTHON_FLOOR  # noqa: E402
 
 
-def _version_of(executable):
-    """``(major, minor, micro)`` of `executable`, or None if it will not
-    run. Measured by asking the interpreter, never parsed out of its
-    name: ``python3.13`` may be a 3.13.3, which is below the floor."""
+def _probe(executable):
+    """``((major, minor, micro), real_path)`` for `executable`, or None if
+    it will not run. The version is measured by asking the interpreter,
+    never parsed out of its name: ``python3.13`` may be a 3.13.3, which is
+    below the floor. ``real_path`` is the interpreter's own
+    ``sys.executable``: a version-manager shim (mise, pyenv, asdf) is a
+    dispatcher that reads its config from ``$HOME``, and the refusal tests
+    run it under an empty temporary HOME, where a mise shim rejects the
+    real config as untrusted before Python starts (jimemo#55pe). The path
+    the shim dispatches to is the same interpreter without that
+    dependency."""
     try:
         result = subprocess.run(
-            [executable, "-c", "import sys; print('%d %d %d' % sys.version_info[:3])"],
+            [
+                executable,
+                "-c",
+                "import sys; print('%d %d %d' % sys.version_info[:3]); print(sys.executable)",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
@@ -27,10 +38,13 @@ def _version_of(executable):
         return None
     if result.returncode != 0:
         return None
+    lines = result.stdout.splitlines()
     try:
-        return tuple(int(part) for part in result.stdout.split())
-    except ValueError:
+        version = tuple(int(part) for part in lines[0].split())
+    except (IndexError, ValueError):
         return None
+    real_path = lines[1].strip() if len(lines) > 1 else ""
+    return version, real_path or executable
 
 
 def _sub_floor_pythons():
@@ -56,9 +70,9 @@ def _sub_floor_pythons():
             resolved = shutil.which(candidate) or ""
             if not resolved:
                 continue
-        version = _version_of(resolved)
-        if version is not None and version < PYTHON_FLOOR:
-            found.setdefault(version, resolved)
+        probed = _probe(resolved)
+        if probed is not None and probed[0] < PYTHON_FLOOR:
+            found.setdefault(*probed)
     return sorted(found.items())
 
 
