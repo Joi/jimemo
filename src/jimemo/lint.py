@@ -569,6 +569,20 @@ def _css_url_problem(url: str) -> Optional[str]:
     )
 
 
+def _css_url_fragment_at(text: str, start: int, end: int) -> bool:
+    """Whether ``text[start:end].strip()`` is a target _css_url_problem
+    accepts as a #fragment, read from its first characters only: the
+    same Python whitespace strip, then browser_url_form's leading
+    C0-control/space strip, and then a ``#``. Each skip stops at the
+    first character it does not strip, so across the nested opens of one
+    url token these reads cover the text once (jimemo#j7mv)."""
+    while start < end and text[start].isspace():
+        start += 1
+    while start < end and text[start] <= " ":
+        start += 1
+    return start < end and text[start] == "#"
+
+
 def _css_url_targets(
     text: str, url_tokens: bool = False
 ) -> Iterator[Optional[str]]:
@@ -606,14 +620,19 @@ def _css_url_targets(
     construct can never make the scan skip a later well-formed url(.
 
     Skipping the nested opens accepts nothing new. A bare target that
-    contains an open is judged by itself, and every such target a
-    browser could fetch is rejected by itself (its text is never an
-    empty target, and a scheme it has is not data:). The two it could
-    accept, a #fragment and an allowed data: URI, fetch nothing — ``(``
-    inside a bare target makes a browser read a bad-url token — but the
-    per-open reading rejected most of them through a nested target, so
-    for those this yields the target and then None: failing closed
-    rather than accepting what was rejected before.
+    contains an open is judged by itself, and the allowlist accepts it
+    only as a #fragment or an allowed data: URI. The per-open reading
+    also judged each nested target, all of which end at the same ``)``,
+    so when the outer target is accepted the nested opens are still
+    walked, without copying their targets. A nested target that is a
+    fragment is accepted there too, which _css_url_fragment_at decides
+    from its first characters. The first one that is not is yielded as
+    the per-open reading yielded it, and the walk ends, since the text
+    is rejected either way. If that target turns out to be an allowed
+    data: URI, None follows it: judging every nested data: target in
+    full would bring back opens x length, so such a target fails
+    closed. No stylesheet puts ``url(`` inside a bare target, where a
+    browser reads a bad-url token that loads nothing.
     """
     stop = None  # the first ``)`` or quote at or after the current open
     resume = 0  # opens before this sit inside a url token already read
@@ -633,11 +652,15 @@ def _css_url_targets(
             yield target
             if url_tokens:
                 resume = end + 1
-                if (
-                    _CSS_URL_OPEN_RE.search(target)
-                    and _css_url_problem(target) is None
-                ):
-                    yield None
+                if _css_url_problem(target) is None:
+                    for nested in _CSS_URL_OPEN_RE.finditer(text, start, end):
+                        if _css_url_fragment_at(text, nested.end(), end):
+                            continue
+                        nested_target = text[nested.end():end].strip()
+                        yield nested_target
+                        if _css_url_problem(nested_target) is None:
+                            yield None
+                        break
             continue
         if _CSS_WS_RE.match(text, start).end() != end:
             yield None  # bare target text runs into a quote
