@@ -1913,6 +1913,119 @@ def test_chart_id_on_div_not_canvas_still_errors():
     assert any("no <canvas" in e and "sales" in e for e in errors)
 
 
+# --- exact-match completeness: canvas POSITION and FIRST id ---------------
+# Checks 4 and 5 of the exact-mode completeness block (see the module
+# docstring): the multiset match plus a canvas SOMEWHERE still admits
+# two page shapes whose charts never draw — a canvas that appears
+# AFTER its init (getElementById returns null when the init runs) and
+# an EARLIER non-canvas element carrying the same id (getElementById
+# resolves to it, which Chart.js cannot draw on).
+
+def test_canvas_after_its_init_errors():
+    # Shape (a): the canvas exists but sits after its init script.
+    html = (
+        "<html><body>"
+        f"<script>{INIT_SALES}</script>"
+        '<canvas id="sales"></canvas>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert any(
+        "before its <canvas" in e and "sales" in e for e in errors
+    ), errors
+
+
+def test_div_with_chart_id_before_canvas_errors():
+    # Shape (b): a <div> carrying the chart id appears BEFORE the
+    # canvas, so getElementById resolves to the div.
+    html = (
+        "<html><body>"
+        '<div id="sales"></div>'
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert any(
+        "first appears on a <div>" in e and "sales" in e for e in errors
+    ), errors
+
+
+def test_canvas_before_init_and_first_with_its_id_passes():
+    # The good shape both new checks demand: the canvas precedes its
+    # init and is the first element carrying the id.
+    html = (
+        "<html><body>"
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert errors == []
+
+
+def test_no_canvas_at_all_keeps_the_missing_canvas_error():
+    # No canvas anywhere: the pre-existing check-3 error fires, same
+    # wording, and the new position checks do not pile a second error
+    # on top of it.
+    errors, _ = lint_html(
+        _scripts_page(INIT_SALES), EXACT_MANIFEST, allowed_scripts=[INIT_SALES]
+    )
+    assert len(errors) == 1
+    assert "no <canvas" in errors[0] and "sales" in errors[0]
+
+
+def test_two_charts_one_late_canvas_one_error():
+    # "trend" is fine (canvas before its init, first with its id);
+    # "sales" has its canvas after its init. Exactly one error, naming
+    # the chart that will not draw.
+    manifest = {"charts": ["sales", "trend"]}
+    html = (
+        "<html><body>"
+        '<canvas id="trend"></canvas>'
+        f"<script>{INIT_TREND}</script>"
+        f"<script>{INIT_SALES}</script>"
+        '<canvas id="sales"></canvas>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(
+        html, manifest, allowed_scripts=[INIT_SALES, INIT_TREND]
+    )
+    assert len(errors) == 1, errors
+    assert "sales" in errors[0]
+    assert "trend" not in errors[0]
+
+
+def test_structural_mode_late_canvas_is_not_newly_checked():
+    # The position/first-id checks are exact-mode-only, like checks 2
+    # and 3: without a render context the structural fallback judges
+    # script bodies alone and accepts this page as before.
+    html = (
+        "<html><body>"
+        f"<script>{INIT_SALES}</script>"
+        '<canvas id="sales"></canvas>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST)
+    assert errors == []
+
+
+def test_img_with_chart_id_before_canvas_errors():
+    # Shape (b) on a void/self-closing element: an <img> carrying the
+    # chart id before the canvas wins the getElementById race too.
+    html = (
+        "<html><body>"
+        '<img id="sales">'
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert any(
+        "first appears on a <img>" in e and "sales" in e for e in errors
+    ), errors
+
+
 def test_realistic_chart_page_lib_first_bare_scripts_canvas_per_chart_passes():
     # Shaped like the real render pipeline's output: library in <head>
     # (so it loads before any init), one <canvas id> + bare init
