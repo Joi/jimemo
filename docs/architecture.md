@@ -67,7 +67,11 @@ contract in detail.
     content's `{labels, series}` data slot, applying the dataviz
     palette, then serializes it with `json.dumps` and escapes every
     `<` so the result cannot break out of the `<script>` element it is
-    embedded in.
+    embedded in. `chart_init_js` wraps that config in the one init
+    script per chart, including a fixed runtime that maps the baked
+    palette onto the page's `--jm-chart-N` tokens so charts follow
+    light/dark; `parse_chart_init_js` is the matching recognizer lint
+    uses.
   - `suggest.py` — `score_templates`: deterministic, LLM-free template
     suitability scoring from content signals; backs `suggest` and
     `render auto`.

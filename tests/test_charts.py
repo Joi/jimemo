@@ -18,9 +18,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo._paths import CHARTJS_BUNDLE, REPO_ROOT
 from jimemo.charts import (
+    _INIT_JS_MIDDLE,
+    _INIT_JS_PREFIX,
+    _INIT_JS_SUFFIX,
+    _THEME_RUNTIME_JS,
     DEFAULT_PALETTE,
     build_chart_config,
+    chart_init_js,
     chart_lib_inline_text,
+    parse_chart_init_js,
     serialize_chart_config,
 )
 from jimemo.errors import ContentError, ManifestError
@@ -240,6 +246,66 @@ def test_default_palette_matches_light_tokens_css():
     assert found, "no --jm-chart-* tokens found in tokens.css light block"
     token_palette = [found[str(i)] for i in range(1, len(found) + 1)]
     assert [c.lower() for c in token_palette] == [c.lower() for c in DEFAULT_PALETTE]
+
+
+def _chart_tokens(css_block):
+    found = dict(re.findall(r"--jm-chart-(\d+):\s*(#[0-9a-fA-F]{6});", css_block))
+    return [found[str(i)].lower() for i in range(1, len(found) + 1)]
+
+
+def test_chart_tokens_agree_between_media_query_and_data_theme_blocks():
+    # The init runtime reads --jm-chart-N from the page at view time, so
+    # the OS-preference dark block and the explicit data-theme="dark"
+    # block must hold the same values (likewise light vs
+    # data-theme="light"), or a pinned page and an OS-dark page would
+    # plot different colors.
+    css = (REPO_ROOT / "toolkit" / "tokens.css").read_text(encoding="utf-8")
+    light, rest = css.split("@media (prefers-color-scheme: dark) {", 1)
+    media_dark, rest = rest.split(':root[data-theme="dark"] {', 1)
+    attr_dark, attr_light = rest.split(':root[data-theme="light"] {', 1)
+    assert len(_chart_tokens(media_dark)) == len(DEFAULT_PALETTE)
+    assert _chart_tokens(media_dark) == _chart_tokens(attr_dark)
+    assert _chart_tokens(attr_light) == _chart_tokens(light)
+    assert _chart_tokens(light) == [c.lower() for c in DEFAULT_PALETTE]
+
+
+# --- the init script: theme runtime (jimemo#7n1f) ---
+
+def test_init_js_wraps_config_in_the_theme_runtime():
+    config_json = serialize_chart_config({"type": "bar"})
+    body = chart_init_js("sales", config_json)
+    assert body == (
+        "(function(el,cfg){" + _THEME_RUNTIME_JS + "})"
+        '(document.getElementById("sales"), ' + config_json + ");"
+    )
+    assert body.startswith(_INIT_JS_PREFIX)
+    assert parse_chart_init_js(body) == ("sales", config_json)
+
+
+def test_theme_runtime_carries_the_baked_palette_and_no_lt():
+    assert json.dumps(list(DEFAULT_PALETTE), separators=(",", ":")) in _THEME_RUNTIME_JS
+    assert "<" not in _INIT_JS_PREFIX + _INIT_JS_MIDDLE + _INIT_JS_SUFFIX
+    # Nothing that could fetch: the runtime only reads styles and redraws.
+    for word in ("fetch", "XMLHttpRequest", "import(", "src", "href", "url("):
+        assert word not in _THEME_RUNTIME_JS
+
+
+def test_pre_7n1f_init_shape_still_recognized():
+    # Pages rendered before the theme runtime keep passing jimemo check.
+    legacy = 'new Chart(document.getElementById("sales"), {"type":"bar"});'
+    assert parse_chart_init_js(legacy) == ("sales", '{"type":"bar"}')
+
+
+def test_tampered_runtime_is_not_recognized():
+    body = chart_init_js("sales", '{"type":"bar"}')
+    tampered = body.replace("ch.update(", "ch.update2(", 1)
+    assert tampered != body
+    assert parse_chart_init_js(tampered) is None
+    # Code appended after the config lands inside the config group,
+    # which is then not JSON: lint's structural mode rejects it there.
+    _, config = parse_chart_init_js(body + "alert(1);")
+    with pytest.raises(ValueError):
+        json.loads(config)
 
 
 # --- build: bad data → ContentError naming the problem ---

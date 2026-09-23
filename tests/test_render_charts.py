@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from jimemo import cli
 from jimemo._paths import CHARTJS_BUNDLE
 from jimemo.charts import (
+    _INIT_JS_MIDDLE,
+    _INIT_JS_PREFIX,
     build_chart_config,
     chart_init_js,
     chart_lib_inline_text,
@@ -84,11 +86,17 @@ def script_open_tags(html):
     return re.findall(r"<script[^>]*>", html)
 
 
+def init_marker(chart_id):
+    """The start of chart_id's renderer-built init script, up to where
+    its config argument begins."""
+    return _INIT_JS_PREFIX + chart_id + _INIT_JS_MIDDLE
+
+
 def extract_config(html, chart_id):
     """The init script's config argument, parsed back through JSON —
     proving the escaped payload is data the browser will decode
     identically, not markup."""
-    marker = 'new Chart(document.getElementById("%s"), ' % chart_id
+    marker = init_marker(chart_id)
     start = html.index(marker) + len(marker)
     end = html.index(");</script>", start)
     return json.loads(html[start:end])
@@ -108,7 +116,7 @@ def test_chart_page_has_canvas_and_init_script(tmp_path):
     template_dir = make_chart_template_dir(tmp_path)
     html = render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})
     assert '<canvas id="sales"></canvas>' in html
-    assert 'new Chart(document.getElementById("sales"), ' in html
+    assert init_marker("sales") in html
 
 
 def test_chart_lib_inlined_once_in_head_before_init_script(tmp_path):
@@ -116,7 +124,7 @@ def test_chart_lib_inlined_once_in_head_before_init_script(tmp_path):
     html = render_page(template_dir, {"title": "Dash", "sales_data": SALES_DATA})
     # The version banner appears exactly once: one lib, inlined once.
     assert html.count("Chart.js v") == 1
-    assert html.index("Chart.js v") < html.index("</head>") < html.index("new Chart(")
+    assert html.index("Chart.js v") < html.index("</head>") < html.index(init_marker("sales"))
 
 
 def test_chart_config_round_trips_data_and_title(tmp_path):
@@ -333,7 +341,7 @@ def test_chart_injection_payloads_render_inert(tmp_path):
 
     # (a) the chart is present: canvas + Chart init script.
     assert '<canvas id="sales"></canvas>' in html
-    assert 'new Chart(document.getElementById("sales"), ' in html
+    assert init_marker("sales") in html
 
     # (b) the ONLY script elements are the inlined lib and the init,
     # both attribute-less — in particular src-less.

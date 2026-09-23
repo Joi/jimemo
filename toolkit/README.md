@@ -88,18 +88,21 @@ background of its own, so it shows whichever surface it sits on):
   with secondary encoding (legend + direct labels), which the chart macro
   already provides.
 
-**Chart.js draws to `<canvas>`, which cannot read CSS custom properties.**
-These tokens exist for documentation and any CSS-styled chart chrome (axis
-labels, legends built outside canvas, etc.) — they are not read by the
-chart renderer. The actual source of truth for rendered chart colors is the
-Python list `charts.DEFAULT_PALETTE` in `src/jimemo/charts.py`, which must
-match this table's **light** values exactly (`tests/test_charts.py` parses
-`tokens.css` and asserts the two stay in sync). Only the light palette is
-baked into rendered charts: a page's light/dark appearance is a view-time
-CSS choice (`prefers-color-scheme` or `data-theme`), but canvas pixels are
-fixed at render time, so a dark-adaptive chart is a documented future item,
-not current behavior — a chart viewed in dark mode today still draws in
-light-palette colors.
+**Chart.js draws to `<canvas>`, which cannot read CSS custom properties,
+so the page reads them for it.** The renderer bakes the light values from
+the Python list `charts.DEFAULT_PALETTE` in `src/jimemo/charts.py` into
+each chart's config; that list must match this table's **light** values
+exactly (`tests/test_charts.py` parses `tokens.css` and asserts the two
+stay in sync, and that the dark media-query block matches the
+`data-theme="dark"` block). Each chart's init script then swaps every baked
+`DEFAULT_PALETTE[i]` for the page's current `--jm-chart-(i+1)` before the
+first draw, and repaints when the theme changes (`prefers-color-scheme` or
+the `data-theme` attribute). So a chart follows light/dark like the rest of
+the page, and a theme that overrides these tokens recolors its charts too.
+Print uses the baked light values, as the rest of the page does. Colors a
+caller passes through a custom `palette=` are left as built, unless one
+equals a `DEFAULT_PALETTE` value. Axis, legend and grid colors inside the
+canvas are still Chart.js defaults and do not follow the theme.
 
 ### Space, radius, elevation, layout
 

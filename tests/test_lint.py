@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from jimemo import lint
 from jimemo._paths import CHARTJS_BUNDLE
-from jimemo.charts import chart_lib_inline_text
+from jimemo.charts import chart_init_js, chart_lib_inline_text
 from jimemo.lint import MAX_OUTPUT_BYTES, lint_html, lint_standalone
 
 
@@ -1945,6 +1945,41 @@ def test_allowed_scripts_rejects_forged_body_the_fallback_accepts():
     )
     assert any("unexpected inline" in e for e in errors)
     # And the body it replaced is reported missing.
+    assert any("missing" in e for e in errors)
+
+
+# The current init shape carries the theme runtime (jimemo#7n1f); the
+# legacy constants above exercise the pre-7n1f shape lint still
+# recognizes.
+THEMED_SALES = chart_init_js("sales", '{"type":"bar"}')
+THEMED_FORGED = chart_init_js("sales", '{"type":"pie"}')
+
+
+def test_structural_mode_accepts_themed_init():
+    errors, _ = lint_html(_scripts_page(THEMED_SALES), EXACT_MANIFEST)
+    assert errors == []
+
+
+def test_structural_mode_rejects_themed_init_with_edited_runtime():
+    edited = THEMED_SALES.replace("beforeprint", "load", 1)
+    assert edited != THEMED_SALES
+    errors, _ = lint_html(_scripts_page(edited), EXACT_MANIFEST)
+    assert any("unexpected inline" in e for e in errors)
+
+
+def test_exact_mode_accepts_themed_init_and_rejects_themed_forgery():
+    errors, _ = lint_html(
+        _scripts_page(THEMED_SALES, canvas_ids=("sales",)),
+        EXACT_MANIFEST,
+        allowed_scripts=[THEMED_SALES],
+    )
+    assert errors == []
+    errors, _ = lint_html(
+        _scripts_page(THEMED_FORGED, canvas_ids=("sales",)),
+        EXACT_MANIFEST,
+        allowed_scripts=[THEMED_SALES],
+    )
+    assert any("unexpected inline" in e for e in errors)
     assert any("missing" in e for e in errors)
 
 

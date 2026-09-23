@@ -58,12 +58,13 @@ from .manifest import CHART_ID_PATTERN, CHART_ID_RE, CHART_TYPES
 # These are the LIGHT-mode values; they must match toolkit/tokens.css's
 # --jm-chart-1..8 exactly (tests/test_charts.py checks the two files
 # stay in sync). Chart.js renders to <canvas>, which cannot read CSS
-# custom properties, so this Python list — not the CSS tokens — is the
-# actual source of truth for rendered chart colors; the tokens exist
-# for documentation and any CSS-styled chart chrome. Only the light
-# palette is baked in: a rendered page's canvas colors are fixed at
-# render time, while light/dark is a view-time CSS choice, so a
-# dark-adaptive canvas is out of scope here (see toolkit/README.md).
+# custom properties, so build_chart_config bakes these values into the
+# config. At view time the init script (chart_init_js, below) swaps
+# each baked value DEFAULT_PALETTE[i] for the page's current
+# --jm-chart-(i+1) before the first draw, and again whenever the theme
+# changes, so the canvas follows light/dark like the rest of the page.
+# The baked values are what a page prints with (print is always light)
+# and the fallback when a token is empty.
 #
 # Cycled per dataset (per slice for pie/doughnut, which color by data
 # point rather than by dataset); a 9th series wraps back to slot 1
@@ -258,25 +259,99 @@ def build_chart_config(
 # both from the same three literal segments makes the byte-exact shape a
 # single source of truth that render and lint cannot drift apart on.
 # The '"), ' separator (with the space) is pinned by the goldens.
-_INIT_JS_PREFIX = 'new Chart(document.getElementById("'
+#
+# The prefix carries a fixed theme runtime (jimemo#7n1f) wrapped around
+# the Chart construction: (function(el,cfg){RUNTIME})(<canvas>, <config>);
+# It is a literal plus DEFAULT_PALETTE — nothing from content — and it:
+#   - remembers each dataset's built colors (O);
+#   - before the first draw, replaces every color equal to
+#     DEFAULT_PALETTE[i] with the page's computed --jm-chart-(i+1)
+#     (empty token -> keep the baked value; any other color, e.g. a
+#     direct caller's custom palette, is never touched);
+#   - repaints when prefers-color-scheme changes or <html data-theme>
+#     changes: chart.update() with animation switched off for that one
+#     call (then restored), which redraws synchronously. Not
+#     update("none"): in Chart.js 4.5.1 that mode skips refreshing the
+#     shared element options bars draw with, so a bar chart kept its old
+#     colors on screen (measured in Chromium);
+#   - on beforeprint paints the baked light values (print always uses
+#     the light palette, and print-force.css does not set the chart
+#     tokens), and on afterprint goes back to the tokens.
+# It contains no "<" (checked at import below), so it cannot close the
+# script element it sits in.
+_THEME_RUNTIME_JS = (
+    "var P=" + json.dumps(list(DEFAULT_PALETTE), separators=(",", ":")) + ","
+    "R=document.documentElement,"
+    "O=cfg.data.datasets.map(function(d){return[d.backgroundColor,d.borderColor]}),"
+    "ch;"
+    "function a(D,p){"
+    "var s=p?null:getComputedStyle(R);"
+    "function k(c){"
+    "var i=s?P.indexOf(c):-1,"
+    "v=i==-1?\"\":s.getPropertyValue(\"--jm-chart-\"+(i+1)).trim();"
+    "return v||c}"
+    "function m(v){return Array.isArray(v)?v.map(k):k(v)}"
+    "D.forEach(function(d,i){"
+    "d.backgroundColor=m(O[i][0]);"
+    "if(O[i][1]!==void 0)d.borderColor=m(O[i][1])})}"
+    "function u(p){"
+    "a(ch.data.datasets,p);"
+    "var o=ch.config.options,h=o.hasOwnProperty(\"animation\"),v=o.animation;"
+    "o.animation=!1;ch.update();"
+    "if(h)o.animation=v;else delete o.animation}"
+    "a(cfg.data.datasets,!1);"
+    "ch=new Chart(el,cfg);"
+    "matchMedia(\"(prefers-color-scheme: dark)\")"
+    ".addEventListener(\"change\",function(){u(!1)});"
+    "new MutationObserver(function(){u(!1)})"
+    ".observe(R,{attributes:!0,attributeFilter:[\"data-theme\"]});"
+    "addEventListener(\"beforeprint\",function(){u(!0)});"
+    "addEventListener(\"afterprint\",function(){u(!1)})"
+)
+_INIT_JS_PREFIX = (
+    "(function(el,cfg){" + _THEME_RUNTIME_JS + "})(document.getElementById(\""
+)
 _INIT_JS_MIDDLE = '"), '
 _INIT_JS_SUFFIX = ');'
 
-_INIT_JS_RE = re.compile(
-    re.escape(_INIT_JS_PREFIX)
-    + "(" + CHART_ID_PATTERN + ")"
-    + re.escape(_INIT_JS_MIDDLE)
-    + "(.*)"
-    + re.escape(_INIT_JS_SUFFIX),
-    re.ASCII | re.DOTALL,
-)
+if "<" in _INIT_JS_PREFIX + _INIT_JS_MIDDLE + _INIT_JS_SUFFIX:
+    raise AssertionError(
+        "chart init literals must not contain '<': they are emitted "
+        "verbatim inside a <script> element"
+    )
+
+
+def _init_js_re(prefix: str) -> "re.Pattern[str]":
+    return re.compile(
+        re.escape(prefix)
+        + "(" + CHART_ID_PATTERN + ")"
+        + re.escape(_INIT_JS_MIDDLE)
+        + "(.*)"
+        + re.escape(_INIT_JS_SUFFIX),
+        re.ASCII | re.DOTALL,
+    )
+
+
+_INIT_JS_RE = _init_js_re(_INIT_JS_PREFIX)
+
+# The init shape before jimemo#7n1f: the bare construction, no theme
+# runtime. parse_chart_init_js still RECOGNIZES it so a page rendered by
+# an older jimemo keeps passing `jimemo check` / publish / pdf. It was
+# already accepted before, so this widens nothing; chart_init_js never
+# emits it.
+_LEGACY_INIT_JS_PREFIX = 'new Chart(document.getElementById("'
+_LEGACY_INIT_JS_RE = _init_js_re(_LEGACY_INIT_JS_PREFIX)
 
 
 def chart_init_js(chart_id: str, config_json: str) -> str:
     """The full JavaScript body of the single inline ``<script>`` that
     initializes one chart::
 
-        new Chart(document.getElementById("<id>"), <config_json>);
+        (function(el,cfg){<theme runtime>})(document.getElementById("<id>"), <config_json>);
+
+    The theme runtime (see _THEME_RUNTIME_JS) builds the chart with
+    ``new Chart(el, cfg)`` after mapping the baked palette onto the
+    page's current --jm-chart-N tokens, and repaints on theme changes.
 
     ``chart_id`` must be a manifest-validated chart id and
     ``config_json`` must be serialize_chart_config output; both are
@@ -298,10 +373,14 @@ def chart_init_js(chart_id: str, config_json: str) -> str:
 
 def parse_chart_init_js(script_body: str) -> Optional[Tuple[str, str]]:
     """``(chart_id, config_json)`` if ``script_body`` has exactly the
-    byte shape chart_init_js emits, else None. Recognition only — the
-    caller (lint) still judges whether the id is declared and the config
-    text is the safe-serialized form."""
+    byte shape chart_init_js emits — or the pre-jimemo#7n1f shape
+    ``new Chart(document.getElementById("<id>"), <config_json>);``, kept
+    so older rendered pages still pass — else None. Recognition only —
+    the caller (lint) still judges whether the id is declared and the
+    config text is the safe-serialized form."""
     match = _INIT_JS_RE.fullmatch(script_body)
+    if match is None:
+        match = _LEGACY_INIT_JS_RE.fullmatch(script_body)
     if match is None:
         return None
     return match.group(1), match.group(2)
