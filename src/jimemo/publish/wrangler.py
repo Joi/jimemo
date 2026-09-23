@@ -106,8 +106,7 @@ class Wrangler:
     list} --help``), so it's threaded through via the
     ``CLOUDFLARE_ACCOUNT_ID`` environment variable instead -- the same
     variable wrangler already reads directly from its own environment,
-    and the same workaround notes-ito-com's ``bin/notes-publish`` applies
-    for itself when a friend's API token is scoped without
+    which is what makes it work when a friend's API token is scoped without
     ``User:Memberships:Read`` and wrangler's own account-discovery call
     would otherwise fail or guess wrong. When ``account_id`` is set,
     every subprocess call this class makes runs with

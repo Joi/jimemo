@@ -32,9 +32,8 @@ this machine has published and is the *only* source of truth for what
 the next deploy will contain -- `jimemo publish` always redeploys the
 whole directory, replacing the production tree wholesale. Publishing
 from a second machine (or a reinstalled first one) whose copy is missing
-hashes silently 404s every one of them. notes.ito.com hit exactly this
-three times in production before fixing it by syncing its tree through
-git; jimemo ships the same fix, opt-in.
+hashes silently 404s every one of them. The fix is to sync the state
+dir through git; jimemo ships it, opt-in.
 
 **Single machine:** nothing to do. A state dir that is not a git repo
 behaves as it always has, and git is never invoked.

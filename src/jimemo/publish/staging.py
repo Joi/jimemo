@@ -1,5 +1,5 @@
 """Hash-based staging: copy a rendered HTML file into a ``<hash>/index.html``
-directory, mirroring notes-ito-com's ``public/<hash>/`` layout.
+directory.
 
 The 24-hex-char hash IS the access control (``secrets.token_hex(12)`` = 96
 bits of entropy) -- unguessable, and symmetric between read and purge.

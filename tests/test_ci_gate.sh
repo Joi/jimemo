@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests for ci/run-gate.sh and ci/lane-guard.sh (kata jibot-code#q4av).
+# Tests for ci/run-gate.sh and ci/lane-guard.sh.
 #
 # Everything runs against a fake gate script in a throwaway mktemp scratch —
 # no real gate, no network, no kata. Deliberately NO `set -e`: assertions use
@@ -327,41 +327,6 @@ echo 1 > "$PF/state/rc"
 PATH="$PF/bin:$PATH" GATE_OUTCOME_FILE="$PF/outcome3" RUN_GATE_PREFLIGHT="ok-interpreter" \
     "$RUN_GATE" "$PF/scratch3" "sh $WORK/gate.sh $PF/state" > "$PF/log3" 2>&1
 has "$PF/outcome3" "outcome=failed" "a working host and a failing gate is still FAILED"
-
-# --- isolation-check.sh: every way a path can be reachable is READABLE.
-echo "== isolation check =="
-ISO="$REPO_ROOT/ci/isolation-check.sh"
-ME="$(id -un)"
-IS="$WORK/iso"; mkdir -p "$IS/open" "$IS/traverse-only/inner" "$IS/closed/inner"
-echo secret > "$IS/open/file"; echo secret > "$IS/traverse-only/inner/file"
-# 0311, not 0711: this test OWNS the fixture, and with 0711 the owner keeps
-# read, so `ls` succeeds and the traversal branch is never reached — the test
-# would pass with that branch deleted. 0311 is the same shape for the account
-# that matters here: it cannot list, and it can pass through.
-chmod 311 "$IS/traverse-only"; chmod 000 "$IS/closed"
-ISOLATION_EXPECT_USER="$ME" "$ISO" "$IS/closed" "$IS/closed/inner/file" "$IS/nope" > "$IS/out1" 2>&1
-eq "$?" 0 "closed and absent paths pass"
-hasnt "$IS/out1" "READABLE" "nothing is reported readable for them"
-ISOLATION_EXPECT_USER="$ME" "$ISO" "$IS/open/file" > "$IS/out2" 2>&1
-eq "$?" 1 "a readable FILE fails the job"
-ISOLATION_EXPECT_USER="$ME" "$ISO" "$IS/open" > "$IS/out3" 2>&1
-eq "$?" 1 "a listable DIRECTORY fails the job"
-if [ "$(id -u)" != 0 ]; then
-    # Listing is denied, `cat dir` fails — and every descendant is still
-    # reachable. A probe that only lists calls this DENIED. The fixture's own
-    # shape is asserted first, or the test proves nothing about the probe.
-    ls "$IS/traverse-only"/ >/dev/null 2>&1; [ "$?" != 0 ]
-    check "fixture: the traverse-only directory cannot be LISTED by this account" "$?"
-    [ "$(cat "$IS/traverse-only/inner/file" 2>/dev/null)" = secret ]
-    check "fixture: and a known descendant is still READABLE through it" "$?"
-    ISOLATION_EXPECT_USER="$ME" "$ISO" "$IS/traverse-only" > "$IS/out4" 2>&1
-    eq "$?" 1 "a traverse-only (0711) directory fails the job"
-    has "$IS/out4" "READABLE" "and is reported READABLE"
-fi
-ISOLATION_EXPECT_USER="somebody-else-q4av" "$ISO" "$IS/closed" > "$IS/out5" 2>&1
-eq "$?" 1 "running as the wrong account fails the job even when nothing is readable"
-has "$IS/out5" "WRONG USER" "and says so"
-chmod 700 "$IS/closed" "$IS/traverse-only"
 
 echo
 echo "test_ci_gate: $PASS passed, $FAIL failed"

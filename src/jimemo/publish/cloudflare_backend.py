@@ -11,8 +11,8 @@ Why this backend keeps local state (read this before changing publish()):
 a `wrangler pages deploy <dir>` replaces the CURRENT production
 deployment wholesale -- files not present in <dir> stop being served the
 moment the next deploy lands. But every published hash must stay
-reachable at `{base_url}/<hash>/` until it is explicitly purged (mirroring
-notes-ito-com's model: purging only tombstones a hash in KV, it does not
+reachable at `{base_url}/<hash>/` until it is explicitly purged (purging
+only tombstones a hash in KV, it does not
 remove the underlying files -- `gc` is the separate, explicit step that
 deletes them and shrinks the next deploy). If publish() deployed only the
 newly staged hash each time, the SECOND publish() call would silently
@@ -20,10 +20,7 @@ make the FIRST hash's URL 404, since the whole production tree would be
 replaced by a directory containing just the new hash. So this backend
 keeps a local, persistent staging directory (under `~/.jimemo/cloudflare/
 <project>/` by default) that accumulates every hash it has ever staged,
-and redeploys that accumulated content on every publish -- the same shape
-as notes-ito-com's git-committed `public/` tree, just kept under
-`~/.jimemo/` instead of a git repo, since jimemo has no repo of its own
-to commit into.
+and redeploys that accumulated content on every publish.
 
 What actually gets handed to wrangler, though, is never the raw state
 directory: each deploy assembles a throwaway, strictly allowlisted copy
@@ -80,8 +77,7 @@ def _now_iso() -> str:
 
 def _extract_hash(hash_or_url: str) -> str:
     """Accept either a bare 24-hex-char hash or a full published URL;
-    return the hash. Mirrors notes-ito-com's bin/notes-publish
-    `parse_hash`: strip a URL down to its path, take the first path
+    return the hash: strip a URL down to its path, take the first path
     segment, and require it to look like a hash."""
     s = hash_or_url.strip()
     if "://" in s:
@@ -232,7 +228,7 @@ FAIL_OPEN_MESSAGE = (
 
 
 def require_fail_closed(wrangler, project: str) -> None:
-    """Deploy preflight (jibot-code#efw6). One project read through the
+    """Deploy preflight. One project read through the
     seam; raises PublishError unless BOTH environments are fail-closed.
     An unreadable project propagates the seam's PublishError, which is
     also a refusal: nothing deploys on a guess."""
@@ -337,7 +333,7 @@ class CloudflarePublisher(Publisher):
         _ensure_state_dir_assets(self._state_dir)
         page_hash, staged_dir = stage_page(Path(html_path), self._state_dir)
         if sync:
-            # Commit + push BEFORE deploying (notes-ito-com's ordering):
+            # Commit + push BEFORE deploying (see gitsync.py's ordering):
             # the page lands on origin first, so no other machine can
             # pull-and-deploy a tree that lacks it. If the push did not
             # land, deploy only when origin provably has nothing newer.
@@ -406,14 +402,13 @@ class CloudflarePublisher(Publisher):
 
     def purge(self, hash_or_url: str) -> None:
         """Tombstone a hash by writing a timestamp to the KV namespace
-        the ported middleware reads as `env.TOMBSTONES` -- mirroring
-        notes-ito-com's tombstone model directly via KV instead of that
-        site's HTTP-POST-to-its-own-`?purge`-endpoint approach (jimemo
-        already has direct KV access through the Wrangler seam, so there
-        is no need to round-trip through the deployed site itself).
-        Purging does not require the hash to be one this machine staged
-        locally -- read and purge access are intentionally symmetric and
-        machine-independent, same as notes-ito-com.
+        the ported middleware reads as `env.TOMBSTONES`, directly via KV
+        rather than an HTTP POST to the deployed site's own `?purge`
+        endpoint (jimemo already has direct KV access through the
+        Wrangler seam, so there is no need to round-trip through the
+        deployed site itself). Purging does not require the hash to be
+        one this machine staged locally -- read and purge access are
+        intentionally symmetric and machine-independent.
         """
         self._ensure_wrangler_available()
         page_hash = _extract_hash(hash_or_url)
@@ -462,9 +457,8 @@ class CloudflarePublisher(Publisher):
         dispatches to the configured external CLI's own `gc` subcommand
         and trusts it to know its own storage model end to end. Here,
         jimemo owns the local state directory itself (see module
-        docstring), so gc's job is exactly notes-ito-com's `gc --apply`:
-        delete tombstoned directories from disk and redeploy to shrink
-        the next deploy's size. Unlike notes-ito-com's CLI, there is no
+        docstring), so gc's job is to delete tombstoned directories from
+        disk and redeploy to shrink the next deploy's size. There is no
         separate dry-run mode at this layer -- the setup wizard's `--dry-run`
         covers the "show me what would happen" need for setup; a plain
         `gc()` call here always applies.
