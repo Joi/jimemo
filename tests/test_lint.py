@@ -2010,6 +2010,47 @@ def test_structural_mode_late_canvas_is_not_newly_checked():
     assert errors == []
 
 
+def test_module_init_before_canvas_passes():
+    # A non-async inline module script runs only after parsing has
+    # finished, so its getElementById call sees the later canvas.
+    html = (
+        "<html><body>"
+        f'<script type="module">{INIT_SALES}</script>'
+        '<canvas id="sales"></canvas>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert errors == [], errors
+
+
+def test_async_module_init_before_canvas_errors():
+    # `async` makes an inline module run as soon as it is ready, which
+    # can be before the canvas is parsed: judged like a classic script.
+    html = (
+        "<html><body>"
+        f'<script type=" Module " async>{INIT_SALES}</script>'
+        '<canvas id="sales"></canvas>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert any("before its <canvas" in e and "sales" in e for e in errors), errors
+
+
+def test_module_init_still_needs_canvas_first_with_its_id():
+    # The deferral exempts check 4 only; check 5 (first element with the
+    # id) is about the finished document and still applies.
+    html = (
+        "<html><body>"
+        '<div id="sales"></div>'
+        f'<script type="module">{INIT_SALES}</script>'
+        '<canvas id="sales"></canvas>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "first appears on a <div>" in errors[0]
+
+
 def test_img_with_chart_id_before_canvas_errors():
     # Shape (b) on a void/self-closing element: an <img> carrying the
     # chart id before the canvas wins the getElementById race too.
