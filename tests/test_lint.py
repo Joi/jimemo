@@ -1301,6 +1301,8 @@ def test_css_url_targets_read_the_replaced_regex_language():
 
 # --- url( opens nested inside one bare target (jimemo#j7mv) ----------------
 #
+# Tests first written by GLM 5.3 via handoffs#6cws.
+#
 # A browser reads url(url(x)) as ONE url token whose target is ``url(x``:
 # the nested open is URL text, not a token of its own. Reporting one
 # target per open made n opens sharing one ``)`` hand the caller n
@@ -1399,7 +1401,7 @@ def test_quoted_target_keeps_one_target_per_open():
     # A url("...") is a function taking a string, not a url token: the
     # string's text is not URL text, and the regex this scanner
     # replaced read one target per open here. Pinned to today's
-    # output (run before jimemo#j7mv; recorded in FIXES.md): both the
+    # output (run before jimemo#j7mv): both the
     # string url(x) and the bare x inside it are reported.
     assert lint.css_reference_errors('url("url(x)")') == [
         "url('url(x)') is a local path that was not inlined — the "
@@ -1409,17 +1411,35 @@ def test_quoted_target_keeps_one_target_per_open():
     ]
 
 
-def test_nested_open_inside_a_non_fetching_target_fetches_nothing():
-    # The one place skipping changes ACCEPTANCE, recorded on purpose.
-    # A fragment target and an inlined data: payload are the two forms
-    # the allowlist accepts that can also contain a nested url(; a
-    # browser reads either as ONE url token that loads nothing — a
-    # #fragment resolves inside the document, a data: URI is inline —
-    # so the nested open (reported before jimemo#j7mv as a phantom
-    # local path) was never a separate fetch. See FIXES.md.
-    assert lint.css_reference_errors("url(#url(x))") == []
-    assert lint.css_reference_errors("url(#url(https://evil.example/x))") == []
-    assert lint.css_reference_errors("url(data:image/png,url(x))") == []
+@pytest.mark.parametrize(
+    "css",
+    [
+        "url(#url(x))",
+        "url(#url(https://evil.example/x))",
+        "url(data:image/png,url(x))",
+        # accepted by the per-open reading too (both targets are
+        # fragments), and over-rejected now: see the comment below
+        "url(#url(#y))",
+    ],
+)
+def test_nested_open_inside_a_non_fetching_target_fails_closed(css):
+    # A fragment and an allowed data: URI are the two forms the
+    # allowlist accepts that can also contain a nested url(. A browser
+    # reads either as one bad-url token that loads nothing, but the
+    # per-open reading rejected most of them through the nested
+    # target, and skipping the nested open must accept nothing it
+    # rejected: such a target is reported unparseable instead.
+    assert lint.css_reference_errors(css) == [UNPARSEABLE]
+
+
+def test_default_reading_keeps_one_target_per_open():
+    # Without url_tokens the scanner still reads the replaced regex's
+    # language (the oracle test above); css_reference_errors alone
+    # reads url tokens.
+    assert list(lint._css_url_targets("url(url(x))")) == ["url(x", "x"]
+    assert list(
+        lint._css_url_targets("url(url(x))", url_tokens=True)
+    ) == ["url(x"]
 
 
 # --- image-set(): the bare-string candidate (jimemo#ktmx) -------------------

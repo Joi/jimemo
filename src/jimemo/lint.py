@@ -569,7 +569,9 @@ def _css_url_problem(url: str) -> Optional[str]:
     )
 
 
-def _css_url_targets(text: str) -> Iterator[Optional[str]]:
+def _css_url_targets(
+    text: str, url_tokens: bool = False
+) -> Iterator[Optional[str]]:
     """The target of each ``url(`` in `text`, in order: the text between
     the parentheses — bare, or inside one pair of matching quotes with
     nothing but whitespace around them — with surrounding whitespace
@@ -590,16 +592,34 @@ def _css_url_targets(text: str) -> Iterator[Optional[str]]:
     ahead, this open and every later one are unterminated, so the
     generator ends after one None (the caller reports the construct once).
 
-    What is NOT bounded here: opens nested inside one bare target
-    (``url(url(x))``) each yield their own target, as they always did,
-    so n opens sharing one ``)`` hand the caller n overlapping targets
-    to copy and check — work proportional to opens x length. A browser
-    reads the inner ``url(`` as URL text, not a token; reporting it that
-    way is jimemo#j7mv, kept apart from this fix because it changes what
-    is reported.
+    In that default reading, opens nested inside one bare target
+    (``url(url(x))``) each yield their own target, as the regex did, so
+    n opens sharing one ``)`` hand the caller n overlapping targets to
+    copy and check — work proportional to opens x length. With
+    `url_tokens`, the reading css_reference_errors uses, a browser's
+    reading applies instead (jimemo#j7mv): a bare target is one url
+    token, the ``url(`` opens inside it are URL text, and the scan
+    resumes after the token's ``)``, so the targets yielded are disjoint
+    and their total length is at most the text's. Only a cleanly matched
+    bare target moves the resume point; a quoted target and the three
+    None branches keep the character after the open, so an unreadable
+    construct can never make the scan skip a later well-formed url(.
+
+    Skipping the nested opens accepts nothing new. A bare target that
+    contains an open is judged by itself, and every such target a
+    browser could fetch is rejected by itself (its text is never an
+    empty target, and a scheme it has is not data:). The two it could
+    accept, a #fragment and an allowed data: URI, fetch nothing — ``(``
+    inside a bare target makes a browser read a bad-url token — but the
+    per-open reading rejected most of them through a nested target, so
+    for those this yields the target and then None: failing closed
+    rather than accepting what was rejected before.
     """
     stop = None  # the first ``)`` or quote at or after the current open
+    resume = 0  # opens before this sit inside a url token already read
     for open_match in _CSS_URL_OPEN_RE.finditer(text):
+        if open_match.start() < resume:
+            continue
         start = open_match.end()
         if stop is None or stop.start() < start:
             stop = _CSS_URL_STOP_RE.search(text, start)
@@ -609,7 +629,15 @@ def _css_url_targets(text: str) -> Iterator[Optional[str]]:
         end = stop.start()
         quote = text[end]
         if quote == ")":
-            yield text[start:end].strip()
+            target = text[start:end].strip()
+            yield target
+            if url_tokens:
+                resume = end + 1
+                if (
+                    _CSS_URL_OPEN_RE.search(target)
+                    and _css_url_problem(target) is None
+                ):
+                    yield None
             continue
         if _CSS_WS_RE.match(text, start).end() != end:
             yield None  # bare target text runs into a quote
@@ -795,7 +823,7 @@ def css_reference_errors(css: str) -> List[str]:
     if decoded != stripped:
         forms.append(decoded)
     for text in forms:
-        for url in _css_url_targets(text):
+        for url in _css_url_targets(text, url_tokens=True):
             if url is None:
                 add(
                     "unparseable url( construct — its target cannot be "
