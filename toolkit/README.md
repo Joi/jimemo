@@ -19,7 +19,7 @@ always gets the light palette.
 | `base.css` | Reset, document defaults, `.jm-container`, `.jm-prose` typography, focus/selection, print rules. |
 | `components/<name>.css` | One file per component, loaded only when the template's manifest lists it. |
 | `macros.html.j2` | One macro per component. `{% import "macros.html.j2" as ui %}` |
-| `page.html.j2` | Base page skeleton templates extend: blocks `title`, `head_extra`, `content`, `footer`; the renderer injects the `<style>` tag through the `styles` variable. No JavaScript, ever. |
+| `page.html.j2` | Base page skeleton templates extend: blocks `title`, `head_extra`, `content`, `footer`; the renderer injects the `<style>` tag through the `styles` variable. No JavaScript, except on pages whose manifest declares charts: the inlined Chart.js library and one renderer-built init script per chart. |
 
 ## Tokens
 
@@ -99,7 +99,9 @@ stay in sync, and that the dark media-query block matches the
 first draw, and repaints when the theme changes (`prefers-color-scheme` or
 the `data-theme` attribute). So a chart follows light/dark like the rest of
 the page, and a theme that overrides these tokens recolors its charts too.
-Print uses the baked light values, as the rest of the page does. Colors a
+Print uses the baked light values, as the rest of the page does — so a
+theme that overrides these tokens shows its chart colors on screen but
+prints the default light palette. Colors a
 caller passes through a custom `palette=` are left as built, unless one
 equals a `DEFAULT_PALETTE` value. Axis, legend and grid colors inside the
 canvas are still Chart.js defaults and do not follow the theme.
@@ -122,8 +124,9 @@ canvas are still Chart.js defaults and do not follow the theme.
   selectors cannot leak into component internals.
 - Every component holds up at 360px viewport width and in print; wide
   tables scroll inside `.jm-data-table__scroll`, never the page.
-- Nothing in the toolkit imports other stylesheets, references remote
-  URLs, or emits script tags — pages render identically offline.
+- Nothing in the toolkit imports other stylesheets or references remote
+  URLs, and the only script tags are a chart page's inlined Chart.js and
+  its renderer-built chart inits — pages render identically offline.
 - Macros validate nothing. A template that passes them values from a
   schema-free `data` slot (for example `data_table` columns and rows,
   `tree` children, `entity_cards` tags and fields) passes whatever the
