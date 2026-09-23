@@ -10,7 +10,7 @@ from its environment. If jimemo doesn't touch the token, it can't leak
 the token.
 
 The one thing wrangler cannot do is read or set a Pages project's
-``deployment_configs.*.fail_open`` (jibot-code#efw6: Cloudflare's default,
+``deployment_configs.*.fail_open`` (Cloudflare's default,
 true, serves the static files WITHOUT the tombstone middleware whenever
 Functions cannot run, so purged hashes come back). Those two calls go to
 the Pages project REST API through ``curl``, run via the same injectable
