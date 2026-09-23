@@ -1314,6 +1314,10 @@ def test_css_url_targets_read_the_replaced_regex_language():
 # text, and keeps the replaced regex's reading: one target per open.
 
 NESTED_Y = "https://evil.example/y"
+LOCAL_X = (
+    "url('x') is a local path that was not inlined — the output would "
+    "depend on a sidecar file"
+)
 
 
 def test_nested_url_opens_in_one_bare_target_are_bounded():
@@ -1412,24 +1416,57 @@ def test_quoted_target_keeps_one_target_per_open():
 
 
 @pytest.mark.parametrize(
-    "css",
+    "css, expected",
     [
-        "url(#url(x))",
-        "url(#url(https://evil.example/x))",
-        "url(data:image/png,url(x))",
-        # accepted by the per-open reading too (both targets are
-        # fragments), and over-rejected now: see the comment below
-        "url(#url(#y))",
+        # A nested target the per-open reading rejected is still
+        # reported, with the same message it had.
+        ("url(#url(x))", [LOCAL_X]),
+        (
+            "url(#url(https://evil.example/x))",
+            ["url('https://evil.example/x') is a remote resource and "
+             "would fetch at view time"],
+        ),
+        ("url(data:image/png,url(x))", [LOCAL_X]),
+        ("url(#url())", [
+            "url() with an empty target resolves to the page itself"
+        ]),
+        # Only fragments inside: accepted before, accepted now, also
+        # inside a string, where the scan reads url( too.
+        ("url(#url(#y))", []),
+        ("url(#a url( #b url(\n#c))", []),
+        ('p::before{content:"url(#url(#y))"}', []),
+        ("url(data:image/png,url(#y))", []),
+        # The fragment test is browser_url_form's: a control character
+        # after a non-breaking space is not stripped, so no fragment.
+        ("url(#url(\x01\xa0#y))", [
+            "url('\\x01\\xa0#y') is a local path that was not inlined — "
+            "the output would depend on a sidecar file"
+        ]),
+        # A nested data: target is not judged in full (that is opens x
+        # length again), so one the allowlist accepts fails closed.
+        ("url(#url(data:image/png,y))", None),
     ],
 )
-def test_nested_open_inside_a_non_fetching_target_fails_closed(css):
-    # A fragment and an allowed data: URI are the two forms the
-    # allowlist accepts that can also contain a nested url(. A browser
-    # reads either as one bad-url token that loads nothing, but the
-    # per-open reading rejected most of them through the nested
-    # target, and skipping the nested open must accept nothing it
-    # rejected: such a target is reported unparseable instead.
-    assert lint.css_reference_errors(css) == [UNPARSEABLE]
+def test_nested_open_inside_an_accepted_target(css, expected):
+    errors = lint.css_reference_errors(css)
+    if expected is None:
+        assert errors == [UNPARSEABLE]
+    else:
+        assert errors == expected
+
+
+@pytest.mark.parametrize(
+    "css",
+    [
+        "a{b:" + "url(#" * 50000 + ")}",
+        "a{b:" + "url(# " * 50000 + "x)}",
+        "a{b:" + "url(data:image/png," * 20000 + ")}",
+    ],
+)
+def test_nested_opens_in_an_accepted_target_are_bounded(css):
+    started = time.perf_counter()
+    lint.css_reference_errors(css)
+    assert time.perf_counter() - started < 10.0
 
 
 def test_default_reading_keeps_one_target_per_open():
