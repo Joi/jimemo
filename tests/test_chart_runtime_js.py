@@ -37,8 +37,8 @@ LIGHT_TOKENS = {f"--jm-chart-{i + 1}": c for i, c in enumerate(DEFAULT_PALETTE)}
 # Reads {body, tokens, steps} on stdin. Steps: ["tokens", {...}],
 # ["mutate"] (data-theme changed), ["media"] (prefers-color-scheme
 # changed), ["beforeprint"], ["afterprint"], ["snap"]. Prints
-# {first: <datasets at construction>, snaps: [{colors, updates, mode,
-# animationDuringUpdate, animationAfter}]}.
+# {first: <datasets at construction>, options: <options at
+# construction>, snaps: [{colors, updates, mode}]}.
 DRIVER = r"""
 let input = "";
 process.stdin.on("data", d => { input += d; });
@@ -66,15 +66,13 @@ process.stdin.on("end", () => {
   global.Chart = function (el, cfg) {
     this.el = el;
     this.data = cfg.data;
-    this.config = {options: cfg.options};
+    this.options = JSON.parse(JSON.stringify(cfg.options));
     this.updates = 0;
     this.mode = null;
-    this.animationDuringUpdate = null;
     this.first = JSON.parse(JSON.stringify(cfg.data.datasets));
     this.update = mode => {
       this.updates += 1;
       this.mode = mode === undefined ? "default" : mode;
-      this.animationDuringUpdate = this.config.options.animation;
     };
     charts.push(this);
   };
@@ -89,14 +87,13 @@ process.stdin.on("end", () => {
     else if (op === "beforeprint" || op === "afterprint") listeners[op]();
     else if (op === "snap") snaps.push({
       colors: colors(chart.data.datasets), updates: chart.updates, mode: chart.mode,
-      animationDuringUpdate: chart.animationDuringUpdate,
-      animationAfter: "animation" in chart.config.options ? chart.config.options.animation : "absent",
     });
   }
   console.log(JSON.stringify({
     charts: charts.length,
     el: chart.el,
     first: colors(chart.first),
+    options: chart.options,
     observer: {opts: observer.opts, rootIsHtml: observer.target === global.document.documentElement},
     snaps,
   }));
@@ -177,22 +174,36 @@ def test_data_theme_change_repaints():
         "opts": {"attributes": True, "attributeFilter": ["data-theme"]},
         "rootIsHtml": True,
     }
-    # A plain update() with animation off for that call only: a
-    # synchronous redraw that also refreshes bars' shared options
-    # (update("none") does not), then the option is put back as it was.
+    # The runtime's own update mode, whose transition is set to duration
+    # 0: a synchronous redraw that also refreshes bars' shared options
+    # (update("none") does not) and leaves other animations alone.
     assert out["snaps"] == [{
         "colors": [{"bg": DEFAULT_PALETTE[0], "border": DEFAULT_PALETTE[0]}],
-        "updates": 1, "mode": "default",
-        "animationDuringUpdate": False, "animationAfter": "absent",
+        "updates": 1, "mode": "jimemo",
     }]
 
 
-def test_repaint_restores_an_explicit_animation_option():
+def test_repaint_mode_has_a_zero_duration_transition():
+    out = run(bar_config(1), DARK_TOKENS)
+    assert out["options"] == {
+        "transitions": {"jimemo": {"animation": {"duration": 0}}},
+    }
+
+
+def test_existing_transitions_and_animation_options_are_kept():
     config = bar_config(1)
-    config["options"]["animation"] = {"duration": 5}
-    out = run(config, DARK_TOKENS, [["media"], ["snap"]])
-    assert out["snaps"][0]["animationDuringUpdate"] is False
-    assert out["snaps"][0]["animationAfter"] == {"duration": 5}
+    config["options"] = {
+        "animation": {"duration": 5},
+        "transitions": {"active": {"animation": {"duration": 7}}},
+    }
+    out = run(config, DARK_TOKENS)
+    assert out["options"] == {
+        "animation": {"duration": 5},
+        "transitions": {
+            "active": {"animation": {"duration": 7}},
+            "jimemo": {"animation": {"duration": 0}},
+        },
+    }
 
 
 def test_color_scheme_change_repaints():

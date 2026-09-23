@@ -269,11 +269,16 @@ def build_chart_config(
 #     (empty token -> keep the baked value; any other color, e.g. a
 #     direct caller's custom palette, is never touched);
 #   - repaints when prefers-color-scheme changes or <html data-theme>
-#     changes: chart.update() with animation switched off for that one
-#     call (then restored), which redraws synchronously. Not
+#     changes, with chart.update("jimemo"): a custom update mode whose
+#     transition the runtime sets to duration 0 before construction
+#     (options.transitions.jimemo), so the redraw is synchronous and
+#     every other animation (load, hover) is left as it was. Not
 #     update("none"): in Chart.js 4.5.1 that mode skips refreshing the
 #     shared element options bars draw with, so a bar chart kept its old
-#     colors on screen (measured in Chromium);
+#     colors on screen. Not toggling options.animation around update():
+#     the chart keeps the options resolver built while it was off, so
+#     hover animation stayed disabled afterwards (both measured in
+#     Chromium);
 #   - on beforeprint paints the baked light values (print always uses
 #     the light palette, and print-force.css does not set the chart
 #     tokens), and on afterprint goes back to the tokens.
@@ -294,12 +299,10 @@ _THEME_RUNTIME_JS = (
     "D.forEach(function(d,i){"
     "d.backgroundColor=m(O[i][0]);"
     "if(O[i][1]!==void 0)d.borderColor=m(O[i][1])})}"
-    "function u(p){"
-    "a(ch.data.datasets,p);"
-    "var o=ch.config.options,h=o.hasOwnProperty(\"animation\"),v=o.animation;"
-    "o.animation=!1;ch.update();"
-    "if(h)o.animation=v;else delete o.animation}"
+    "function u(p){a(ch.data.datasets,p);ch.update(\"jimemo\")}"
     "a(cfg.data.datasets,!1);"
+    "var q=cfg.options=cfg.options||{},t=q.transitions=q.transitions||{};"
+    "t.jimemo={animation:{duration:0}};"
     "ch=new Chart(el,cfg);"
     "matchMedia(\"(prefers-color-scheme: dark)\")"
     ".addEventListener(\"change\",function(){u(!1)});"
