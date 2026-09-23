@@ -184,13 +184,15 @@ class PullRequestPath(unittest.TestCase):
         self.assertEqual(rc, 1)
 
 
-class MergeGroupPath(unittest.TestCase):
+class GroupRun:
+    """The merge-group harness, shared by the classes below without their tests."""
+
     QUEUE_REF = "refs/heads/gh-readonly-queue/main/pr-7-" + "d" * 40
 
     BASE = "f" * 40
 
     def run_group(self, entries, runs_by_head, n_commits=None, queue_ref=None,
-                  graphql=None, base_oid=BASE):
+                  graphql=None, base_oid=BASE, merge_method="REBASE", commits=None):
         """entries: [(position, group_sha, pr_number, pr_head, pr_commit_count)]"""
         nodes = [{"position": pos, "state": "AWAITING_CHECKS",
                   "headCommit": {"oid": gsha}, "baseCommit": {"oid": base_oid},
@@ -199,13 +201,18 @@ class MergeGroupPath(unittest.TestCase):
                  for pos, gsha, num, head, n in entries]
         if n_commits is None:
             n_commits = sum(e[4] for e in entries)
+        if commits is None:
+            commits = [{"sha": "%040d" % i} for i in range(n_commits)]
+        queue = {"entries": {"nodes": nodes}}
+        if merge_method is not None:
+            queue["configuration"] = {"mergeMethod": merge_method}
         routes = {
             ("POST", "/graphql"): graphql if graphql is not None else {"data": {
-                "repository": {"mergeQueue": {"entries": {"nodes": nodes}}}}},
+                "repository": {"mergeQueue": queue}}},
             # The comparison is against the entry's immutable base commit. A
             # request that names the BRANCH is unrouted and fails the test.
             ("GET", "/repos/%s/compare/%s...%s" % (REPO, self.BASE, SHA_G)): {
-                "commits": [{"sha": "%040d" % i} for i in range(n_commits)]},
+                "commits": commits},
             ("POST", "/repos/%s/check-runs" % REPO): {"id": 5},
         }
         for head, runs in runs_by_head.items():
@@ -218,6 +225,8 @@ class MergeGroupPath(unittest.TestCase):
         bodies, _ = published(gh)
         return rc, bodies, gh
 
+
+class MergeGroupPath(GroupRun, unittest.TestCase):
     def test_a_reviewed_member_publishes_success_on_the_group_commit(self):
         rc, bodies, gh = self.run_group([(1, SHA_G, 7, SHA_A, 2)], {SHA_A: [check_run()]})
         self.assertEqual(rc, 0)
@@ -304,6 +313,174 @@ class MergeGroupPath(unittest.TestCase):
         rc, bodies, _ = self.run_group([(1, SHA_G, 7, SHA_A, 1)], {SHA_A: 500})
         self.assertEqual(rc, 1)
         self.assertEqual(bodies, [])
+
+
+def commit(sha, *parents):
+    return {"sha": sha, "parents": [{"sha": p} for p in parents]}
+
+
+class MergeMethodMergeGroup(GroupRun, unittest.TestCase):
+    """The queue merges with MERGE: one two-parent merge per member, chained."""
+
+    ENTRY = [(1, SHA_G, 7, SHA_A, 2)]
+    PR_OWN = [commit("1" * 40, GroupRun.BASE), commit(SHA_A, "1" * 40)]
+
+    def merge_group(self, commits, entries=None, runs=None):
+        return self.run_group(entries or self.ENTRY, runs or {SHA_A: [check_run()]},
+                              merge_method="MERGE", commits=commits)
+
+    def assert_fails(self, bodies, text):
+        self.assertEqual(bodies[0]["conclusion"], "failure")
+        self.assertIn("does not match its queue entries", bodies[0]["output"]["summary"])
+        self.assertIn(text, bodies[0]["output"]["summary"])
+
+    def test_one_member_merged_onto_the_base_publishes_success(self):
+        rc, bodies, _ = self.merge_group(self.PR_OWN + [commit(SHA_G, self.BASE, SHA_A)])
+        self.assertEqual(rc, 0)
+        self.assertEqual(bodies[0]["head_sha"], SHA_G)
+        self.assertEqual(bodies[0]["conclusion"], "success")
+
+    def test_two_members_chained_in_queue_order_publish_success(self):
+        m1 = "9" * 40
+        commits = [commit("1" * 40, self.BASE), commit(SHA_B, "1" * 40),
+                   commit(m1, self.BASE, SHA_B),
+                   commit(SHA_A, self.BASE), commit(SHA_G, m1, SHA_A)]
+        _rc, bodies, _ = self.merge_group(
+            commits, entries=[(1, m1, 6, SHA_B, 2), (2, SHA_G, 7, SHA_A, 1)],
+            runs={SHA_A: [check_run()], SHA_B: [check_run()]})
+        self.assertEqual(bodies[0]["conclusion"], "success")
+        self.assertIn("#6@", bodies[0]["output"]["summary"])
+
+    def test_members_merged_out_of_queue_order_fail(self):
+        m1 = "9" * 40
+        commits = [commit("1" * 40, self.BASE), commit(SHA_B, "1" * 40),
+                   commit(m1, self.BASE, SHA_A),
+                   commit(SHA_A, self.BASE), commit(SHA_G, m1, SHA_B)]
+        _rc, bodies, _ = self.merge_group(
+            commits, entries=[(1, m1, 6, SHA_B, 2), (2, SHA_G, 7, SHA_A, 1)],
+            runs={SHA_A: [check_run()], SHA_B: [check_run()]})
+        self.assert_fails(bodies, "not pull request #7's head")
+
+    def test_the_rebase_count_is_short_one_merge_and_fails(self):
+        _rc, bodies, _ = self.merge_group(self.PR_OWN)
+        self.assert_fails(bodies, "2 commits added, members hold 2 plus 1 merge commits")
+
+    def test_a_valid_chain_with_a_commit_the_member_does_not_hold_fails_on_the_count(self):
+        # The chain is intact; the pull request says it holds ONE commit but
+        # the group adds two under its head. Only the count catches this.
+        _rc, bodies, _ = self.merge_group(self.PR_OWN + [commit(SHA_G, self.BASE, SHA_A)],
+                                          entries=[(1, SHA_G, 7, SHA_A, 1)])
+        self.assert_fails(bodies, "3 commits added, members hold 1 plus 1 merge commits")
+
+    def test_an_extra_non_merge_commit_in_place_of_the_merge_fails(self):
+        _rc, bodies, _ = self.merge_group(self.PR_OWN + [commit(SHA_G, SHA_A)])
+        self.assert_fails(bodies, "is not a two-parent merge for pull request #7")
+
+    def test_a_merge_of_something_that_is_not_the_member_head_fails(self):
+        _rc, bodies, _ = self.merge_group(
+            self.PR_OWN[:1] + [commit("2" * 40, "1" * 40),
+                               commit(SHA_G, self.BASE, "2" * 40)])
+        self.assert_fails(bodies, "merges 22222222, not pull request #7's head")
+
+    def test_a_merge_with_its_parents_swapped_fails(self):
+        _rc, bodies, _ = self.merge_group(self.PR_OWN + [commit(SHA_G, SHA_A, self.BASE)])
+        self.assert_fails(bodies, "not pull request #7's head")
+
+    def test_an_octopus_merge_fails(self):
+        _rc, bodies, _ = self.merge_group(
+            self.PR_OWN[:1] + [commit(SHA_A, "1" * 40),
+                               commit(SHA_G, self.BASE, SHA_A, "1" * 40)])
+        self.assert_fails(bodies, "is not a two-parent merge")
+
+    def test_a_chain_that_does_not_end_at_the_base_fails(self):
+        other = "3" * 40
+        _rc, bodies, _ = self.merge_group(self.PR_OWN + [commit(SHA_G, other, SHA_A)])
+        self.assert_fails(bodies, "ends at 33333333, not the base")
+
+    def test_a_group_commit_the_compare_does_not_list_fails(self):
+        _rc, bodies, _ = self.merge_group(
+            self.PR_OWN + [commit("4" * 40, self.BASE, SHA_A)])
+        self.assert_fails(bodies, "is not a commit the group adds")
+
+    def test_a_malformed_parent_list_fails_rather_than_crashing(self):
+        bad = {"sha": SHA_G, "parents": [{"sha": self.BASE}, "not-a-dict"]}
+        rc, bodies, _ = self.merge_group(self.PR_OWN + [bad])
+        self.assertEqual(rc, 0)
+        self.assert_fails(bodies, "is not a two-parent merge")
+
+    def test_a_parent_list_that_is_not_a_list_fails_rather_than_crashing(self):
+        for raw in (7, True, None, "ab", {"sha": self.BASE}):
+            bad = {"sha": SHA_G, "parents": raw}
+            rc, bodies, _ = self.merge_group(self.PR_OWN + [bad])
+            self.assertEqual(rc, 0, raw)
+            self.assert_fails(bodies, "is not a two-parent merge")
+
+    def test_a_compare_entry_with_no_sha_fails(self):
+        _rc, bodies, _ = self.merge_group(
+            [{"parents": []}, commit(SHA_A, "1" * 40), commit(SHA_G, self.BASE, SHA_A)])
+        self.assert_fails(bodies, "a commit with no sha")
+
+    def test_the_merge_count_does_not_excuse_an_unreviewed_member(self):
+        _rc, bodies, _ = self.merge_group(self.PR_OWN + [commit(SHA_G, self.BASE, SHA_A)],
+                                          runs={SHA_A: []})
+        self.assertEqual(bodies[0]["conclusion"], "failure")
+        self.assertIn("no mujin/review-evidence check by the App",
+                      bodies[0]["output"]["summary"])
+
+
+class MergeMethodIsReadFromTheQueue(GroupRun, unittest.TestCase):
+    def test_rebase_is_read_and_keeps_the_plain_count(self):
+        _rc, bodies, gh = self.run_group([(1, SHA_G, 7, SHA_A, 2)], {SHA_A: [check_run()]},
+                                         merge_method="REBASE")
+        self.assertEqual(bodies[0]["conclusion"], "success")
+        query = json.loads([c for c in gh.calls if c[1] == "/graphql"][0][2])["query"]
+        self.assertIn("configuration { mergeMethod }", query)
+
+    def test_rebase_does_not_accept_the_merge_shape(self):
+        _rc, bodies, _ = self.run_group([(1, SHA_G, 7, SHA_A, 1)], {SHA_A: [check_run()]},
+                                        merge_method="REBASE", n_commits=2)
+        self.assertEqual(bodies[0]["conclusion"], "failure")
+        self.assertIn("2 commits added, members hold 1", bodies[0]["output"]["summary"])
+
+    def test_squash_is_not_verified_and_fails(self):
+        _rc, bodies, _ = self.run_group([(1, SHA_G, 7, SHA_A, 1)], {SHA_A: [check_run()]},
+                                        merge_method="SQUASH")
+        self.assertEqual(bodies[0]["conclusion"], "failure")
+        self.assertIn("merge method SQUASH is not one this check verifies",
+                      bodies[0]["output"]["summary"])
+
+    def test_an_unknown_method_is_not_verified_and_fails(self):
+        _rc, bodies, _ = self.run_group([(1, SHA_G, 7, SHA_A, 1)], {SHA_A: [check_run()]},
+                                        merge_method="FAST_FORWARD")
+        self.assertEqual(bodies[0]["conclusion"], "failure")
+        self.assertIn("merge method FAST_FORWARD is not one this check verifies",
+                      bodies[0]["output"]["summary"])
+
+    def queue_reply(self, queue_extra):
+        queue = {"entries": {"nodes": [
+            {"position": 1, "state": "AWAITING_CHECKS", "headCommit": {"oid": SHA_G},
+             "baseCommit": {"oid": self.BASE},
+             "pullRequest": {"number": 7, "headRefOid": SHA_A,
+                             "commits": {"totalCount": 1}}}]}}
+        queue.update(queue_extra)
+        return {"data": {"repository": {"mergeQueue": queue}}}
+
+    def test_a_queue_that_names_no_method_publishes_nothing(self):
+        # An otherwise valid, reviewed group: only the method is wrong.
+        for extra in ({}, {"configuration": None}, {"configuration": {}},
+                      {"configuration": {"mergeMethod": None}},
+                      {"configuration": {"mergeMethod": 7}}):
+            rc, bodies, _ = self.run_group([(1, SHA_G, 7, SHA_A, 1)],
+                                           {SHA_A: [check_run()]},
+                                           graphql=self.queue_reply(extra))
+            self.assertEqual((rc, bodies), (1, []), extra)
+
+    def test_the_same_reply_with_a_method_publishes_success(self):
+        # Control for the test above: the fixture is valid once a method is named.
+        _rc, bodies, _ = self.run_group(
+            [(1, SHA_G, 7, SHA_A, 1)], {SHA_A: [check_run()]},
+            graphql=self.queue_reply({"configuration": {"mergeMethod": "REBASE"}}))
+        self.assertEqual(bodies[0]["conclusion"], "success")
 
 
 class KataToken(unittest.TestCase):

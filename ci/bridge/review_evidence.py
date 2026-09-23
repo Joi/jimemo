@@ -151,6 +151,7 @@ QUEUE_QUERY = """
 query($owner:String!, $name:String!, $branch:String!) {
   repository(owner:$owner, name:$name) {
     mergeQueue(branch:$branch) {
+      configuration { mergeMethod }
       entries(first:100) {
         nodes { position state headCommit { oid } baseCommit { oid }
                 pullRequest { number headRefOid commits { totalCount } } }
@@ -181,6 +182,14 @@ def group_members(repo, base_branch, group_sha, token, opener=None):
     above 1). Every repo starts at 1, where a group is one entry on main's tip;
     if a stacked entry's base turns out to be the entry ahead, this count fails
     closed and says so, which is the safe way to find out.
+
+    The count depends on the queue's merge method, read from the queue's own
+    configuration in the same reply — never from anything a pull request
+    controls. REBASE adds each member's commits and nothing else. MERGE adds
+    them plus one merge commit per member, so it is checked as a chain: from
+    the group commit, walking first parents, each merge (last member first)
+    has exactly two parents, the second is that member's head, and the walk
+    ends exactly at the base. Any other method fails closed.
     """
     owner, name = repo.split("/", 1)
     doc = _request("%s/graphql" % API, token, method="POST", opener=opener,
@@ -190,9 +199,13 @@ def group_members(repo, base_branch, group_sha, token, opener=None):
     if doc.get("errors"):
         raise BridgeError("the merge queue query failed")
     try:
-        entries = doc["data"]["repository"]["mergeQueue"]["entries"]["nodes"]
+        queue = doc["data"]["repository"]["mergeQueue"]
+        entries = queue["entries"]["nodes"]
+        method = queue["configuration"]["mergeMethod"]
     except (KeyError, TypeError):
         raise BridgeError("the merge queue query returned no queue for %s" % base_branch)
+    if not isinstance(method, str):
+        raise BridgeError("the merge queue for %s names no merge method" % base_branch)
     mine = [e for e in entries if (e.get("headCommit") or {}).get("oid") == group_sha]
     if len(mine) != 1:
         raise BridgeError("commit %s is not the head of exactly one merge queue entry"
@@ -206,12 +219,57 @@ def group_members(repo, base_branch, group_sha, token, opener=None):
     if not isinstance(base_oid, str) or len(base_oid) != 40:
         raise BridgeError("the queue entry for %s names no base commit" % group_sha[:8])
     cmp_url = "%s/repos/%s/compare/%s...%s" % (API, repo, base_oid, group_sha)
-    added = len(_pages(cmp_url, token, key="commits", opener=opener))
-    expected = sum(e["pullRequest"]["commits"]["totalCount"] for e in ahead)
-    if added != expected:
+    commits = _pages(cmp_url, token, key="commits", opener=opener)
+    added = len(commits)
+    held = sum(e["pullRequest"]["commits"]["totalCount"] for e in ahead)
+    fault = None
+    if method == "REBASE":
+        if added != held:
+            fault = "%d commits added, members hold %d" % (added, held)
+    elif method == "MERGE":
+        if added != held + len(members):
+            fault = ("%d commits added, members hold %d plus %d merge commits"
+                     % (added, held, len(members)))
+        else:
+            fault = _merge_chain_fault(commits, members, group_sha, base_oid)
+    else:
+        fault = "merge method %s is not one this check verifies" % method
+    if fault:
         members.append({"number": None, "head_sha": None, "attributed": False,
-                        "commit": "%d commits added, members hold %d" % (added, expected)})
+                        "commit": fault})
     return members
+
+
+def _merge_chain_fault(commits, members, group_sha, base_oid):
+    """None when the added commits hold the MERGE chain, else what breaks it.
+
+    Walks first parents from the group commit: one two-parent merge per member,
+    last member first, whose second parent is that member's head; the walk must
+    then stand exactly on the base. Every merge must be one of the added commits.
+    """
+    by_sha = {}
+    for c in commits:
+        if not (isinstance(c, dict) and isinstance(c.get("sha"), str)):
+            return "the compare lists a commit with no sha"
+        by_sha[c["sha"]] = c
+    tip = group_sha
+    for m in reversed(members):
+        commit = by_sha.get(tip)
+        if commit is None:
+            return "%s is not a commit the group adds" % tip[:8]
+        raw = commit.get("parents")
+        parents = [p.get("sha") if isinstance(p, dict) else None
+                   for p in (raw if isinstance(raw, list) else [])]
+        if len(parents) != 2 or not all(isinstance(p, str) for p in parents):
+            return ("%s is not a two-parent merge for pull request #%s"
+                    % (tip[:8], m["number"]))
+        if parents[1] != m["head_sha"]:
+            return ("%s merges %s, not pull request #%s's head"
+                    % (tip[:8], parents[1][:8], m["number"]))
+        tip = parents[0]
+    if tip != base_oid:
+        return "the merge chain ends at %s, not the base %s" % (tip[:8], base_oid[:8])
+    return None
 
 
 def member_reviewed(repo, member, app_id, token, opener=None):
