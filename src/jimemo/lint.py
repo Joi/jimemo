@@ -86,7 +86,7 @@ third-party template cannot ride a chart declaration to embed its own
 JavaScript, and neither mode is a JavaScript judge: each recognizes
 renderer output and rejects everything else, fail closed.
 
-In exact mode, three further completeness checks close a gap the body
+In exact mode, five further completeness checks close a gap the body
 multiset alone leaves open: a page can contain exactly the renderer's
 script bodies and still fail to draw a chart. (1) Every matched script
 must be a bare executable ``<script>`` -- no ``type`` attribute, or
@@ -99,7 +99,9 @@ already defined. (3) Every manifest-declared chart id must have a
 matching ``<canvas id="...">`` somewhere on the page. (4) That canvas
 must appear, in document order, before the chart's init script -- an
 init that runs first finds no element yet (``getElementById`` returns
-null) and draws nothing. (5) The canvas must be the FIRST element
+null) and draws nothing. An inline ``<script type="module">`` without
+``async`` is exempt: a browser runs it only once parsing has finished,
+when the whole document is already there. (5) The canvas must be the FIRST element
 carrying that id; the id showing up earlier on some other element (a
 ``<div>`` or an ``<img>``, say) does not count -- the init script's
 ``getElementById`` call would resolve to that element, which Chart.js
@@ -112,7 +114,7 @@ import json
 import re
 from html import unescape
 from html.parser import HTMLParser
-from typing import Any, Dict, FrozenSet, Iterator, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
 
 from ._parser_floor import (
     assert_interpreter_is_supported as _assert_interpreter_is_supported,
@@ -920,6 +922,10 @@ class _Linter(HTMLParser):
         # tag, both feeding the exact-mode completeness checks below.
         self._script_type: Any = _NO_TYPE
         self._current_script_seq: Optional[int] = None
+        # Whether the current <script> is an inline module without
+        # `async`: a browser defers it until parsing has finished, so
+        # completeness check 4 (canvas before init) does not apply.
+        self._current_script_deferred = False
         # One document-order sequence number for EVERY start tag (both
         # handle_starttag and handle_startendtag bump it in _check_tag).
         # Script-vs-script comparisons (check 2) worked with a
@@ -941,6 +947,7 @@ class _Linter(HTMLParser):
         # values exact mode alone can set) are inert there.
         self._lib_seq: Optional[int] = None
         self._init_seqs: List[Tuple[str, int]] = []
+        self._deferred_init_ids: Set[str] = set()
         self._canvas_seqs: Dict[str, int] = {}
         self._first_id: Dict[str, Tuple[str, int]] = {}
         self._chart_lib_cache: Any = _UNSET
@@ -1024,7 +1031,9 @@ class _Linter(HTMLParser):
             # judged only for a declared id whose init body was matched
             # on the page (_init_seqs -- exact mode alone populates it):
             # (4) the canvas appears after the init, so getElementById
-            # returns null when the init runs; (5) the FIRST element
+            # returns null when the init runs (not judged for an init
+            # in a non-async inline module script, which runs after
+            # parsing, see _current_script_deferred); (5) the FIRST element
             # carrying the id is not the canvas, so getElementById
             # resolves to an element Chart.js cannot draw on.
             init_seq: Dict[str, int] = {}
@@ -1042,7 +1051,7 @@ class _Linter(HTMLParser):
                 seq = init_seq.get(chart_id)
                 if seq is None:
                     continue
-                if canvas_seq > seq:
+                if canvas_seq > seq and chart_id not in self._deferred_init_ids:
                     self.errors.append(
                         f"chart init for {chart_id!r} appears before its "
                         f"<canvas id={chart_id!r}> in document order -- "
@@ -1202,6 +1211,8 @@ class _Linter(HTMLParser):
         if parsed is not None and seq is not None:
             chart_id, _config = parsed
             self._init_seqs.append((chart_id, seq))
+            if self._current_script_deferred:
+                self._deferred_init_ids.add(chart_id)
 
     def _check_tag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         # This tag's document-order position (both handle_starttag and
@@ -1237,6 +1248,12 @@ class _Linter(HTMLParser):
             # Scripts never nest, so one slot suffices; the counter is
             # the shared _tag_seq (see __init__).
             self._current_script_seq = self._tag_seq
+            script_type = _type_attr(attrs)
+            self._current_script_deferred = (
+                script_type is not _NO_TYPE
+                and (script_type or "").strip().lower() == "module"
+                and not any(n.lower() == "async" for n, _v in attrs)
+            )
             if _has_src_attr(attrs):
                 # Never allowed, remote, local, or valueless/empty: a
                 # src-bearing script is an external fetch/file
@@ -1446,13 +1463,15 @@ def lint_html(
     library plus each chart's init body. When given (and the manifest
     declares charts) the page's inline scripts must equal that multiset
     exactly: forged/altered, extra, duplicate, and missing bodies are
-    each errors, and three completeness checks close the remaining gap
+    each errors, and five completeness checks close the remaining gap
     between "the exact bodies are present" and "the page actually draws
     the charts" — see the module docstring's closing paragraph: a
     matched body must sit in a bare executable ``<script>`` (no
     non-executable ``type``), the library body must precede every init
     body in document order, and every manifest-declared chart id needs
-    a matching ``<canvas id="...">`` on the page. When None (direct
+    a matching ``<canvas id="...">`` on the page, which must precede
+    that chart's init body (unless the init is a deferred module
+    script) and be the first element carrying the id. When None (direct
     callers with no render context) each inline script body is judged
     structurally instead — see the module docstring. The render
     pipeline always passes it, so production output is held to the
