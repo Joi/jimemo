@@ -1,5 +1,6 @@
 """Tests for the kata bridge. No network, no kata, no token file."""
 
+import contextlib
 import io
 import json
 import unittest
@@ -14,18 +15,32 @@ BODY = "\n".join(["kata: jibot-code#kc3m", "repo: canary-ops", "branch: feat",
                   "worktree: /Users/joi/repos/canary-ops"])
 
 
-def pr(number=7, merged=True, base="main", body=BODY, head=SHA_A, state="closed"):
+def pr(number=7, merged=True, base="main", body=BODY, head=SHA_A, state="closed",
+       repo=REPO):
+    base_doc = {"ref": base}
+    if repo is not None:
+        base_doc["repo"] = {"full_name": repo}
     return {"number": number, "merged_at": "2026-09-21T12:00:00Z" if merged else None,
-            "merge_commit_sha": MERGE, "base": {"ref": base}, "body": body,
+            "merge_commit_sha": MERGE, "base": base_doc, "body": body,
             "head": {"sha": head}, "state": state}
+
+
+def captured(fn):
+    """(result, stdout, stderr) of fn()."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        result = fn()
+    return result, out.getvalue(), err.getvalue()
 
 
 class Kata:
     """Records argv; `show` answers with a revision, `close` with a scripted rc."""
 
-    def __init__(self, close_rcs=(0,), comment_rc=0, label_rc=0, revisions=(5, 6)):
+    def __init__(self, close_rcs=(0,), comment_rc=0, label_rc=0, revisions=(5, 6),
+                 label_rm_rc=0):
         self.argv, self.close_rcs = [], list(close_rcs)
         self.comment_rc, self.label_rc, self.revisions = comment_rc, label_rc, list(revisions)
+        self.label_rm_rc = label_rm_rc
 
     def __call__(self, cmd):
         self.argv.append(cmd[1:])
@@ -40,7 +55,7 @@ class Kata:
         elif verb == "comment":
             R.returncode = self.comment_rc
         elif verb == "label":
-            R.returncode = self.label_rc
+            R.returncode = self.label_rm_rc if cmd[2] == "rm" else self.label_rc
         return R
 
     def verbs(self):
@@ -49,6 +64,7 @@ class Kata:
 
 def landed_env(**kw):
     e = {"GITHUB_REPOSITORY": REPO, "GITHUB_TOKEN": "t", "KATA_BIN": "kata",
+         "KATA_PROJECTS": "jibot-code",
          "BRIDGE_BEFORE": SHA_B, "BRIDGE_AFTER": MERGE}
     e.update(kw)
     return e
@@ -114,6 +130,60 @@ class Landed(unittest.TestCase):
         rc = kb.main(["landed"], landed_env(), opener=landed_gh([pr()]), runner=k)
         self.assertEqual(rc, 1)
 
+    # --- the kata target is bound to this repository (kata jibot-code#3vb4)
+    def refused(self, env, pulls, reason):
+        k = Kata()
+        rc, out, _ = captured(lambda: kb.main(["landed"], env, opener=landed_gh(pulls),
+                                              runner=k))
+        self.assertEqual((rc, k.argv), (0, []))
+        self.assertIn("skipped", out)
+        self.assertIn(reason, out)
+
+    def test_a_pull_request_from_another_repository_is_skipped(self):
+        # should_close used to compare GITHUB_REPOSITORY with itself.
+        self.refused(landed_env(), [pr(repo="Someone/else")], "'Someone/else'")
+
+    def test_a_pull_request_with_no_base_repository_is_skipped(self):
+        self.refused(landed_env(), [pr(repo=None)], "is not")
+
+    def test_an_undeclared_project_is_skipped(self):
+        body = BODY.replace("kata: jibot-code#kc3m", "kata: other#kc3m")
+        self.refused(landed_env(), [pr(body=body)], "'other' is not in KATA_PROJECTS")
+
+    def test_an_undeclared_project_gets_no_close_false_comment_either(self):
+        body = BODY.replace("kata: jibot-code#kc3m", "kata: other#kc3m") + "\nclose: false"
+        self.refused(landed_env(), [pr(body=body)], "not in KATA_PROJECTS")
+
+    def test_an_unset_kata_projects_touches_nothing(self):
+        env = landed_env()
+        del env["KATA_PROJECTS"]
+        self.refused(env, [pr()], "KATA_PROJECTS is not set")
+        self.refused(landed_env(KATA_PROJECTS=""), [pr()], "KATA_PROJECTS is not set")
+
+    def test_a_malformed_kata_projects_touches_nothing(self):
+        for value in ("jibot-code,", "jibot-code,Bad!"):
+            self.refused(landed_env(KATA_PROJECTS=value), [pr()],
+                         "KATA_PROJECTS is malformed")
+
+    def test_a_second_declared_project_is_accepted(self):
+        # Passes before the fix too: it is here to catch a parser that keeps
+        # only one entry.
+        k = Kata()
+        rc = kb.main(["landed"], landed_env(KATA_PROJECTS="nanoclaw,jibot-code"),
+                     opener=landed_gh([pr()]), runner=k)
+        self.assertEqual((rc, k.verbs()), (0, ["show", "close"]))
+
+    def test_both_declared_projects_are_served(self):
+        other = BODY.replace("kata: jibot-code#kc3m", "kata: nanoclaw#aaaa")
+        k = Kata(close_rcs=(0, 0))
+        rc = kb.main(["landed"], landed_env(KATA_PROJECTS="nanoclaw,jibot-code"),
+                     opener=landed_gh([pr(number=7, body=other), pr(number=8)]), runner=k)
+        self.assertEqual((rc, k.verbs()), (0, ["show", "close", "show", "close"]))
+        projects = [a[a.index("--project") + 1] for a in k.argv]
+        self.assertEqual(projects, ["nanoclaw", "nanoclaw", "jibot-code", "jibot-code"])
+        self.assertEqual(k.argv[1][1], "aaaa")
+        self.assertEqual(k.argv[3][1], "kc3m")
+
 
 def artifact_zip(text):
     buf = io.BytesIO()
@@ -124,6 +194,7 @@ def artifact_zip(text):
 
 def outcome_env(**kw):
     e = {"GITHUB_REPOSITORY": REPO, "GITHUB_TOKEN": "t", "KATA_BIN": "kata",
+         "KATA_PROJECTS": "jibot-code",
          "BRIDGE_RUN_ID": "42", "BRIDGE_RUN_CONCLUSION": "failure",
          "BRIDGE_RUN_ATTEMPT": "1",
          "BRIDGE_RUN_EVENT": "pull_request", "BRIDGE_RUN_HEAD_SHA": SHA_A,
@@ -168,12 +239,53 @@ class Outcome(unittest.TestCase):
     def test_a_failed_gate_comments_first_then_labels(self):
         rc, k = self.run_outcome("failed")
         self.assertEqual(rc, 0)
-        self.assertEqual(k.verbs(), ["comment", "label"])
+        self.assertEqual(k.verbs(), ["comment", "label", "label"])
         body = k.argv[0][3]
         self.assertTrue(body.startswith(
             "repoman bounced (attempt 20260921T120000Z.abcdef): gate failed"), body)
         self.assertIn("https://github.test/run/42", body)
         self.assertEqual(k.argv[1][:4], ["label", "add", "kc3m", "merge-blocked"])
+
+    def test_a_bounce_removes_the_deferred_label(self):
+        # gate_outcome plans labels_rm for a bounce; it used to be dropped,
+        # leaving queue:deferred next to merge-blocked.
+        rc, k = self.run_outcome("failed")
+        self.assertEqual(rc, 0)
+        self.assertEqual(k.argv[2][:4], ["label", "rm", "kc3m", "queue:deferred"])
+        self.assertEqual(k.argv[2][-3:], ["--project", "jibot-code", "--agent"])
+
+    def test_a_failed_label_removal_fails_the_job(self):
+        k = Kata(label_rm_rc=1)
+        (rc, k), _, err = captured(lambda: self.run_outcome("failed", k=k))
+        self.assertEqual((rc, k.verbs()), (1, ["comment", "label", "label"]))
+        self.assertIn("label rm queue:deferred failed", err)
+
+    # --- the kata target is bound to this repository (kata jibot-code#3vb4)
+    def refused(self, reason, env=None, open_pr=OPEN):
+        (rc, k), out, _ = captured(lambda: self.run_outcome(
+            "failed", env=env or outcome_env(), open_pr=open_pr))
+        self.assertEqual((rc, k.argv), (0, []))
+        self.assertIn("skipped", out)
+        self.assertIn(reason, out)
+
+    def test_an_undeclared_project_is_not_bounced(self):
+        body = BODY.replace("kata: jibot-code#kc3m", "kata: other#kc3m")
+        self.refused("'other' is not in KATA_PROJECTS",
+                     open_pr=pr(merged=False, state="open", body=body))
+
+    def test_a_pull_request_from_another_repository_is_not_bounced(self):
+        self.refused("'Someone/else'",
+                     open_pr=pr(merged=False, state="open", repo="Someone/else"))
+
+    def test_an_unset_or_empty_kata_projects_bounces_nobody(self):
+        env = outcome_env()
+        del env["KATA_PROJECTS"]
+        self.refused("KATA_PROJECTS is not set", env=env)
+        self.refused("KATA_PROJECTS is not set", env=outcome_env(KATA_PROJECTS=""))
+
+    def test_a_malformed_kata_projects_bounces_nobody(self):
+        self.refused("KATA_PROJECTS is malformed",
+                     env=outcome_env(KATA_PROJECTS="jibot-code,,x"))
 
     def test_a_comment_that_fails_means_no_label(self):
         rc, k = self.run_outcome("failed", k=Kata(comment_rc=1))
@@ -225,7 +337,7 @@ class Outcome(unittest.TestCase):
         rc, k = self.run_outcome(None, texts=[verdict_text("passed", run_attempt="1"),
                                               verdict_text("failed", run_attempt="2")],
                                  env=outcome_env(BRIDGE_RUN_ATTEMPT="2"), latest_attempt=2)
-        self.assertEqual(k.verbs(), ["comment", "label"])
+        self.assertEqual(k.verbs(), ["comment", "label", "label"])
 
     def test_an_artifact_from_another_run_is_not_a_verdict(self):
         rc, k = self.run_outcome(None, texts=[verdict_text("failed", run_id="41")])
@@ -293,11 +405,15 @@ class ArtifactDownload(unittest.TestCase):
 
 
 class Dequeued(unittest.TestCase):
-    def run_dq(self, reason, the_pr=OPEN, k=None, event_head=SHA_A):
+    def run_dq(self, reason, the_pr=OPEN, k=None, event_head=SHA_A, **env_kw):
         k = k or Kata()
         env = {"GITHUB_REPOSITORY": REPO, "GITHUB_TOKEN": "t", "KATA_BIN": "kata",
+               "KATA_PROJECTS": "jibot-code",
                "BRIDGE_PR_NUMBER": "7", "BRIDGE_DEQUEUE_REASON": reason,
                "BRIDGE_PR_HEAD_SHA": event_head}
+        env.update(env_kw)
+        for key in [key for key, v in env.items() if v is None]:
+            del env[key]
         gh_ = FakeGitHub({("GET", "/repos/%s/pulls/7" % REPO): the_pr})
         return kb.main(["dequeued"], env, opener=gh_, runner=k), k
 
@@ -314,10 +430,41 @@ class Dequeued(unittest.TestCase):
 
     def test_a_conflict_bounces_comment_first_then_label(self):
         rc, k = self.run_dq("MERGE_CONFLICT")
-        self.assertEqual(k.verbs(), ["comment", "label"])
+        self.assertEqual((rc, k.verbs()), (0, ["comment", "label", "label"]))
         self.assertTrue(k.argv[0][3].startswith(
             "repoman bounced (attempt 20260921T120000Z.abcdef): removed from the merge queue"))
         self.assertEqual(k.argv[1][:4], ["label", "add", "kc3m", "merge-blocked"])
+        self.assertEqual(k.argv[2][:4], ["label", "rm", "kc3m", "queue:deferred"])
+
+    def test_a_conflict_whose_label_removal_fails_fails_the_job(self):
+        (rc, k), _, err = captured(lambda: self.run_dq("MERGE_CONFLICT",
+                                                       k=Kata(label_rm_rc=1)))
+        self.assertEqual((rc, k.verbs()), (1, ["comment", "label", "label"]))
+        self.assertIn("label rm queue:deferred failed", err)
+
+    # --- the kata target is bound to this repository (kata jibot-code#3vb4)
+    def refused(self, reason, the_pr=OPEN, **env_kw):
+        (rc, k), out, _ = captured(lambda: self.run_dq("MERGE_CONFLICT", the_pr=the_pr,
+                                                       **env_kw))
+        self.assertEqual((rc, k.argv), (0, []))
+        self.assertIn("skipped", out)
+        self.assertIn(reason, out)
+
+    def test_an_undeclared_project_is_not_told(self):
+        body = BODY.replace("kata: jibot-code#kc3m", "kata: other#kc3m")
+        self.refused("'other' is not in KATA_PROJECTS",
+                     the_pr=pr(merged=False, state="open", body=body))
+
+    def test_an_unset_kata_projects_tells_nobody(self):
+        self.refused("KATA_PROJECTS is not set", KATA_PROJECTS=None)
+        self.refused("KATA_PROJECTS is not set", KATA_PROJECTS="")
+
+    def test_a_malformed_kata_projects_tells_nobody(self):
+        self.refused("KATA_PROJECTS is malformed", KATA_PROJECTS="jibot-code,Bad!")
+
+    def test_a_pull_request_from_another_repository_is_not_told(self):
+        self.refused("'Someone/else'",
+                     the_pr=pr(merged=False, state="open", repo="Someone/else"))
 
     def test_a_conflict_whose_comment_fails_is_not_labelled(self):
         rc, k = self.run_dq("MERGE_CONFLICT", k=Kata(comment_rc=1))

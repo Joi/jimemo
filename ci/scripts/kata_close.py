@@ -51,7 +51,9 @@ def should_close(pr, merge_sha, main_branch, expected_repo, repo_now):
     if base_ref != main_branch:
         return False, ("merged into %r, not %r — not a landing"
                        % (base_ref, main_branch))
-    if expected_repo and repo_now != expected_repo:
+    # `repo_now` is the pull request's OWN base repository. An empty
+    # expectation is a wiring fault, not "no check" (kata jibot-code#3vb4).
+    if not expected_repo or repo_now != expected_repo:
         return False, ("repository %r is not %r" % (repo_now, expected_repo))
     if not merge_sha:
         return False, "no merge commit sha"

@@ -24,6 +24,9 @@ A body with no `kata:` line is not an error. It is a pull request that closes
 nothing, which is what `repoman-submit -t` produces before its issue exists and
 what a hand-opened pull request looks like.
 
+A `kata:` project is honoured only when the repository declares it in the
+repository variable KATA_PROJECTS (`project_declared`, kata jibot-code#3vb4).
+
 Run: python3 -m unittest discover -s ci/scripts -t ci/scripts
 """
 
@@ -152,3 +155,40 @@ def parse_body(text):
 def closes_an_issue(meta):
     """True when this pull request's landing should touch a kata issue."""
     return "ref" in meta
+
+
+# The body is producer-supplied text, and the bridge that reads it holds a kata
+# token that can close an issue in ANY project. So the `kata:` project a body
+# names is only honoured when the repository declares it: the repository
+# variable KATA_PROJECTS, a comma-separated list of project names (kata
+# jibot-code#3vb4). More than one, because a repository can file its handoffs
+# in a project other than the one its kata alias points at. Unset means the
+# bridge touches nothing on that repository.
+def declared_projects(value):
+    """(frozenset, error) — the kata projects a repository serves.
+
+    Unset or blank is the empty set, not an error, so the caller's refusal can
+    say which it was. An empty entry or a bad name refuses the whole value.
+    """
+    if value is None or not value.strip():
+        return frozenset(), None
+    out = set()
+    for entry in value.split(","):
+        name = entry.strip()
+        if not PROJECT_RE.match(name):
+            return None, "bad project name %r" % name
+        out.add(name)
+    return frozenset(out), None
+
+
+def project_declared(meta, value):
+    """(ok, why): may this repository's bridge touch `meta["project"]`?"""
+    projects, err = declared_projects(value)
+    if err:
+        return False, "KATA_PROJECTS is malformed (%s)" % err
+    if not projects:
+        return False, "KATA_PROJECTS is not set on this repository"
+    if meta.get("project") not in projects:
+        return False, ("kata project %r is not in KATA_PROJECTS (%s)"
+                       % (meta.get("project"), ",".join(sorted(projects))))
+    return True, ""

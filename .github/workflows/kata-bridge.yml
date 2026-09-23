@@ -44,11 +44,14 @@ jobs:
     # this repo has no self-hosted runners, and a job that asks for one queues
     # for a day on every event; the lane guard cannot help, because it runs ON
     # the runner. Rollback to the user account therefore needs no edit here.
-    if: github.repository_owner == 'ito-works'
+    # A run whose head repository is not this one (a fork's pull request) is
+    # skipped here too, whatever its body says; a push to main has no head
+    # repository to compare.
+    if: github.repository_owner == 'ito-works' && (github.event_name == 'push' || (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: [self-hosted, macOS, mujin-bridge]
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           # The default branch, explicitly. Never the pull request.
           ref: ${{ github.event.repository.default_branch }}
@@ -63,6 +66,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           KATA_SERVER: ${{ vars.KATA_SERVER }}
+          # The kata projects this repository's pull requests may name. Unset,
+          # the bridge closes, comments on and labels nothing.
+          KATA_PROJECTS: ${{ vars.KATA_PROJECTS }}
           KATA_TRUST_PRIVATE_NETWORK: "1"
           KATA_AUTHOR: mujin-bridge
           KATA_BIN: /opt/homebrew/bin/kata

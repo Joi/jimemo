@@ -26,6 +26,12 @@ the reading and the writing around them.
             failing in the merge group is not silent — which it was on the
             canary's first pull request.
 
+Every path binds the pull request to THIS repository before it makes a kata
+call: the pull request's own base repository must be GITHUB_REPOSITORY, and
+the project its body names must be in the repository variable KATA_PROJECTS
+(`bound`, kata jibot-code#3vb4). Anything else is skipped with the reason
+printed, and kata is not touched.
+
 NOT built yet, and reported rather than faked when they come up: the one
 automatic retry of a deferred gate (needs Actions: write), the landing record
 and reconciler, and the waived-landing alert.
@@ -66,6 +72,46 @@ def _run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+def apply_labels(ref, project, add, rm, kata_bin, runner=None):
+    """(ok, why). Adds first, then removals, stopping at the first failure.
+
+    Called only once the comment is known to be posted, so a label never
+    arrives without its explanation. Adds go first so that `merge-blocked` is
+    on the issue before anything is taken off it. Removing a label the issue
+    does not carry exits 0 (kata v0.18.0), so any non-zero rc is a real error.
+    """
+    for verb, labels in (("add", add), ("rm", rm)):
+        for label in labels:
+            rc, _ = kata(["label", verb, ref, label], project, kata_bin, runner)
+            if rc != 0:
+                return False, ("comment posted but label %s %s failed (rc %d)"
+                               % (verb, label, rc))
+    return True, ""
+
+
+# --- binding (kata jibot-code#3vb4)
+def _base_repo(pr):
+    """The repository the pull request itself belongs to, or None."""
+    return ((pr.get("base") or {}).get("repo") or {}).get("full_name")
+
+
+def bound(pr, meta, env):
+    """(ok, why): is this pull request's kata target one this repository may touch?
+
+    Two bindings, both fail closed. The pull request must belong to the
+    repository this workflow runs in — its own base repository, not the
+    environment compared with itself. And the body's kata project must be one
+    the repository declares in KATA_PROJECTS: the body is text a producer
+    wrote, and the bridge holds a token that can close any issue.
+    """
+    repo_now = _base_repo(pr)
+    expected = env.get("GITHUB_REPOSITORY") or ""
+    if not expected or repo_now != expected:
+        return False, "pull request #%s belongs to %r, which is not %r" % (
+            pr.get("number"), repo_now, expected)
+    return pr_meta.project_declared(meta, env.get("KATA_PROJECTS"))
+
+
 def kata_revision(ref, project, kata_bin, runner=None):
     """The issue's revision, through the real JSON contract."""
     done = (runner or _run)([kata_bin, "show", ref, "--project", project, "--json"])
@@ -100,10 +146,15 @@ def merged_pulls(repo, before, after, token, opener=None):
     return out
 
 
-def land_one(pr, repo, main_branch, kata_bin, runner=None):
-    """(status, detail) for one merged pull request."""
+def land_one(pr, repo, main_branch, kata_bin, runner=None, projects=None):
+    """(status, detail) for one merged pull request.
+
+    `projects` is the repository's KATA_PROJECTS value. The repository half of
+    `bound` is `should_close`'s own check here, against the pull request's
+    base repository.
+    """
     merge_sha = pr.get("merge_commit_sha") or ""
-    ok, why = kata_close.should_close(pr, merge_sha, main_branch, repo, repo)
+    ok, why = kata_close.should_close(pr, merge_sha, main_branch, repo, _base_repo(pr))
     if not ok:
         return "skipped", why
     meta, err = pr_meta.parse_body(pr.get("body") or "")
@@ -111,6 +162,9 @@ def land_one(pr, repo, main_branch, kata_bin, runner=None):
         return "skipped", "pull request #%d body is malformed: %s" % (pr["number"], err)
     if "ref" not in meta:
         return "skipped", "pull request #%d names no kata issue" % pr["number"]
+    ok, why = pr_meta.project_declared(meta, projects)
+    if not ok:
+        return "skipped", why
     meta["head_sha"] = (pr.get("head") or {}).get("sha")
 
     if not meta["close"]:
@@ -143,7 +197,8 @@ def landed(env, opener=None, runner=None):
         return 0
     worst = 0
     for pr in pulls:
-        status, detail = land_one(pr, repo, main_branch, env["KATA_BIN"], runner)
+        status, detail = land_one(pr, repo, main_branch, env["KATA_BIN"], runner,
+                                  projects=env.get("KATA_PROJECTS"))
         print("kata-bridge: #%d %s: %s" % (pr["number"], status, detail))
         if status == "failed":
             worst = 1
@@ -233,6 +288,11 @@ def outcome(env, opener=None, runner=None, fetch=None):
         print("kata-bridge: pull request #%d names no kata issue — nobody to tell"
               % pr["number"])
         return 0
+    ok, why = bound(pr, meta, env)
+    if not ok:
+        print("kata-bridge: pull request #%d skipped: %s — kata not touched"
+              % (pr["number"], why))
+        return 0
 
     # AUTHORITY: is this the newest attempt of this run? The event names its
     # own attempt; the API names the latest.
@@ -283,13 +343,11 @@ def outcome(env, opener=None, runner=None, fetch=None):
         print("kata-bridge: could not comment on %s#%s (rc %d) — NOT labelling"
               % (meta["project"], meta["ref"], rc), file=sys.stderr)
         return 1
-    for label in plan["labels_add"]:
-        rc, _ = kata(["label", "add", meta["ref"], label], meta["project"],
-                     env["KATA_BIN"], runner)
-        if rc != 0:
-            print("kata-bridge: comment posted but label %s failed (rc %d)" % (label, rc),
-                  file=sys.stderr)
-            return 1
+    ok, why = apply_labels(meta["ref"], meta["project"], plan["labels_add"],
+                           plan["labels_rm"], env["KATA_BIN"], runner)
+    if not ok:
+        print("kata-bridge: %s" % why, file=sys.stderr)
+        return 1
     print("kata-bridge: bounced %s#%s" % (meta["project"], meta["ref"]))
     return 0
 
@@ -334,11 +392,18 @@ def dequeued(env, opener=None, runner=None):
         print("kata-bridge: pull request #%d names no kata issue — nobody to tell"
               % pr["number"])
         return 0
+    ok, why = bound(pr, meta, env)
+    if not ok:
+        print("kata-bridge: pull request #%d skipped: %s — kata not touched"
+              % (pr["number"], why))
+        return 0
     url = pr.get("html_url") or ""
 
     if reason in DEQUEUE_BOUNCES:
         body = gate_outcome.bounce_comment(meta["attempt"], DEQUEUE_BOUNCES[reason])
+        # The same pair a gate bounce plans: blocked on, deferred off.
         labels = [gate_outcome.BLOCKED_LABEL]
+        labels_rm = [gate_outcome.DEFERRED_LABEL]
     else:
         # Deliberately NOT the bounce prefix and NOT a label: see the module
         # docstring. This is information, and it says what would follow if the
@@ -350,7 +415,7 @@ def dequeued(env, opener=None, runner=None):
                 "on the pull request. If the gate could not run at all, nothing "
                 "is needed from you; otherwise fix, push and re-run repoman-submit."
                 % (pr["number"], reason, meta["attempt"]))
-        labels = []
+        labels, labels_rm = [], []
     if url:
         body += "\n\n" + url
     rc, _ = kata(["comment", meta["ref"], "--body", body], meta["project"],
@@ -359,13 +424,11 @@ def dequeued(env, opener=None, runner=None):
         print("kata-bridge: could not comment on %s#%s (rc %d) — NOT labelling"
               % (meta["project"], meta["ref"], rc), file=sys.stderr)
         return 1
-    for label in labels:
-        rc, _ = kata(["label", "add", meta["ref"], label], meta["project"],
-                     env["KATA_BIN"], runner)
-        if rc != 0:
-            print("kata-bridge: comment posted but label %s failed (rc %d)" % (label, rc),
-                  file=sys.stderr)
-            return 1
+    ok, why = apply_labels(meta["ref"], meta["project"], labels, labels_rm,
+                           env["KATA_BIN"], runner)
+    if not ok:
+        print("kata-bridge: %s" % why, file=sys.stderr)
+        return 1
     print("kata-bridge: told %s#%s the pull request left the queue (%s)"
           % (meta["project"], meta["ref"], reason))
     return 0

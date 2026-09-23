@@ -51,10 +51,99 @@ TRUSTED_TRIGGERS = {"pull_request_target", "workflow_dispatch", "workflow_run",
 
 CHECK_NAME = "mujin/review-evidence"
 
+# Every `uses:` names a full commit, with the release it was resolved from as
+# a comment. A tag can be moved; a commit cannot (kata jibot-code#3vb4).
+PIN_RE = re.compile(r"^\s+(?:- )?uses: [\w.-]+/[\w.-]+(?:/[\w./-]+)?"
+                    r"@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
+
+# The job-level condition of each trusted workflow, whole. Beside the owner
+# guard, a run whose head repository is not this repository — a fork's pull
+# request — gets no bridge job (directive on kata jibot-code#3vb4). `push` and
+# `workflow_dispatch` carry no head repository and keep running.
+JOB_IF = {
+    "kata-bridge.yml": (
+        "github.repository_owner == 'ito-works' && ("
+        "github.event_name == 'push' || "
+        "(github.event_name == 'workflow_run' && "
+        "github.event.workflow_run.head_repository.full_name == github.repository) || "
+        "(github.event_name == 'pull_request_target' && "
+        "github.event.pull_request.head.repo.full_name == github.repository))"),
+    "review-evidence.yml": (
+        "github.repository_owner == 'ito-works' && ("
+        "(github.event_name == 'workflow_run' && "
+        "github.event.workflow_run.event == 'merge_group' && "
+        "github.event.workflow_run.head_repository.full_name == github.repository) || "
+        "(github.event_name == 'pull_request_target' && "
+        "github.event.pull_request.head.repo.full_name == github.repository) || "
+        "github.event_name == 'workflow_dispatch')"),
+}
+OWNER_PREFIX = "github.repository_owner == 'ito-works' && ("
+NO_HEAD_TRIGGERS = {"push", "workflow_dispatch"}
+HEAD_CHECK_RE = re.compile(
+    r"(?:head_repository|head\.repo)\.full_name == github\.repository\b")
+
 
 def read(name):
     with open(os.path.join(WF_DIR, name)) as fh:
         return fh.read()
+
+
+def job_if(text):
+    """The one job-level `if:` expression."""
+    conds = re.findall(r"^    if: (.+)$", text, re.M)
+    return conds[0] if len(conds) == 1 else None
+
+
+def top_level_clauses(expr):
+    """The `||` clauses of `owner && ( ... )`, split at depth 0 only."""
+    if not expr.startswith(OWNER_PREFIX) or not expr.endswith(")"):
+        return None
+    inner = expr[len(OWNER_PREFIX):-1]
+    out, depth, cur, i = [], 0, "", 0
+    while i < len(inner):
+        ch = inner[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if depth == 0 and inner.startswith("||", i):
+            out.append(cur.strip())
+            cur, i = "", i + 2
+            continue
+        cur += ch
+        i += 1
+    out.append(cur.strip())
+    return out
+
+
+def uncovered_triggers(expr, evs):
+    """Triggers whose clause lets a run through without a HEAD repository check."""
+    clauses = top_level_clauses(expr)
+    if clauses is None:
+        return set(evs)
+    bad = set()
+    for ev in evs:
+        named = [c for c in clauses if "github.event_name == '%s'" % ev in c]
+        if not named:
+            bad.add(ev)
+        elif ev not in NO_HEAD_TRIGGERS and not all(HEAD_CHECK_RE.search(c) for c in named):
+            bad.add(ev)
+    return bad
+
+
+def step(text, name):
+    """The text of the step called `name`, up to the next step."""
+    m = re.search(r"^      - name: %s\n(.*?)(?=^      - |\Z)" % re.escape(name),
+                  text, re.M | re.S)
+    return m.group(1) if m else ""
+
+
+def kata_projects_bound(text):
+    """True when `tell kata`'s env carries KATA_PROJECTS from the variable."""
+    block = step(text, "tell kata")
+    env = re.search(r"^        env:\n((?:^          .*\n|^\s*#.*\n)*)", block, re.M)
+    return bool(env and re.search(
+        r"^          KATA_PROJECTS: \$\{\{ vars\.KATA_PROJECTS \}\}$", env.group(1), re.M))
 
 
 def triggers(text):
@@ -146,9 +235,13 @@ class SecurityInvariant(unittest.TestCase):
         # way to hand a secret to candidate code.
         for name in sorted(TRUSTED):
             text = read(name)
+            # The job-level `if:` compares the pull request's head repository
+            # with this one (HeadRepositoryGuard); that is the only place the
+            # text may appear.
+            text = re.sub(r"^    if: .*$", "", text, flags=re.M)
             for bad in ("pull_request.head.ref", "pull_request.head.repo",
                         "refs/pull/", "github.head_ref"):
-                self.assertNotIn(bad, text, "%s mentions %s" % (name, bad))
+                self.assertNotIn(bad, text, "%s mentions %s outside the job if:" % (name, bad))
             refs = re.findall(r"^          ref: (.+)$", text, re.M)
             self.assertEqual(refs, ["${{ github.event.repository.default_branch }}"], name)
 
@@ -202,6 +295,52 @@ class LaneGuard(unittest.TestCase):
                                     % (name, steps, guarded))
 
 
+class HeadRepositoryGuard(unittest.TestCase):
+    """A fork's run never reaches a trusted job (kata jibot-code#3vb4)."""
+
+    def test_each_trusted_job_condition_is_pinned(self):
+        for name in sorted(TRUSTED):
+            self.assertEqual(job_if(read(name)), JOB_IF[name], name)
+
+    def test_every_trigger_is_covered_by_a_head_check(self):
+        # Holds for future edits too: every trigger must be named by a
+        # clause, and a clause for an event that carries a head repository
+        # must compare that head repository with this one.
+        for name in sorted(TRUSTED):
+            text = read(name)
+            self.assertEqual(uncovered_triggers(job_if(text), triggers(text)), set(), name)
+
+    def test_the_coverage_check_is_not_vacuous(self):
+        # The head check sits in the pull_request_target clause; the
+        # workflow_run clause has none, and a base-repository comparison or
+        # github.repository_owner does not count.
+        expr = (OWNER_PREFIX + "(github.event_name == 'workflow_run') || "
+                "(github.event_name == 'pull_request_target' && "
+                "github.event.pull_request.head.repo.full_name == github.repository))")
+        self.assertEqual(uncovered_triggers(expr, {"workflow_run", "pull_request_target"}),
+                         {"workflow_run"})
+        for weak in ("github.event.pull_request.base.repo.full_name == github.repository",
+                     "github.event.pull_request.head.repo.full_name == github.repository_owner"):
+            expr = OWNER_PREFIX + "(github.event_name == 'pull_request_target' && %s))" % weak
+            self.assertEqual(uncovered_triggers(expr, {"pull_request_target"}),
+                             {"pull_request_target"}, weak)
+        self.assertEqual(uncovered_triggers(OWNER_PREFIX + "github.event_name == 'push')",
+                                            {"push", "schedule"}), {"schedule"})
+
+
+class Pins(unittest.TestCase):
+    def test_every_action_is_pinned_to_a_commit(self):
+        seen = 0
+        for name in sorted(EXPECTED):
+            for line in read(name).splitlines():
+                if re.match(r"^\s+(?:- )?uses:", line):
+                    seen += 1
+                    self.assertRegex(line, PIN_RE, "%s: %s" % (name, line.strip()))
+        # Three checkouts and the gate's artifact upload: a count, so that a
+        # pattern that stopped matching `uses:` cannot pass by seeing nothing.
+        self.assertGreaterEqual(seen, 4)
+
+
 class Triggers(unittest.TestCase):
     def test_gate(self):
         self.assertEqual(triggers(read("gate.yml")),
@@ -230,6 +369,18 @@ class KataBridgeEntryPoints(unittest.TestCase):
             "(github.event_name == 'pull_request_target' && 'dequeued' || 'outcome') }}",
             self.text)
         self.assertIn('run: python3 ci/bridge/kata_bridge.py "$BRIDGE_MODE"', self.text)
+
+    def test_the_repository_declares_its_kata_projects(self):
+        # Unset, the bridge touches no kata issue (pr_meta.project_declared),
+        # so the binding must reach the step that runs the bridge: a live line
+        # in `tell kata`'s env, not a comment and not another step's env.
+        self.assertTrue(kata_projects_bound(self.text))
+        for broken in (
+                self.text.replace("          KATA_PROJECTS:", "          # KATA_PROJECTS:"),
+                self.text.replace("        env:\n", "        env:\n          X: y\n"
+                                  "      - name: other\n        env:\n", 1)):
+            self.assertNotEqual(broken, self.text)
+            self.assertFalse(kata_projects_bound(broken))
 
     def test_the_dequeue_event_reaches_the_program_as_environment(self):
         for binding in (

@@ -60,6 +60,15 @@ class ShouldClose(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("is not", why)
 
+    def test_an_empty_expected_repository_refuses(self):
+        # An empty expectation used to mean "no check". The bridge always
+        # knows where it runs, so an empty one is a wiring fault: refuse.
+        for expected in ("", None):
+            ok, why = kc.should_close(pull(), MERGE, "main", expected,
+                                      "Joi/jibot-ops")
+            self.assertFalse(ok, expected)
+            self.assertIn("repository", why)
+
     def test_no_merge_sha(self):
         ok, why = kc.should_close(pull(), "", "main", "Joi/jibot-ops",
                                   "Joi/jibot-ops")

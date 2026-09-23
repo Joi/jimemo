@@ -106,5 +106,56 @@ class ParseBody(unittest.TestCase):
         self.assertIn("not text", err)
 
 
+class DeclaredProjects(unittest.TestCase):
+    """KATA_PROJECTS: the kata projects a repository's bridge may touch
+    (kata jibot-code#3vb4). The body names a project; this is what binds it."""
+
+    def test_one_project(self):
+        self.assertEqual(pr_meta.declared_projects("jibot-code"),
+                         (frozenset({"jibot-code"}), None))
+
+    def test_several_projects_with_spaces(self):
+        # A repository may file its handoffs in a project other than the one
+        # its kata alias points at, so it may serve more than one project.
+        self.assertEqual(pr_meta.declared_projects(" jibot-code , nanoclaw "),
+                         (frozenset({"jibot-code", "nanoclaw"}), None))
+
+    def test_unset_or_blank_is_the_empty_set(self):
+        for value in (None, "", "   "):
+            self.assertEqual(pr_meta.declared_projects(value), (frozenset(), None), value)
+
+    def test_an_empty_entry_is_malformed(self):
+        for value in ("jibot-code,,nanoclaw", "jibot-code,", ",jibot-code"):
+            projects, err = pr_meta.declared_projects(value)
+            self.assertIsNone(projects, value)
+            self.assertIn("''", err)
+
+    def test_a_bad_name_refuses_the_whole_value(self):
+        projects, err = pr_meta.declared_projects("jibot-code,Bad Project")
+        self.assertIsNone(projects)
+        self.assertIn("'Bad Project'", err)
+
+    def test_a_declared_project_is_allowed(self):
+        self.assertEqual(pr_meta.project_declared({"project": "nanoclaw"},
+                                                  "jibot-code,nanoclaw"), (True, ""))
+
+    def test_an_undeclared_project_is_refused(self):
+        ok, why = pr_meta.project_declared({"project": "other"}, "jibot-code")
+        self.assertFalse(ok)
+        self.assertIn("'other'", why)
+        self.assertIn("not in KATA_PROJECTS", why)
+
+    def test_unset_refuses_everything(self):
+        for value in (None, ""):
+            ok, why = pr_meta.project_declared({"project": "jibot-code"}, value)
+            self.assertFalse(ok)
+            self.assertIn("KATA_PROJECTS is not set", why)
+
+    def test_malformed_refuses_everything(self):
+        ok, why = pr_meta.project_declared({"project": "jibot-code"}, "jibot-code,BAD!")
+        self.assertFalse(ok)
+        self.assertIn("KATA_PROJECTS is malformed", why)
+
+
 if __name__ == "__main__":
     unittest.main()
