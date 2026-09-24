@@ -207,6 +207,42 @@ def test_importing_lint_raises_on_a_real_sub_floor_interpreter(version, executab
     assert FLOOR_TEXT in result.stderr, result.stderr
 
 
+# --- importing sanitize crosses the same boundary (jimemo#dexg) ---------
+#
+# sanitize.py parses HTML with html.parser exactly as lint does (and lint
+# itself parses through sanitize's normalizers), so the floor lint calls
+# at import is sanitize's boundary too: a direct caller -- `from
+# jimemo.sanitize import sanitize_html` -- must not get answers from a
+# parser that disagrees with the browser. Same RAISE_FLOOR form as the
+# lint tests above, and the same proof that a supported interpreter
+# imports cleanly.
+
+
+def test_importing_sanitize_raises_when_the_interpreter_is_below_the_floor():
+    result = _fresh(RAISE_FLOOR + "import jimemo.sanitize\n")
+    assert result.returncode != 0, result.stdout
+    assert "RuntimeError" in result.stderr, result.stderr
+    assert "99.0.0" in result.stderr, result.stderr
+    # The SAME RuntimeError lint's boundary raises, not a reworded copy
+    # that can drift: one message from one function (assert_interpreter_
+    # is_supported), whichever module's import trips it.
+    raised = [
+        line for line in result.stderr.splitlines()
+        if line.startswith("RuntimeError:")
+    ]
+    lint_raised = [
+        line
+        for line in _fresh(RAISE_FLOOR + "import jimemo.lint\n").stderr.splitlines()
+        if line.startswith("RuntimeError:")
+    ]
+    assert raised == lint_raised, (raised, lint_raised)
+
+
+def test_importing_sanitize_succeeds_on_this_interpreter():
+    result = _fresh("import jimemo.sanitize")
+    assert result.returncode == 0, result.stderr
+
+
 # --- the contract's stated limits ----------------------------------------
 
 
@@ -254,3 +290,41 @@ def test_doctor_reports_on_a_real_sub_floor_interpreter(version, executable):
     assert first.startswith("FAIL python "), result.stdout
     assert ".".join(str(part) for part in version) in first, first
     assert FLOOR_TEXT in first, first
+
+
+@pytest.mark.skipif(
+    not SUB_FLOOR_PYTHONS,
+    reason="this machine has no Python below the floor",
+)
+@pytest.mark.parametrize(
+    "version, executable", SUB_FLOOR_PYTHONS[:1], ids=lambda value: str(value)
+)
+def test_doctor_reports_the_sanitize_refusal_on_a_real_sub_floor_interpreter(
+    version, executable
+):
+    # jimemo#dexg moves the import boundary into jimemo.sanitize, which
+    # `jimemo doctor` reaches through content.py (its module-level `from
+    # .sanitize import sanitize_html`) inside the markdown-render
+    # try/except. The boundary must surface there as one more FAIL line,
+    # never as a traceback: a doctor that dies below the floor cannot
+    # report the problem it exists to report.
+    result = _fresh(
+        "from jimemo.cli import main\nraise SystemExit(main(['doctor']))\n",
+        executable=executable,
+    )
+    assert result.returncode != 0, "doctor must fail below the floor"
+    assert "Traceback" not in result.stderr, result.stderr
+    first = result.stdout.splitlines()[0]
+    assert first.startswith("FAIL python "), result.stdout
+    assert ".".join(str(part) for part in version) in first, first
+    assert FLOOR_TEXT in first, first
+    # And the new boundary itself is REPORTED: importing jimemo.content
+    # trips jimemo.sanitize's floor call, whose RuntimeError lands in
+    # doctor's except -- one FAIL line naming the floor, not a crash.
+    markdown = [
+        line for line in result.stdout.splitlines()
+        if "markdown render path" in line
+    ]
+    assert markdown, result.stdout
+    assert markdown[0].startswith("FAIL markdown render path: "), markdown[0]
+    assert FLOOR_TEXT in markdown[0], markdown[0]

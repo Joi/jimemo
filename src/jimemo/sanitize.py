@@ -32,6 +32,21 @@ from html.parser import HTMLParser
 from typing import List, NamedTuple, Optional, Tuple
 from urllib.parse import urlsplit
 
+from ._parser_floor import (
+    assert_interpreter_is_supported as _assert_interpreter_is_supported,
+)
+
+# This module parses HTML with html.parser too (both sanitizers below),
+# so it stands on the same interpreter floor lint does: html.parser
+# before CPython 3.13.6 disagrees with a browser's tokenizer, and
+# rebuilding from tokens a browser would not have seen silently passes
+# markup the sanitizer was written to drop (see _parser_floor). At
+# import, so a direct caller -- `from jimemo.sanitize import
+# sanitize_html` -- cannot cross unseen; `jimemo doctor` still reports
+# below the floor, reaching this module through content.py inside its
+# own try/except.
+_assert_interpreter_is_supported()
+
 # Everything python-markdown (with the tables and fenced_code
 # extensions) emits for legitimate markdown constructs.
 ALLOWED_TAGS = frozenset({
