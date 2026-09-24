@@ -54,11 +54,12 @@ jimemo#gaga asks of it.
   ``./jimemo``      refuses every command, one line on stderr, exit 1
   ``install.sh``    refuses to install; ``--uninstall`` still works
   ``jimemo doctor`` reports the running version and fails below the floor
-  this module       raises at import of ``jimemo.lint``
+  this module       raises at import of ``jimemo.lint`` and ``jimemo.sanitize``
 
-``jimemo.sanitize`` parses HTML too and has the same dependence, but is not
-wired up here: jimemo#86jn rewrote that file while this change was in flight
-and the dispatch brief forbade touching it. Filed as jimemo#dexg.
+``jimemo.sanitize`` parses HTML too and has the same dependence; it calls
+the same check at import (jimemo#dexg). ``jimemo doctor`` reaches it through
+``jimemo.content`` inside its own try/except, so below the floor doctor
+prints one more FAIL line rather than a traceback.
 
 **What the floor does NOT fix.** It is the three specific disagreements that
 jimemo#y9p8, jimemo#86jn and jimemo#1gs5 ran into -- semicolonless attribute
