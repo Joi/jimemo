@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from jimemo import inline
 from jimemo.cli import main
 from jimemo.design.importer import (
+    ImportResult,
     SkippedFontFace,
     _embed_fonts,
     design_systems_dir,
@@ -1100,6 +1101,133 @@ def test_cli_without_embed_fonts_notes_family_only(tmp_path, monkeypatch, capsys
     out = capsys.readouterr().out
     assert "--embed-fonts" in out
     assert "LICENSING" not in out
+
+
+# -- import-design: the printed theme header is terminal-safe -------------
+#
+# cmd_import_design prints result.header (the /* ... */ comment stripped
+# off the top of the generated theme) straight to the terminal. Unlike the
+# family lines above it, that header cannot just go through !r: it is
+# multi-line prose, and repr() would wrap the whole block in one quoted
+# line. Its print site instead escapes, per code point, exactly what a
+# terminal would act on -- anything str.isprintable() rejects, newline and
+# tab excepted -- and keeps everything else, Japanese included. Today's
+# reader cannot actually deliver a raw hostile header (every header field
+# is an ASCII allowlist or arrives repr-escaped inside a review note, and
+# the reader refuses C0 controls in a family outright); the filter is the
+# print site's own defense for the day any of that drifts, which is also
+# why these tests stub import_design rather than build an export: only a
+# stub can put an ESC in a header the way a loosened validator would.
+
+
+def _stubbed_import_result(tmp_path: Path, header: str) -> ImportResult:
+    """An ImportResult whose header is exactly `header`. The stub stands
+    in for the importer end to end: it also writes the theme file, with
+    the header verbatim at its top, so a test can hold the terminal
+    output and the file on disk against each other."""
+    css = header + "\n:root {\n}\n"
+    theme_path = tmp_path / ".jimemo" / "themes" / "stubbed.css"
+    theme_path.parent.mkdir(parents=True, exist_ok=True)
+    theme_path.write_text(css, encoding="utf-8")
+    return ImportResult(
+        name="stubbed", theme_path=theme_path, css=css, header=header
+    )
+
+
+def _stub_import_design(monkeypatch, tmp_path: Path, header: str) -> None:
+    """Point cmd_import_design's lazy `from .design.importer import
+    import_design` at a stub returning a result carrying this header.
+    The stub also plays the import's own filesystem half up front: the
+    theme file is on disk (holding the header verbatim) before the CLI
+    runs, so a test can snapshot it and prove the print site leaves it
+    alone."""
+
+    def fake_import_design(export_dir, name=None, embed_fonts=False):
+        return _stubbed_import_result(tmp_path, header)
+
+    monkeypatch.setattr(
+        "jimemo.design.importer.import_design", fake_import_design
+    )
+    _stubbed_import_result(tmp_path, header)
+
+
+def test_cli_header_prints_controls_escaped_never_raw(tmp_path, monkeypatch, capsys):
+    # ESC begins an escape sequence and U+009B is the 8-bit CSI -- the two
+    # ways a terminal gets driven; U+202E rewrites everything after it
+    # right-to-left and U+2066 opens an isolate. Each must reach the
+    # terminal only as its \xXX / \uXXXX escape text.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    header = "/* hostile Dec\x9b31m\x1b[0m \u202eevil\u2066name\u2069 */"
+    _stub_import_design(monkeypatch, tmp_path, header)
+
+    rc = main(["import-design", str(export_dir), "--name", "stubbed"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    for raw, escaped in (
+        ("\x1b", "\\x1b"),
+        ("\x9b", "\\x9b"),
+        ("\u202e", "\\u202e"),
+        ("\u2066", "\\u2066"),
+    ):
+        assert raw not in out
+        assert escaped in out
+    # and they sit in the header line, in order, as one escaped string
+    assert "/* hostile Dec\\x9b31m\\x1b[0m \\u202eevil\\u2066name\\u2069 */" in out
+
+
+def test_cli_header_prints_japanese_and_newlines_unchanged(
+    tmp_path, monkeypatch, capsys
+):
+    # The filter is per code point, not "ASCII only": every printable
+    # non-ASCII character passes through, so a Japanese family name
+    # stays readable, and the header's own newlines and tabs -- its
+    # shape -- are kept.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    header = (
+        "/* jimemo theme 'nihon' -- auto-generated\n"
+        " * フォント: 北風ゴシック\n"
+        " *   --nw-blue-core -> --jm-accent\n"
+        " * roles:\tprose, ui\n"
+        " */"
+    )
+    _stub_import_design(monkeypatch, tmp_path, header)
+
+    rc = main(["import-design", str(export_dir), "--name", "stubbed"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert header in out  # verbatim: the Japanese, newlines and tab intact
+
+
+def test_cli_header_filter_is_print_only_the_theme_file_is_untouched(
+    tmp_path, monkeypatch, capsys
+):
+    # The escape happens at the print site alone: the theme file on disk
+    # keeps the raw bytes the terminal never sees.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    header = "/* \x1b[2J 北風ゴシック \u202e */"
+    _stub_import_design(monkeypatch, tmp_path, header)
+    theme_path = tmp_path / ".jimemo" / "themes" / "stubbed.css"
+    before = theme_path.read_bytes()
+
+    rc = main(["import-design", str(export_dir), "--name", "stubbed"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "\\x1b[2J" in out
+    assert "\x1b" not in out
+    assert "北風ゴシック" in out
+    assert theme_path.read_bytes() == before
+    # the FILE still carries the raw characters the terminal was spared
+    assert "\x1b".encode("utf-8") in theme_path.read_bytes()
+    assert "\u202e".encode("utf-8") in theme_path.read_bytes()
 
 
 # -- --embed-fonts: missing / malformed font file ------------------------

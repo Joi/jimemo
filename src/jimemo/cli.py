@@ -950,6 +950,29 @@ def _print_skipped_font_faces(skipped) -> None:
         print(f"  {face.family!r} / {weight} / {style}")
 
 
+def _escape_for_terminal(text: str) -> str:
+    r"""`text` with every non-printable code point written as its \xXX /
+    \uXXXX escape, for print sites that put export-controlled text on a
+    terminal (\UXXXXXXXX for the astral ones, repr()'s spelling of the
+    same thing).
+
+    Non-printable is exactly what `str.isprintable()` rejects: the C0/C1
+    controls (an ESC or U+009B begins a CSI sequence the terminal will
+    run), U+007F, the bidi overrides U+202A-U+202E and U+2066-U+2069
+    (which rewrite how every glyph after them renders), and anything
+    else Unicode classes as Other or Separator -- with two exceptions,
+    newline and tab, the theme header's own multi-line shape. Everything
+    printable passes through verbatim, non-ASCII included: unlike the
+    `!r` the font-family lines above use, this must not quote or flatten
+    the whole string, and a Japanese family name in the header has to
+    stay readable."""
+    return "".join(
+        ch if ch in "\n\t" or ch.isprintable()
+        else ch.encode("unicode_escape").decode("ascii")
+        for ch in text
+    )
+
+
 def cmd_import_design(args) -> int:
     # Lazy, like render/content/suggest above: jimemo.design.importer
     # itself imports no vendored python today, but the design package is
@@ -981,7 +1004,10 @@ def cmd_import_design(args) -> int:
         return 1
 
     if result.header:
-        print(result.header)
+        # Export-controlled text on a terminal: escape what a terminal
+        # would act on (see _escape_for_terminal). Print-only -- the theme
+        # file the import wrote holds this header verbatim.
+        print(_escape_for_terminal(result.header))
         print()
 
     if result.embedded_font_families:
