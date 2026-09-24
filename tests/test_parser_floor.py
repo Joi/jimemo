@@ -153,9 +153,11 @@ def test_running_version_spells_it_as_cpython_does(version, expected):
 # --- importing lint really crosses the boundary (fresh processes) ---------
 #
 # Each of these raises the floor in a fresh process and then imports
-# jimemo.lint for real. If lint.py's module-level
-# assert_interpreter_is_supported() call were deleted, every one would fail
-# -- which is the regression they exist to catch.
+# jimemo.lint for real. lint imports jimemo.sanitize before it reaches its
+# own module-level assert_interpreter_is_supported() call, so since
+# jimemo#dexg sanitize's call is the one that fires first: these tests
+# guard the boundary at lint's import, not lint's own line. Deleting BOTH
+# calls would make every one fail -- the regression they exist to catch.
 
 
 RAISE_FLOOR = "import jimemo\njimemo.PYTHON_FLOOR = (99, 0, 0)\n"
