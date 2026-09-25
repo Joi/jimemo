@@ -1920,9 +1920,8 @@ def test_image_name_is_case_insensitive():
 
 
 def test_image_is_matched_on_the_end_of_the_name():
-    # Same suffix rule as image-set: ``x/**/image(`` arrives joined, so
-    # ximage( -- a function no engine defines -- is over-rejected, and
-    # image-x( is a different function.
+    # Same suffix rule as image-set: ximage( -- a function no engine
+    # defines -- is over-rejected, and image-x( is a different function.
     css = f'a{{background:ximage("{EVIL_PNG}")}}'
     assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
     css = f'a{{background:image-x("{EVIL_PNG}")}}'
