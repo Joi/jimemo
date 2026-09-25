@@ -305,6 +305,9 @@ _assert_interpreter_is_supported()
 # (image-set("https://..." 1x)) that fetches on load without ever
 # writing ``url(``, so the same two-form scan also reads those strings
 # (_css_image_set_targets) and judges them by the url() allowlist.
+# image()/-webkit-image() take the same bare-string form
+# (_CSS_IMAGE_SUFFIX); no engine ships it, but the scan refuses it
+# before one does.
 
 # A CSS escape: backslash + 1-6 hex digits + one optional whitespace,
 # or backslash + any other single character (identity escape). Note the
@@ -348,6 +351,16 @@ _CSS_IMPORT_RE = re.compile(r"@import[^;{]*", re.IGNORECASE)
 # match is on the suffix, as ``url(`` is matched anywhere, and a real
 # ``ximage-set(`` (a function no engine defines) is over-rejected.
 _CSS_IMAGE_SET_SUFFIX = "image-set"
+# The CSS ``image()`` function takes the SAME bare-string candidate
+# (``image("x.png")`` -- no ``url(`` is ever written), under the same
+# suffix rule: ``image(`` and ``-webkit-image(``, and ``ximage(``. No
+# engine ships image() today; this rule exists so lint refuses it
+# before one does, and over-rejects a function no engine defines
+# exactly as the suffix above does.
+_CSS_IMAGE_SUFFIX = "image"
+# The suffixes _css_image_set_targets matches a function name against;
+# str.endswith takes the tuple directly.
+_CSS_BARE_STRING_SUFFIXES = (_CSS_IMAGE_SET_SUFFIX, _CSS_IMAGE_SUFFIX)
 # The only functions whose arguments this scanner can account for inside
 # an image-set: ``url(`` is judged by _css_url_targets and ``type(``
 # holds a format hint. Anything else -- ``var(--x, "https://e.x/p")``
@@ -708,7 +721,9 @@ def _css_url_targets(
 
 def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
     """The bare-string candidate of each ``image-set(`` /
-    ``-webkit-image-set(`` in `text`, in order: the content of every
+    ``-webkit-image-set(`` -- and ``image(`` / ``-webkit-image(``, the
+    same bare-string form no engine ships yet (_CSS_IMAGE_SUFFIX) -- in
+    `text`, in order: the content of every
     quoted string at nesting depth 0 of the construct — the candidate
     form ``image-set("b.png" 1x)`` that fetches on load without ever
     writing ``url(``. None for a construct this scanner cannot read
@@ -780,7 +795,9 @@ def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
     while position < index:
         if text.startswith("/*", position):
             rest = _css_unescape(text[position:]).lower()
-            if inside or _CSS_IMAGE_SET_SUFFIX in rest:
+            if inside or any(
+                suffix in rest for suffix in _CSS_BARE_STRING_SUFFIXES
+            ):
                 yield None
             return
         if text.startswith(_CSS_CDO, position):
@@ -824,7 +841,7 @@ def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
             position = after + 1
             name = _css_unescape(raw).lower()
             if prefixed or name != "url":
-                is_image_set = name.endswith(_CSS_IMAGE_SET_SUFFIX)
+                is_image_set = name.endswith(_CSS_BARE_STRING_SUFFIXES)
                 if inside and not is_image_set and (
                     prefixed or name not in _CSS_IMAGE_SET_INNER_FUNCTIONS
                 ):
@@ -860,8 +877,9 @@ def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
 
 
 def css_reference_errors(css: str) -> List[str]:
-    """Error strings for every url()/image-set()/@import reference in
-    `css` that violates the allowlist (see the section comment above)."""
+    """Error strings for every url()/image-set()/image()/@import
+    reference in `css` that violates the allowlist (see the section
+    comment above)."""
     errors: List[str] = []
 
     def add(message: str) -> None:
