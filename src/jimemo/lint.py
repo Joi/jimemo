@@ -94,9 +94,10 @@ must be a bare executable ``<script>`` -- no ``type`` attribute, or
 (``application/json``, ``text/template``, ...) is inert data a browser
 never runs, so a byte-perfect body wrapped in one would silently draw
 nothing. A classic ``<script>`` carrying ``nomodule`` is rejected for
-the same reason: every browser that supports modules skips it. (2) The library body must appear, in document order, before
-every init body -- ``new Chart(...)`` needs the ``Chart`` global
-already defined. (3) Every manifest-declared chart id must have a
+the same reason: every browser that supports modules skips it. (2)
+The library body must run before every init body -- ``new Chart(...)``
+needs the ``Chart`` global already defined (execution order, which
+deferred module scripts make differ from document order; see below). (3) Every manifest-declared chart id must have a
 matching ``<canvas id="...">`` somewhere on the page. (4) That canvas
 must appear, in document order, before the chart's init script -- an
 init that runs first finds no element yet (``getElementById`` returns
