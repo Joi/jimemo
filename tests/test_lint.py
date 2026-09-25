@@ -1726,6 +1726,101 @@ def test_image_set_is_checked_in_style_elements_and_style_attributes():
     assert any(EVIL_PNG in e for e in errors)
 
 
+# --- image(): the unshipped bare-string form (same scanner) ----------
+#
+# The CSS image() function takes the SAME bare-string candidate
+# image-set() does -- image("x.png") fetches on load without ever
+# writing url( -- so it is read by the same scanner under the same
+# suffix rule (_CSS_IMAGE_SUFFIX). No engine ships image() today; lint
+# refuses it before one does, and over-rejects ximage( exactly as it
+# over-rejects ximage-set(.
+
+def test_image_bare_string_remote_candidate_is_an_error():
+    css = f'a{{background:image("{EVIL_PNG}")}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_image_bare_string_local_sidecar_is_an_error():
+    errors = lint.css_reference_errors('a{background:image("photo.png")}')
+    assert len(errors) == 1
+    assert "'photo.png'" in errors[0] and "sidecar" in errors[0]
+
+
+def test_image_of_inlined_raster_candidate_passes():
+    css = 'a{background:image("data:image/png;base64,iVBORw0KGgo=")}'
+    assert lint.css_reference_errors(css) == []
+
+
+def test_image_protocol_relative_single_quoted_candidate_is_an_error():
+    errors = lint.css_reference_errors("a{background:image('//host/x')}")
+    assert errors == [_remote("//host/x")]
+
+
+def test_image_fallback_colour_is_not_a_candidate():
+    # image("a.png", blue): the colour is an ident, not a string, so the
+    # only candidate is the image; a bare colour alone yields nothing.
+    css = f'a{{background:image("{EVIL_PNG}", blue)}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+    css = 'a{background:image("data:image/png;base64,iVBORw0KGgo=", blue)}'
+    assert lint.css_reference_errors(css) == []
+    assert lint.css_reference_errors("a{background:image(blue)}") == []
+
+
+def test_image_fallback_colour_function_fails_closed():
+    # rgb() is not an inner function the scanner can account for, so the
+    # construct is unreadable and refused -- over-rejection, never a pass.
+    css = 'a{background:image("data:image/png;base64,iVBORw0KGgo=", rgb(0 0 0))}'
+    assert lint.css_reference_errors(css) == [IMAGE_SET_UNPARSEABLE]
+
+
+def test_image_direction_keyword_is_not_a_candidate():
+    css = f'a{{background:image(rtl "{EVIL_PNG}")}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+    css = 'a{background:image(ltr "data:image/png;base64,iVBORw0KGgo=")}'
+    assert lint.css_reference_errors(css) == []
+
+
+def test_webkit_image_bare_string_candidate_is_an_error():
+    css = f'a{{background:-webkit-image("{EVIL_PNG}")}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_image_name_is_case_insensitive():
+    css = f'a{{background:IMAGE("{EVIL_PNG}")}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+
+
+def test_image_is_matched_on_the_end_of_the_name():
+    # Same suffix rule as image-set: ``x/**/image(`` arrives joined, so
+    # ximage( -- a function no engine defines -- is over-rejected, and
+    # image-x( is a different function.
+    css = f'a{{background:ximage("{EVIL_PNG}")}}'
+    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+    css = f'a{{background:image-x("{EVIL_PNG}")}}'
+    assert lint.css_reference_errors(css) == []
+
+
+def test_a_property_named_image_is_not_the_image_function():
+    # ``background-image`` is a property (its colon, not a paren,
+    # follows the name), so the url() form here is a legitimate
+    # inlined raster and not an image() bare string.
+    css = "a{background-image:url(data:image/png;base64,iVBORw0KGgo=)}"
+    assert lint.css_reference_errors(css) == []
+
+
+@pytest.mark.parametrize(
+    "css",
+    [
+        "image(" * 20000,
+        "/*" + "image(" * 20000,
+    ],
+)
+def test_image_scan_is_work_bounded(css):
+    started = time.perf_counter()
+    lint.css_reference_errors(css)
+    assert time.perf_counter() - started < 10.0
+
+
 # --- charts declared: the one controlled opening (Phase 4) -----------------
 #
 # When the manifest declares charts, an inline src-less <script> (and the
