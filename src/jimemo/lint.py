@@ -680,7 +680,13 @@ def _css_url_targets(
     only as a #fragment or an allowed data: URI. The per-open reading
     also judged each nested target, all of which end at the same ``)``,
     so when the outer target is accepted the nested opens are still
-    walked, without copying their targets. A nested target that is a
+    walked, without copying their targets. Entering that walk means
+    judging the outer target HERE as well (the caller judges it
+    again), so the walk is entered only when an open sits inside the
+    target, and started at that open: a cleanly matched target with
+    no nested open — every real stylesheet's — is judged once, by
+    the caller alone (the double judgement cost 25 ms per 500 KB
+    inlined data: URI). A nested target that is a
     fragment is accepted there too, which _css_url_fragment_at decides
     from its first characters. The first one that is not is yielded as
     the per-open reading yielded it, and the walk ends, since the text
@@ -708,8 +714,11 @@ def _css_url_targets(
             yield target
             if url_tokens:
                 resume = end + 1
-                if _css_url_problem(target) is None:
-                    for nested in _CSS_URL_OPEN_RE.finditer(text, start, end):
+                nested_open = _CSS_URL_OPEN_RE.search(text, start, end)
+                if nested_open is not None and _css_url_problem(target) is None:
+                    for nested in _CSS_URL_OPEN_RE.finditer(
+                        text, nested_open.start(), end
+                    ):
                         if _css_url_fragment_at(text, nested.end(), end):
                             continue
                         nested_target = text[nested.end():end].strip()

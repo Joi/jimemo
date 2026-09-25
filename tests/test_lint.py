@@ -1480,6 +1480,10 @@ def test_nested_open_inside_an_outer_target_still_errors():
         # itself, so skipping the nested open accepts nothing: remote
         # text inside makes the outer target's scheme not-allowed,
         ("url(url(https://evil.example/x))", "evil.example"),
+        # and protocol-relative text inside leaves the outer target
+        # schemeless and not itself protocol-relative, so it is
+        # reported as a local path — one that still names the host it
+        # echoes.
         ("url(url(//evil.example/x))", "evil.example"),
         # a local path inside leaves the outer target a local path,
         ("url(url(x))", "sidecar"),
@@ -1567,8 +1571,9 @@ def test_quoted_target_keeps_one_target_per_open():
         ("url(#a url( #b url(\n#c))", []),
         ('p::before{content:"url(#url(#y))"}', []),
         ("url(data:image/png,url(#y))", []),
-        # The fragment test is browser_url_form's: a control character
-        # after a non-breaking space is not stripped, so no fragment.
+        # The fragment test is browser_url_form's: the control
+        # character is stripped, the non-breaking space after it is
+        # not, so no fragment.
         ("url(#url(\x01\xa0#y))", [
             "url('\\x01\\xa0#y') is a local path that was not inlined — "
             "the output would depend on a sidecar file"
@@ -1587,17 +1592,21 @@ def test_nested_open_inside_an_accepted_target(css, expected):
 
 
 @pytest.mark.parametrize(
-    "css",
+    "css, expected",
     [
-        "a{b:" + "url(#" * 50000 + ")}",
-        "a{b:" + "url(# " * 50000 + "x)}",
-        "a{b:" + "url(data:image/png," * 20000 + ")}",
+        # Every nested open reads a fragment: nothing to report.
+        ("a{b:" + "url(#" * 50000 + ")}", []),
+        ("a{b:" + "url(# " * 50000 + "x)}", []),
+        # The first nested target is itself an allowed data: URI,
+        # which the walk fails closed instead of judging in full.
+        ("a{b:" + "url(data:image/png," * 20000 + ")}", [UNPARSEABLE]),
     ],
 )
-def test_nested_opens_in_an_accepted_target_are_bounded(css):
+def test_nested_opens_in_an_accepted_target_are_bounded(css, expected):
     started = time.perf_counter()
-    lint.css_reference_errors(css)
+    errors = lint.css_reference_errors(css)
     assert time.perf_counter() - started < 10.0
+    assert errors == expected
 
 
 def test_default_reading_keeps_one_target_per_open():
@@ -1608,6 +1617,112 @@ def test_default_reading_keeps_one_target_per_open():
     assert list(
         lint._css_url_targets("url(url(x))", url_tokens=True)
     ) == ["url(x"]
+
+
+class _CountingUrlProblem:
+    """Stands in for lint._css_url_problem and counts its calls."""
+
+    def __init__(self, real):
+        self.real = real
+        self.calls = 0
+
+    def __call__(self, url):
+        self.calls += 1
+        return self.real(url)
+
+
+def test_a_bare_target_without_a_nested_open_is_judged_once(monkeypatch):
+    # The nested walk's gate judged every cleanly matched bare target
+    # inside the scanner too, and the caller judges each yielded
+    # target again — one 500 KB inlined data: URI paid for the
+    # allowlist twice (measured: 25 ms per 500 KB). The walk now runs
+    # only when an open sits inside the target, so a target without
+    # one — every real stylesheet's — is judged once, by the caller.
+    counter = _CountingUrlProblem(lint._css_url_problem)
+    monkeypatch.setattr(lint, "_css_url_problem", counter)
+    css = "a{b:url(data:image/png;base64," + "A" * 500_000 + ")}"
+    started = time.perf_counter()
+    assert lint.css_reference_errors(css) == []
+    assert time.perf_counter() - started < 5.0
+    assert counter.calls == 1
+
+
+def test_a_bare_target_with_a_nested_open_is_still_judged_for_the_walk(
+    monkeypatch,
+):
+    # The guard is only the absence of an open: with one inside, the
+    # scanner still judges the outer target (to know whether to walk)
+    # and the first nested non-fragment target (to fail closed on an
+    # allowed one), and the caller judges both again.
+    counter = _CountingUrlProblem(lint._css_url_problem)
+    monkeypatch.setattr(lint, "_css_url_problem", counter)
+    # the nested open reads a fragment: no allowlist call of its own
+    assert lint.css_reference_errors("url(#url(#y))") == []
+    assert counter.calls == 2
+    assert lint.css_reference_errors("url(#url(x))") == [LOCAL_X]
+    assert counter.calls == 6
+
+
+def _url_target_errors(css, url_tokens):
+    """css_reference_errors' url() pipeline alone: every target
+    _css_url_targets yields, judged by the allowlist, a None target
+    failing closed. No image-set()/@import construct, comment or
+    escape can form over the alphabets below, and the decoded second
+    form is the stripped one, so this is css_reference_errors with
+    exactly the one flag varied (its message dedup cannot change
+    emptiness, which is all the invariant below asks of it)."""
+    errors = []
+    stripped = lint._css_comments_stripped(css)
+    for target in lint._css_url_targets(stripped, url_tokens=url_tokens):
+        if target is None:
+            errors.append(UNPARSEABLE)
+        else:
+            problem = lint._css_url_problem(target)
+            if problem is not None:
+                errors.append(problem)
+    return errors
+
+
+def test_url_tokens_reports_errors_wherever_the_default_reading_does():
+    # The acceptance invariant of the url-token reading (jimemo#j7mv):
+    # it accepts nothing the replaced regex's per-open reading
+    # rejects, so wherever the default reading (url_tokens=False)
+    # reports errors, url_tokens=True reports errors too. Exhaustive
+    # over every string of up to six symbols from the url( grammar's
+    # alphabet — the same bound as the oracle test above (137,257
+    # strings, about two seconds).
+    symbols = ("url(", ")", "#", "x", " ", "data:image/png", '"')
+    checked = 0
+    exercised = 0
+    for length in range(7):
+        for parts in itertools.product(symbols, repeat=length):
+            css = "".join(parts)
+            checked += 1
+            if _url_target_errors(css, url_tokens=False):
+                exercised += 1
+                assert _url_target_errors(css, url_tokens=True), repr(css)
+    assert checked == sum(7 ** n for n in range(7))
+    assert exercised  # the property was exercised, never vacuous
+
+
+def test_css_url_fragment_at_is_browser_url_forms_fragment_test():
+    # _css_url_fragment_at is the prefix read of browser_url_form's
+    # #fragment allowance: Python's whitespace strip, then the
+    # C0-control/space strip, then a ``#`` — exactly what
+    # browser_url_form(s.strip()) decides about a leading ``#``.
+    # Exhaustive over the characters the two strips disagree on
+    # (space, tab, newline, \x01, \xa0, with ``#`` and ``x`` to close
+    # a fragment off), up to six symbols (137,257 strings).
+    symbols = (" ", "\t", "\n", "\x01", "\xa0", "#", "x")
+    checked = 0
+    for length in range(7):
+        for parts in itertools.product(symbols, repeat=length):
+            s = "".join(parts)
+            checked += 1
+            assert lint._css_url_fragment_at(s, 0, len(s)) == (
+                lint.browser_url_form(s.strip()).startswith("#")
+            ), repr(s)
+    assert checked == sum(7 ** n for n in range(7))
 
 
 # --- image-set(): the bare-string candidate (jimemo#ktmx) -------------------
