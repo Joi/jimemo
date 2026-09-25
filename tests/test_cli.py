@@ -1351,12 +1351,15 @@ def test_render_figure_error_echo_is_bounded(tmp_path, capsys):
 
 @pytest.mark.parametrize("out_name, extra", [
     ("flow.svg", []),                       # -o names the figure source
-    ("note.html", ["--pdf=flow.svg.pdf"]),  # control: a different pdf path is fine
+    ("note.html", ["flow.svg.pdf"]),        # control: a different pdf path is fine
 ])
 def test_render_refuses_to_overwrite_a_figure_file(tmp_path, monkeypatch, capsys, out_name, extra):
     monkeypatch.setenv("JIMEMO_CONFIG", str(tmp_path / "absent.toml"))
     _fake_pdf_seam(monkeypatch)
     content, svg = _figure_inputs(tmp_path)
+    # `extra` holds bare names: the decorator cannot see tmp_path, so the
+    # --pdf option is built here to keep the write inside tmp_path.
+    extra = [f"--pdf={tmp_path / name}" for name in extra]
     before = svg.read_text()
     code = main(["render", "briefing", str(content), "-o", str(tmp_path / out_name),
                  "--figure", f"FLOW={svg}", *extra])
@@ -1367,6 +1370,8 @@ def test_render_refuses_to_overwrite_a_figure_file(tmp_path, monkeypatch, capsys
         assert "is a --figure file; refusing to overwrite it" in err
     else:
         assert code == 0
+        assert not (Path.cwd() / "flow.svg.pdf").exists()
+        assert (tmp_path / "flow.svg.pdf").exists()
 
 
 def test_render_figure_pdf_target_equal_to_figure_file_is_refused(tmp_path, monkeypatch, capsys):
