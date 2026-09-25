@@ -93,7 +93,8 @@ must be a bare executable ``<script>`` -- no ``type`` attribute, or
 ``type`` in ``{"text/javascript", "module"}``; a non-executable type
 (``application/json``, ``text/template``, ...) is inert data a browser
 never runs, so a byte-perfect body wrapped in one would silently draw
-nothing. (2) The library body must appear, in document order, before
+nothing. A classic ``<script>`` carrying ``nomodule`` is rejected for
+the same reason: every browser that supports modules skips it. (2) The library body must appear, in document order, before
 every init body -- ``new Chart(...)`` needs the ``Chart`` global
 already defined. (3) Every manifest-declared chart id must have a
 matching ``<canvas id="...">`` somewhere on the page. (4) That canvas
@@ -1024,6 +1025,10 @@ class _Linter(HTMLParser):
         # it runs whenever it is ready, so completeness check 2 treats
         # its order against the library as indeterminate.
         self._current_script_async = False
+        # Whether the current <script> is a classic script carrying
+        # `nomodule`: a module-capable browser never runs it, so a
+        # matched body in one fails completeness check 1.
+        self._current_script_nomodule = False
         # One document-order sequence number for EVERY start tag (both
         # handle_starttag and handle_startendtag bump it in _check_tag).
         # Script-vs-script comparisons (check 2) worked with a
@@ -1245,6 +1250,13 @@ class _Linter(HTMLParser):
                         "<script> with this type attribute is inert "
                         "and never runs, so the chart would not draw"
                     )
+                elif self._current_script_nomodule:
+                    self.errors.append(
+                        "chart script must be a bare executable "
+                        "<script>, got a classic <script nomodule> — a "
+                        "browser that supports modules never runs it, so "
+                        "the chart would not draw"
+                    )
                 else:
                     self._record_script_order(stripped)
                 return
@@ -1367,6 +1379,9 @@ class _Linter(HTMLParser):
             is_async = any(n.lower() == "async" for n, _v in attrs)
             self._current_script_deferred = is_module and not is_async
             self._current_script_async = is_module and is_async
+            self._current_script_nomodule = not is_module and any(
+                n.lower() == "nomodule" for n, _v in attrs
+            )
             if _has_src_attr(attrs):
                 # Never allowed, remote, local, or valueless/empty: a
                 # src-bearing script is an external fetch/file
