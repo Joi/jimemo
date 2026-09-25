@@ -118,6 +118,20 @@ cannot draw on. These are not new security boundaries -- the body
 allowlist above is the boundary -- they complete the guarantee that an
 exact-mode pass means the page actually renders the charts it
 declares.
+
+All five checks read the page as a scripting-enabled browser builds its
+live DOM, which html.parser does not: it reports every tag it meets as
+an element. Two containers hold markup that never reaches that DOM. A
+``<template>``'s contents go into a separate DocumentFragment that
+``getElementById`` never searches, and whose scripts never run; with
+scripting on, a ``<noscript>``'s contents are raw text, not elements,
+ending at the first ``</noscript>``. So a canvas or an id inside either
+satisfies and triggers none of checks 3-5, and a matched chart script
+inside either is an error (it is consumed, so no "missing" error piles
+on top): a browser never runs it. The container element itself is
+live, and its own id counts. Only this bookkeeping skips those
+contents; every self-containment and execution rule above still
+applies to them.
 """
 import json
 import re
@@ -1058,9 +1072,43 @@ class _Linter(HTMLParser):
         self._canvas_seqs: Dict[str, int] = {}
         self._first_id: Dict[str, Tuple[str, int]] = {}
         self._chart_lib_cache: Any = _UNSET
+        # Containers whose contents a scripting-enabled browser keeps
+        # out of the live DOM (see the module docstring): the number of
+        # open <template> elements, and whether a <noscript> is open.
+        # noscript content is raw text to such a browser, so no tag in
+        # it opens or closes anything until the first </noscript>, and
+        # a second <noscript> in it does not nest. While either is set,
+        # _check_tag skips the id/canvas bookkeeping and a script's
+        # container is recorded for _check_script_body.
+        self._template_depth = 0
+        self._in_noscript = False
+        # The inert container the current <script> sits in ("template"
+        # or "noscript"), or None when it is live; set in _check_tag
+        # alongside _current_script_seq.
+        self._current_script_container: Optional[str] = None
+
+    def _inert_container(self) -> Optional[str]:
+        if self._in_noscript:
+            return "noscript"
+        if self._template_depth:
+            return "template"
+        return None
+
+    def _open_container(self, tag: str) -> None:
+        # Called after _check_tag, so the container element itself is
+        # judged as live and only its contents are not. A self-closing
+        # <template/> or <noscript/> opens the element all the same: a
+        # browser ignores the slash on a non-void element.
+        if self._in_noscript:
+            return
+        if tag == "noscript":
+            self._in_noscript = True
+        elif tag == "template":
+            self._template_depth += 1
 
     def handle_starttag(self, tag, attrs):
         self._check_tag(tag, attrs)
+        self._open_container(tag)
         if tag == "style":
             self._style_parts = []
         elif tag == "script" and self.charts_declared:
@@ -1073,6 +1121,7 @@ class _Linter(HTMLParser):
 
     def handle_startendtag(self, tag, attrs):
         self._check_tag(tag, attrs)  # a <style/> has no text to buffer
+        self._open_container(tag)
         if tag == "script" and self.charts_declared:
             if not _has_src_attr(attrs):
                 # A body-less <script/> is nothing the renderer emits;
@@ -1081,6 +1130,11 @@ class _Linter(HTMLParser):
                 self._check_script_body("", _type_attr(attrs))
 
     def handle_endtag(self, tag):
+        if self._in_noscript:
+            if tag == "noscript":
+                self._in_noscript = False
+        elif tag == "template" and self._template_depth:
+            self._template_depth -= 1
         if tag == "style":
             self._flush_style()
         elif tag == "script":
@@ -1258,6 +1312,13 @@ class _Linter(HTMLParser):
                         "browser that supports modules never runs it, so "
                         "the chart would not draw"
                     )
+                elif self._current_script_container is not None:
+                    container = self._current_script_container
+                    self.errors.append(
+                        f"chart script inside <{container}> — a browser "
+                        f"never runs a <script> inside <{container}>, "
+                        "so the chart would not draw"
+                    )
                 else:
                     self._record_script_order(stripped)
                 return
@@ -1372,6 +1433,7 @@ class _Linter(HTMLParser):
             # Scripts never nest, so one slot suffices; the counter is
             # the shared _tag_seq (see __init__).
             self._current_script_seq = self._tag_seq
+            self._current_script_container = self._inert_container()
             script_type = _type_attr(attrs)
             is_module = (
                 script_type is not _NO_TYPE
@@ -1423,9 +1485,11 @@ class _Linter(HTMLParser):
         # carrying it -- both read by the exact-mode completeness checks
         # 4 and 5 in close(). (Written even in structural mode, where
         # nothing reads them: the bookkeeping is per-tag and cheap, and
-        # close() guards the checks on exact mode alone.)
+        # close() guards the checks on exact mode alone.) An element
+        # inside <template> or <noscript> is not in the live DOM
+        # getElementById searches, so it records nothing.
         id_value = next((v for n, v in attrs if n.lower() == "id"), None)
-        if id_value:
+        if id_value and self._inert_container() is None:
             if id_value not in self._first_id:
                 self._first_id[id_value] = (tag, self._tag_seq)
             if tag == "canvas" and id_value not in self._canvas_seqs:
