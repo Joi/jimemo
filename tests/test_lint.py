@@ -2153,6 +2153,35 @@ def test_library_before_init_is_judged_in_execution_order(
         assert "'sales'" in errors[0]
 
 
+def test_nomodule_classic_library_errors_even_before_a_module_init():
+    # A module-capable browser skips a classic <script nomodule>, so
+    # the library never loads and the module init finds no Chart.
+    lib = chart_lib_inline_text(CHARTJS_BUNDLE)
+    html = (
+        '<html><body><canvas id="sales"></canvas>'
+        f"<script NoModule>{lib}</script>"
+        f'<script type="module">{INIT_SALES}</script>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(
+        html, EXACT_MANIFEST, allowed_scripts=[lib, INIT_SALES]
+    )
+    assert len(errors) == 1, errors
+    assert "nomodule" in errors[0]
+
+
+def test_nomodule_on_a_module_script_is_ignored():
+    # Browsers ignore nomodule on a module script; it still runs.
+    html = (
+        "<html><body>"
+        f'<script type="module" nomodule>{INIT_SALES}</script>'
+        '<canvas id="sales"></canvas>'
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert errors == [], errors
+
+
 def test_allowed_scripts_missing_canvas_for_declared_chart_errors():
     # No canvas markup at all (the default of _scripts_page) for a
     # manifest that declares chart id "sales".
