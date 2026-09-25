@@ -297,8 +297,9 @@ _assert_interpreter_is_supported()
 # stylesheet — no allowed form exists (a raster image or a fragment is
 # never a stylesheet) — so any @import is an error outright. Violations are
 # searched for in the comment-stripped text AND in a copy with CSS
-# escapes decoded, so `url/**/(x)`, `\75rl(x)` and `@\69mport` cannot
-# hide; the decoded copy only ever ADDS findings (allowances are judged
+# escapes decoded, so `\75rl(x)` and `@\69mport` cannot hide (a comment
+# between a name and its `(`, as in `url/**/(x)`, leaves a space and
+# makes no function, for the scan as for a browser); the decoded copy only ever ADDS findings (allowances are judged
 # on the extracted URL text itself), so over-decoding cannot bless an
 # unsafe value — it can only over-reject, which fails closed.
 # image-set()/-webkit-image-set() take a BARE STRING candidate
