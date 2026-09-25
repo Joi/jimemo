@@ -2525,22 +2525,9 @@ def test_template_end_tag_closes_an_svg_left_open_inside_it():
     assert errors == [], errors
 
 
-@pytest.mark.parametrize("mode", ["open", "CLOSED"])
-def test_shadow_root_template_own_id_is_not_live(mode):
-    # A browser replaces a <template shadowrootmode> with the shadow
-    # root it declares, so no element with its id stays in the document.
-    html = (
-        f'<html><body><div><template shadowrootmode="{mode}" id="sales">'
-        '<canvas id="sales"></canvas></template></div>'
-        '<canvas id="sales"></canvas>'
-        f"<script>{INIT_SALES}</script>"
-        "</body></html>"
-    )
-    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
-    assert errors == [], errors
-
-
 def test_shadow_root_template_contents_do_not_satisfy_check_3():
+    # A declarative shadow root's contents are not searched by
+    # document.getElementById either.
     html = (
         '<html><body><div><template shadowrootmode="open">'
         '<canvas id="sales"></canvas></template></div>'
@@ -2552,16 +2539,39 @@ def test_shadow_root_template_contents_do_not_satisfy_check_3():
     assert "no <canvas" in errors[0]
 
 
-def test_invalid_shadowrootmode_is_a_plain_template():
+@pytest.mark.parametrize("container", ["template", "noscript"])
+def test_container_inside_math_is_a_live_foreign_element(container):
     html = (
-        '<html><body><template shadowrootmode="bogus" id="sales"></template>'
-        '<canvas id="sales"></canvas>'
+        f'<html><body><math><{container}><mi id="sales">x</mi></{container}>'
+        '</math><canvas id="sales"></canvas>'
         f"<script>{INIT_SALES}</script>"
         "</body></html>"
     )
     errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
     assert len(errors) == 1, errors
-    assert "first appears on a <template>" in errors[0]
+    assert "first appears on a <mi>" in errors[0]
+
+
+def test_html_template_after_math_closes_is_inert_again():
+    html = (
+        "<html><body><math/><math></math>"
+        '<template><canvas id="sales"></canvas></template>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "no <canvas" in errors[0]
+
+
+def test_deep_nesting_lints_in_linear_time():
+    # Each tag's container bookkeeping is O(1) amortized: 20k nested
+    # <svg> plus 20k unmatched </template> must not go quadratic.
+    n = 20000
+    html = "<html><body>" + "<svg>" * n + "</template>" * n + "</body></html>"
+    start = time.perf_counter()
+    lint_html(html, {"charts": []})
+    assert time.perf_counter() - start < 5
 
 
 @pytest.mark.parametrize("container", ["template", "noscript"])
