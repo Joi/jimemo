@@ -961,6 +961,130 @@ def test_style_attribute_carries_the_same_scan():
     assert any("evil.example" in e and "style attribute" in e for e in errors)
 
 
+# --- a removed comment leaves ONE space behind (handoffs#nm4x) ------------
+#
+# _css_comments_stripped deleted a consumed comment with no separator,
+# so red/**/image-set( -- two tokens to a browser -- arrived at the
+# scanners after it as ONE identifier, redimage-set(. Every hostile
+# input the stripper's docstring lists must keep today's behavior, so
+# each of those inputs is pinned here by its css_reference_errors
+# output, recorded by running the scan BEFORE the change. Tests by GLM
+# 5.3 via handoffs#nm4x; the implementation is jimemo#5pww.
+
+EVIL_EX = "https://e.x/p"
+_LOCAL_PATH = (
+    "url(%r) is a local path that was not inlined — the output would "
+    "depend on a sidecar file"
+)
+
+
+def test_css_comments_stripped_replaces_a_removed_comment_with_one_space():
+    # A browser reads red/**/blue as two tokens; the strip must not
+    # join them into one identifier. Exactly ONE space replaces the
+    # comment, whatever its content, and nothing else changes.
+    assert lint._css_comments_stripped("red/**/blue") == "red blue"
+    assert lint._css_comments_stripped("red/*x*/blue") == "red blue"
+
+
+def test_comment_removal_does_not_join_tokens_around_a_reference():
+    # The tokens either side of the comment stay apart, and the later
+    # reference is judged exactly as before (pinned from the
+    # pre-change scan).
+    css = "a{color:red/**/;background:url(https://evil.example/x)}"
+    assert lint.css_reference_errors(css) == [
+        "url('https://evil.example/x') is a remote resource and would "
+        "fetch at view time"
+    ]
+
+
+def test_hostile_url_token_comment_input_still_reports_the_same_errors():
+    # Docstring input 1: inside an unquoted url token /* is URL text
+    # and the first ) ends the token, so only the /*x*/ later on is a
+    # consumed comment. Pinned to the pre-change output.
+    css = "url(/*);background:url(%s);/*x*/#g)" % EVIL_EX
+    assert lint.css_reference_errors(css) == [
+        _LOCAL_PATH % "/*",
+        "url('%s') is a remote resource and would fetch at view time"
+        % EVIL_EX,
+    ]
+
+
+def test_hostile_string_comment_input_still_reports_the_same_errors():
+    # Docstring input 2: a /* inside a string is string text, so NO
+    # comment is consumed anywhere here and the output is byte-for-byte
+    # the input. Also the brief's second "behave exactly as today" case
+    # (content:"/*"; …; z:"*/").
+    css = 'content:"/*"; background:url(%s); z:"*/"' % EVIL_EX
+    assert lint._css_comments_stripped(css) == css
+    assert lint.css_reference_errors(css) == [
+        "url('%s') is a remote resource and would fetch at view time"
+        % EVIL_EX
+    ]
+
+
+def test_hostile_escaped_url_ident_input_still_reports_the_same_errors():
+    # Docstring input 3: escapes are decoded before tokenizing, so
+    # u\72l( IS a url token and its /* is URL text.
+    css = "u\\72l(/*);background:url(%s);/*x*/#g)" % EVIL_EX
+    assert lint.css_reference_errors(css) == [
+        "url('%s') is a remote resource and would fetch at view time"
+        % EVIL_EX,
+        _LOCAL_PATH % "/*",
+    ]
+
+
+def test_hostile_escaped_slash_input_still_reports_the_same_errors():
+    # Docstring input 4, first form: \/ is an escape inside an ident,
+    # so it opens no comment; the /*x*/ after the declaration is.
+    css = "--marker:\\/*;background:url(%s);/*x*/}" % EVIL_EX
+    assert lint.css_reference_errors(css) == [
+        "url('%s') is a remote resource and would fetch at view time"
+        % EVIL_EX
+    ]
+
+
+def test_hostile_hex_escape_newline_input_still_reports_the_same_errors():
+    # Docstring input 4, second form: the hex escape eats the newline
+    # after it, the string goes on, and the /* inside it is text.
+    css = '--label:"\\22\n/*";background:url(%s);--tail:"*/"' % EVIL_EX
+    assert lint.css_reference_errors(css) == [
+        "url('%s') is a remote resource and would fetch at view time"
+        % EVIL_EX
+    ]
+
+
+def test_hostile_cdo_token_input_still_reports_the_same_errors():
+    # Docstring input 5: <!-- is one CDO token, so the url after it
+    # starts a url token whose /* is URL text.
+    css = "<!--url(/*);background:url(%s);/*x*/#g)" % EVIL_EX
+    assert lint.css_reference_errors(css) == [
+        _LOCAL_PATH % "/*",
+        "url('%s') is a remote resource and would fetch at view time"
+        % EVIL_EX,
+    ]
+
+
+def test_hostile_hash_token_input_still_reports_the_same_errors():
+    # Docstring input 6: #url is a hash token, so its ( opens a block
+    # in which /* IS a comment; the stripper stops stripping there
+    # rather than guessing, and the remote url( stays visible verbatim.
+    css = '#url(#g/*)"*/"/*");background:url(%s);' % EVIL_EX
+    assert lint.css_reference_errors(css) == [
+        "url('%s') is a remote resource and would fetch at view time"
+        % EVIL_EX
+    ]
+
+
+def test_url_token_slash_star_fragment_target_is_unchanged():
+    # The brief's other "behave exactly as today" case: url(/**/#g) is
+    # one unquoted url token -- the /**/ is URL text, not a comment, so
+    # the stripper output is the input and the target is the path
+    # /**/#g, not a fragment.
+    css = "url(/**/#g)"
+    assert lint._css_comments_stripped(css) == css
+    assert lint.css_reference_errors(css) == [_LOCAL_PATH % "/**/#g"]
+
+
 # --- the Python floor is what retired jimemo#y9p8's old-parser guard ------
 #
 # In an attribute, a browser keeps a legacy named reference literal when no
