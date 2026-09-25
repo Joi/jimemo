@@ -2475,6 +2475,96 @@ def test_noscript_ends_at_first_end_tag():
 
 
 @pytest.mark.parametrize("container", ["template", "noscript"])
+def test_container_inside_svg_is_a_live_foreign_element(container):
+    # In foreign content <template>/<noscript> are ordinary elements, so
+    # the <rect> inside is live and wins getElementById.
+    html = (
+        f'<html><body><svg><{container}><rect id="sales"/></{container}></svg>'
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "first appears on a <rect>" in errors[0]
+
+
+def test_self_closing_template_in_svg_opens_nothing():
+    # The slash is honoured in foreign content: the canvas after it is
+    # live, as is the rest of the page after </svg>.
+    html = (
+        '<html><body><svg><template/></svg><canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert errors == [], errors
+
+
+def test_self_closing_svg_does_not_make_the_page_foreign():
+    html = (
+        '<html><body><svg/><template><canvas id="sales"></canvas></template>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "no <canvas" in errors[0]
+
+
+def test_template_end_tag_closes_an_svg_left_open_inside_it():
+    # </template> pops the unclosed <svg> with it, so the canvas after
+    # it is live HTML again.
+    html = (
+        "<html><body><template><svg></template>"
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert errors == [], errors
+
+
+@pytest.mark.parametrize("mode", ["open", "CLOSED"])
+def test_shadow_root_template_own_id_is_not_live(mode):
+    # A browser replaces a <template shadowrootmode> with the shadow
+    # root it declares, so no element with its id stays in the document.
+    html = (
+        f'<html><body><div><template shadowrootmode="{mode}" id="sales">'
+        '<canvas id="sales"></canvas></template></div>'
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert errors == [], errors
+
+
+def test_shadow_root_template_contents_do_not_satisfy_check_3():
+    html = (
+        '<html><body><div><template shadowrootmode="open">'
+        '<canvas id="sales"></canvas></template></div>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "no <canvas" in errors[0]
+
+
+def test_invalid_shadowrootmode_is_a_plain_template():
+    html = (
+        '<html><body><template shadowrootmode="bogus" id="sales"></template>'
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "first appears on a <template>" in errors[0]
+
+
+@pytest.mark.parametrize("container", ["template", "noscript"])
 def test_self_containment_still_checked_inside_inert_container(container):
     # Only the completeness bookkeeping skips these contents.
     errors, _ = lint_html(
