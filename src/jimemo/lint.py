@@ -129,10 +129,10 @@ ending at the first ``</noscript>``. So a canvas or an id inside either
 satisfies and triggers none of checks 3-5, and a matched chart script
 inside either is an error (it is consumed, so no "missing" error piles
 on top): a browser never runs it. A ``<template shadowrootmode>`` is
-treated the same way, contents and its own id alike, since a browser
-replaces it with the shadow root it declares; a script there does run,
-but lookups from it cannot be judged here, so it fails closed. Any
-other container element is live, and its own id counts. Inside
+read as a plain template: its contents are hidden from
+``getElementById`` too, and a script there, which a browser does run,
+fails closed. The container element itself is read as live, and its
+own id counts. Inside
 ``<svg>`` or ``<math>`` a ``template`` or ``noscript`` is an ordinary
 foreign element, and its contents count. Only this bookkeeping skips
 those contents; every self-containment and execution rule above still
@@ -992,14 +992,6 @@ def _runs_before(first: Tuple[str, int], second: Tuple[str, int]) -> bool:
     return False
 
 
-def _is_shadow_root_template(attrs: List[Tuple[str, Optional[str]]]) -> bool:
-    """Whether a <template>'s attributes declare a shadow root: the
-    first shadowrootmode attribute (a browser keeps the first of a
-    duplicated attribute) is open or closed, ASCII case-insensitively."""
-    mode = next((v for n, v in attrs if n.lower() == "shadowrootmode"), None)
-    return (mode or "").lower() in ("open", "closed")
-
-
 class _Linter(HTMLParser):
     def __init__(
         self,
@@ -1089,25 +1081,28 @@ class _Linter(HTMLParser):
         # out of the live DOM (see the module docstring). _containers is
         # a stack of the open elements that decide it: "svg" and "math"
         # (foreign content, where a <template> or <noscript> is an
-        # ordinary element with live children -- pushed as "foreign:<tag>"),
-        # "template", and "shadow" (a <template shadowrootmode> in HTML
-        # content, whose contents become a shadow root that document.
-        # getElementById does not search either). An end tag pops back
-        # through the nearest entry of its name, as a browser's end tag
-        # closes the elements opened inside it. noscript content is raw
+        # ordinary element with live children -- pushed as
+        # "foreign:<tag>") and "template". An end tag pops back through
+        # the nearest entry of its name, as a browser's end tag closes
+        # the elements opened inside it; _container_counts keeps each
+        # entry's count so a lookup never scans the stack, and each
+        # entry is popped once, so tracking stays linear in the page. noscript content is raw
         # text to such a browser, so while one is open no tag opens or
         # closes anything until the first </noscript>, and a second
-        # <noscript> in it does not nest. While a template, shadow or
-        # noscript is open, _check_tag skips the id/canvas bookkeeping
+        # <noscript> in it does not nest. While a template or noscript
+        # is open, _check_tag skips the id/canvas bookkeeping
         # and a script's container is recorded for _check_script_body.
         #
         # Not modelled, each reverting to reading the markup as live:
         # HTML integration points (<svg><foreignObject>, MathML <mtext>
         # and the like, where HTML content resumes), the HTML tags that
-        # break out of foreign content (<svg><p>), and a shadowrootmode
-        # template on an element that cannot host a shadow root, which a
-        # browser keeps as a plain template.
+        # break out of foreign content (<svg><p>). A <template
+        # shadowrootmode> is read as a plain template: its contents are
+        # hidden from getElementById either way, and counting its own id
+        # (which a browser that attaches the shadow root drops) can only
+        # add a first-id error, never hide one.
         self._containers: List[str] = []
+        self._container_counts: Dict[str, int] = {}
         self._in_noscript = False
         # The inert container the current <script> sits in ("template"
         # or "noscript"), or None when it is live; set in _check_tag
@@ -1122,11 +1117,11 @@ class _Linter(HTMLParser):
     def _inert_container(self) -> Optional[str]:
         if self._in_noscript:
             return "noscript"
-        if "template" in self._containers or "shadow" in self._containers:
+        if self._container_counts.get("template"):
             return "template"
         return None
 
-    def _open_container(self, tag: str, attrs, self_closing: bool) -> None:
+    def _open_container(self, tag: str, self_closing: bool) -> None:
         # Called after _check_tag, so the container element itself is
         # judged as it stands and only its contents as inert. In HTML
         # content a self-closing <template/> or <noscript/> opens the
@@ -1136,20 +1131,22 @@ class _Linter(HTMLParser):
             return
         if tag in ("svg", "math"):
             if not self_closing:
-                self._containers.append(tag)
+                self._push_container(tag)
             return
         if tag not in ("template", "noscript"):
             return
         if self._in_foreign():
             if not self_closing:
-                self._containers.append("foreign:" + tag)
+                self._push_container("foreign:" + tag)
             return
         if tag == "noscript":
             self._in_noscript = True
-        elif _is_shadow_root_template(attrs):
-            self._containers.append("shadow")
         else:
-            self._containers.append("template")
+            self._push_container("template")
+
+    def _push_container(self, name: str) -> None:
+        self._containers.append(name)
+        self._container_counts[name] = self._container_counts.get(name, 0) + 1
 
     def _close_container(self, tag: str) -> None:
         if self._in_noscript:
@@ -1159,19 +1156,22 @@ class _Linter(HTMLParser):
         names = {
             "svg": ("svg",),
             "math": ("math",),
-            "template": ("template", "shadow", "foreign:template"),
+            "template": ("template", "foreign:template"),
             "noscript": ("foreign:noscript",),
         }.get(tag)
-        if names is None:
+        if names is None or not any(
+            self._container_counts.get(n) for n in names
+        ):
             return
-        for i in range(len(self._containers) - 1, -1, -1):
-            if self._containers[i] in names:
-                del self._containers[i:]
+        while True:
+            name = self._containers.pop()
+            self._container_counts[name] -= 1
+            if name in names:
                 return
 
     def handle_starttag(self, tag, attrs):
         self._check_tag(tag, attrs)
-        self._open_container(tag, attrs, self_closing=False)
+        self._open_container(tag, self_closing=False)
         if tag == "style":
             self._style_parts = []
         elif tag == "script" and self.charts_declared:
@@ -1184,7 +1184,7 @@ class _Linter(HTMLParser):
 
     def handle_startendtag(self, tag, attrs):
         self._check_tag(tag, attrs)  # a <style/> has no text to buffer
-        self._open_container(tag, attrs, self_closing=True)
+        self._open_container(tag, self_closing=True)
         if tag == "script" and self.charts_declared:
             if not _has_src_attr(attrs):
                 # A body-less <script/> is nothing the renderer emits;
@@ -1549,16 +1549,9 @@ class _Linter(HTMLParser):
         # nothing reads them: the bookkeeping is per-tag and cheap, and
         # close() guards the checks on exact mode alone.) An element
         # inside <template> or <noscript> is not in the live DOM
-        # getElementById searches, so it records nothing; nor does a
-        # <template shadowrootmode>, which a browser replaces with the
-        # shadow root it declares.
+        # getElementById searches, so it records nothing.
         id_value = next((v for n, v in attrs if n.lower() == "id"), None)
-        hidden = self._inert_container() is not None or (
-            tag == "template"
-            and not self._in_foreign()
-            and _is_shadow_root_template(attrs)
-        )
-        if id_value and not hidden:
+        if id_value and self._inert_container() is None:
             if id_value not in self._first_id:
                 self._first_id[id_value] = (tag, self._tag_seq)
             if tag == "canvas" and id_value not in self._canvas_seqs:
