@@ -2358,6 +2358,133 @@ def test_img_with_chart_id_before_canvas_errors():
     ), errors
 
 
+# --- exact-match completeness: <template> and <noscript> contents -------
+# jimemo#7tz4: html.parser reports tags inside <template> and <noscript>
+# as ordinary elements, but a scripting-enabled browser keeps them out
+# of the live DOM -- template contents live in a DocumentFragment that
+# getElementById never searches, and noscript contents are raw text.
+# Checks 3-5 must not count them, and a chart script inside either never
+# runs.
+
+@pytest.mark.parametrize("container", ["template", "noscript"])
+def test_canvas_inside_inert_container_does_not_satisfy_check_3(container):
+    html = (
+        f'<html><body><{container}><canvas id="sales"></canvas></{container}>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "no <canvas" in errors[0] and "sales" in errors[0]
+
+
+@pytest.mark.parametrize("container", ["template", "noscript"])
+def test_id_inside_inert_container_before_canvas_passes(container):
+    # The <div> is not in the live DOM, so the canvas is the first
+    # element getElementById can find.
+    html = (
+        f'<html><body><{container}><div id="sales"></div></{container}>'
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert errors == [], errors
+
+
+@pytest.mark.parametrize("container", ["template", "noscript"])
+def test_chart_script_inside_inert_container_errors_once(container):
+    # The body matches the renderer's own, so it is consumed (no
+    # "missing" error on top), but it never runs.
+    html = (
+        '<html><body><canvas id="sales"></canvas>'
+        f"<{container}><script>{INIT_SALES}</script></{container}>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert f"inside <{container}>" in errors[0]
+
+
+def test_chart_script_inside_template_does_not_count_as_the_init():
+    # The live init after the template still has to be there: the one
+    # inside the template consumed the only allowed occurrence, so the
+    # real one is a duplicate.
+    html = (
+        '<html><body><canvas id="sales"></canvas>'
+        f"<template><script>{INIT_SALES}</script></template>"
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert any("inside <template>" in e for e in errors), errors
+    assert any("duplicate" in e for e in errors), errors
+
+
+def test_container_element_own_id_is_live():
+    # The <template> element itself is in the DOM; only its contents
+    # are not. Its id beats the later canvas to getElementById.
+    html = (
+        '<html><body><template id="sales"></template>'
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "first appears on a <template>" in errors[0]
+
+
+def test_nested_templates_stay_inert_until_the_outer_closes():
+    html = (
+        "<html><body><template><template></template>"
+        '<canvas id="sales"></canvas></template>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "no <canvas" in errors[0]
+
+
+def test_template_end_tag_inside_noscript_is_text():
+    # noscript content is raw text, so its </template> closes nothing:
+    # the canvas after the noscript is still inside the template.
+    html = (
+        "<html><body><template><noscript></template></noscript>"
+        '<canvas id="sales"></canvas></template>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert len(errors) == 1, errors
+    assert "no <canvas" in errors[0]
+
+
+def test_noscript_ends_at_first_end_tag():
+    # A second <noscript> inside one is text and does not nest, so the
+    # first </noscript> ends it and the canvas after it is live.
+    html = (
+        "<html><body><noscript><noscript></noscript>"
+        '<canvas id="sales"></canvas>'
+        f"<script>{INIT_SALES}</script>"
+        "</body></html>"
+    )
+    errors, _ = lint_html(html, EXACT_MANIFEST, allowed_scripts=[INIT_SALES])
+    assert errors == [], errors
+
+
+@pytest.mark.parametrize("container", ["template", "noscript"])
+def test_self_containment_still_checked_inside_inert_container(container):
+    # Only the completeness bookkeeping skips these contents.
+    errors, _ = lint_html(
+        f'<html><body><{container}><img src="https://evil.example/p">'
+        f"</{container}></body></html>",
+        {"charts": []},
+    )
+    assert any("evil.example" in e for e in errors), errors
+
+
 def test_realistic_chart_page_lib_first_bare_scripts_canvas_per_chart_passes():
     # Shaped like the real render pipeline's output: library in <head>
     # (so it loads before any init), one <canvas id> + bare init
