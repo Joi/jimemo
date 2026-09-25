@@ -2106,6 +2106,53 @@ def test_library_before_init_in_document_order_is_fine():
     assert errors == []
 
 
+# Check 2 compares execution order (jimemo#2x1w): a non-async inline
+# module runs after parsing, after every classic script; an async one
+# runs whenever it is ready. Each case: (library tag, init tag, library
+# first in the source?, passes?).
+@pytest.mark.parametrize(
+    "lib_tag, init_tag, lib_first, ok",
+    [
+        # a deferred library runs after a classic init, wherever it sits
+        ('<script type="module">', "<script>", True, False),
+        # a deferred init runs after a classic library, wherever it sits
+        ("<script>", '<script type="module">', False, True),
+        ("<script>", '<script type="module">', True, True),
+        # two deferred modules run in source order
+        ('<script type="module">', '<script type="module">', True, True),
+        ('<script type="module">', '<script type="module">', False, False),
+        # an async init after a classic library cannot run before it
+        ("<script>", '<script type="module" async>', True, True),
+        # every other order involving an async module is indeterminate
+        ("<script>", '<script type="module" async>', False, False),
+        ('<script type="module" async>', "<script>", True, False),
+        ('<script type="module" async>', '<script type="module">', True, False),
+        ('<script type="module">', '<script type="module" async>', True, False),
+    ],
+)
+def test_library_before_init_is_judged_in_execution_order(
+    lib_tag, init_tag, lib_first, ok
+):
+    lib = chart_lib_inline_text(CHARTJS_BUNDLE)
+    lib_script = f"{lib_tag}{lib}</script>"
+    init_script = f"{init_tag}{INIT_SALES}</script>"
+    scripts = (lib_script, init_script) if lib_first else (init_script, lib_script)
+    html = (
+        '<html><body><canvas id="sales"></canvas>'
+        + "".join(scripts)
+        + "</body></html>"
+    )
+    errors, _ = lint_html(
+        html, EXACT_MANIFEST, allowed_scripts=[lib, INIT_SALES]
+    )
+    if ok:
+        assert errors == [], errors
+    else:
+        assert len(errors) == 1, errors
+        assert "library must load before" in errors[0]
+        assert "'sales'" in errors[0]
+
+
 def test_allowed_scripts_missing_canvas_for_declared_chart_errors():
     # No canvas markup at all (the default of _scripts_page) for a
     # manifest that declares chart id "sales".

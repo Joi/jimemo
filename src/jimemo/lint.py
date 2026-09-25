@@ -101,7 +101,14 @@ must appear, in document order, before the chart's init script -- an
 init that runs first finds no element yet (``getElementById`` returns
 null) and draws nothing. An inline ``<script type="module">`` without
 ``async`` is exempt: a browser runs it only once parsing has finished,
-when the whole document is already there. (5) The canvas must be the FIRST element
+when the whole document is already there. That same deferral means
+check 2 compares EXECUTION order, not source order: classic scripts
+run where they stand, then the deferred modules in source order, so a
+deferred library still loads after every classic init, and a deferred
+init runs after a classic library wherever it sits. An ``async``
+inline module runs whenever it is ready, so check 2 accepts one only
+where it cannot matter -- an async init after a classic library -- and
+rejects every other order involving it as indeterminate. (5) The canvas must be the FIRST element
 carrying that id; the id showing up earlier on some other element (a
 ``<div>`` or an ``<img>``, say) does not count -- the init script's
 ``getElementById`` call would resolve to that element, which Chart.js
@@ -930,6 +937,40 @@ def _is_executable_script_type(type_attr: Any) -> bool:
     return (type_attr or "").strip().lower() in _EXECUTABLE_SCRIPT_TYPES
 
 
+# When an inline <script> runs, for completeness check 2: a classic
+# script where the parser reaches it; a module without `async` after
+# parsing has finished, in source order; a module with `async`
+# whenever it is ready (indeterminate against the other two).
+_CLASSIC = "classic"
+_DEFERRED = "deferred"
+_ASYNC = "async"
+
+
+def _script_timing(deferred: bool, is_async: bool) -> str:
+    if is_async:
+        return _ASYNC
+    return _DEFERRED if deferred else _CLASSIC
+
+
+def _runs_before(first: Tuple[str, int], second: Tuple[str, int]) -> bool:
+    """Whether the script at ``first`` (timing, document position) is
+    certain to have run before the one at ``second`` starts. Classic
+    scripts run in source order, all before any deferred module; the
+    deferred modules then run in source order. An async module cannot
+    run before the parser reaches it, so a classic script earlier in the
+    source is certain to precede it; every other pairing with an async
+    module is indeterminate, and indeterminate is False (fail closed)."""
+    first_timing, first_seq = first
+    second_timing, second_seq = second
+    if first_timing == _CLASSIC:
+        if second_timing == _DEFERRED:
+            return True
+        return first_seq < second_seq
+    if first_timing == _DEFERRED:
+        return second_timing == _DEFERRED and first_seq < second_seq
+    return False
+
+
 class _Linter(HTMLParser):
     def __init__(
         self,
@@ -979,6 +1020,10 @@ class _Linter(HTMLParser):
         # `async`: a browser defers it until parsing has finished, so
         # completeness check 4 (canvas before init) does not apply.
         self._current_script_deferred = False
+        # Whether the current <script> is an inline module WITH `async`:
+        # it runs whenever it is ready, so completeness check 2 treats
+        # its order against the library as indeterminate.
+        self._current_script_async = False
         # One document-order sequence number for EVERY start tag (both
         # handle_starttag and handle_startendtag bump it in _check_tag).
         # Script-vs-script comparisons (check 2) worked with a
@@ -987,18 +1032,21 @@ class _Linter(HTMLParser):
         # positions must come from the ONE counter to be comparable.
         self._tag_seq = 0
         # Exact-mode completeness checks 2-5 (see module docstring):
-        # the document-order position of the matched library body (None
-        # until/unless one is matched) and every matched init body's
-        # (chart_id, position) pair; the position of the FIRST <canvas>
-        # carrying each id (getElementById returns the first, so a
-        # second canvas with the same id never counts); and, per id
-        # value, the (tag, seq) of the FIRST element carrying it, any
-        # tag. The script-order pair is populated only via
+        # every matched library body's (timing, position) and every
+        # matched init body's (chart_id, timing, position), where timing
+        # is one of _CLASSIC / _DEFERRED / _ASYNC (_script_timing), so
+        # check 2 compares execution order, not source order; each
+        # init's (chart_id, position) again for check 4; the position of
+        # the FIRST <canvas> carrying each id (getElementById returns the
+        # first, so a second canvas with the same id never counts); and,
+        # per id value, the (tag, seq) of the FIRST element carrying it,
+        # any tag. The script lists are populated only via
         # _record_script_order, which only exact-mode acceptance calls
         # -- structural mode and chartless pages never touch these, so
         # their close()-time checks (all guarded on exact mode / the
         # values exact mode alone can set) are inert there.
-        self._lib_seq: Optional[int] = None
+        self._lib_runs: List[Tuple[str, int]] = []
+        self._init_runs: List[Tuple[str, str, int]] = []
         self._init_seqs: List[Tuple[str, int]] = []
         self._deferred_init_ids: Set[str] = set()
         self._canvas_seqs: Dict[str, int] = {}
@@ -1056,19 +1104,25 @@ class _Linter(HTMLParser):
                         f"{_shorten(expected)!r}"
                     )
             # Completeness check 2: the library must already be defined
-            # when an init runs. Guarded on _lib_seq (only set once a
+            # when an init runs -- in EXECUTION order, which a deferred
+            # module script makes differ from source order (see
+            # _runs_before). Guarded on _lib_runs (only filled once a
             # matched script's body equals the vendored library text) so
             # a caller-supplied allowed_scripts that never includes the
             # library (as several unit tests below do, deliberately
             # exercising only the init multiset) has nothing to check
             # against and stays silent here.
-            if self._lib_seq is not None:
-                for chart_id, seq in self._init_seqs:
-                    if seq < self._lib_seq:
+            if self._lib_runs:
+                for chart_id, timing, seq in self._init_runs:
+                    if not any(
+                        _runs_before(lib, (timing, seq))
+                        for lib in self._lib_runs
+                    ):
                         self.errors.append(
                             "Chart.js library must load before chart "
                             f"init scripts (init for chart {chart_id!r} "
-                            "appears first in document order)"
+                            "runs first in execution order, or its order "
+                            "against the library is indeterminate)"
                         )
             # Completeness check 3: a declared chart with no matching
             # <canvas> would have its init script's getElementById call
@@ -1252,18 +1306,22 @@ class _Linter(HTMLParser):
         docstring treats that list as an unordered multiset) — purely by
         matching the same two byte shapes the structural fallback
         recognizes, self._chart_lib() and parse_chart_init_js. Records
-        its document-order sequence number for completeness check 2,
-        judged in close()."""
+        its document-order sequence number and execution timing for
+        completeness checks 2 and 4, judged in close()."""
         seq = self._current_script_seq
+        timing = _script_timing(
+            self._current_script_deferred, self._current_script_async
+        )
         lib = self._chart_lib()
         if lib is not None and stripped == lib:
-            if self._lib_seq is None or (seq is not None and seq < self._lib_seq):
-                self._lib_seq = seq
+            if seq is not None:
+                self._lib_runs.append((timing, seq))
             return
         parsed = parse_chart_init_js(stripped)
         if parsed is not None and seq is not None:
             chart_id, _config = parsed
             self._init_seqs.append((chart_id, seq))
+            self._init_runs.append((chart_id, timing, seq))
             if self._current_script_deferred:
                 self._deferred_init_ids.add(chart_id)
 
@@ -1302,11 +1360,13 @@ class _Linter(HTMLParser):
             # the shared _tag_seq (see __init__).
             self._current_script_seq = self._tag_seq
             script_type = _type_attr(attrs)
-            self._current_script_deferred = (
+            is_module = (
                 script_type is not _NO_TYPE
                 and (script_type or "").strip().lower() == "module"
-                and not any(n.lower() == "async" for n, _v in attrs)
             )
+            is_async = any(n.lower() == "async" for n, _v in attrs)
+            self._current_script_deferred = is_module and not is_async
+            self._current_script_async = is_module and is_async
             if _has_src_attr(attrs):
                 # Never allowed, remote, local, or valueless/empty: a
                 # src-bearing script is an external fetch/file
@@ -1520,8 +1580,9 @@ def lint_html(
     between "the exact bodies are present" and "the page actually draws
     the charts" — see the module docstring's closing paragraph: a
     matched body must sit in a bare executable ``<script>`` (no
-    non-executable ``type``), the library body must precede every init
-    body in document order, and every manifest-declared chart id needs
+    non-executable ``type``), the library body must run before every init
+    body (execution order, which deferred module scripts make differ
+    from document order), and every manifest-declared chart id needs
     a matching ``<canvas id="...">`` on the page, which must precede
     that chart's init body (unless the init is a deferred module
     script) and be the first element carrying the id. When None (direct
