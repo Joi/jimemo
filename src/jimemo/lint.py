@@ -337,19 +337,20 @@ _CSS_URL_STOP_RE = re.compile(r"""[)"']""")
 _CSS_WS_RE = re.compile(r"\s*")
 # The whole rule text up to the terminator, for the error message; the
 # rule is rejected regardless of what its target turns out to be.
-# No ``\b`` after ``import``: a deleted comment joins the tokens either
-# side of it, so ``@import/**/url(#g)`` arrives here as
-# ``@importurl(#g)``, which ``@import\b`` would not match -- the one way
-# comment removal could LOSE a finding instead of merely over-rejecting.
+# No ``\b`` after ``import``: before jimemo#5pww a deleted comment
+# joined the tokens either side of it, so ``@import/**/url(#g)`` arrived
+# here as ``@importurl(#g)``. The stripper now leaves a space; the
+# pattern keeps its loose form until a change decides otherwise.
 _CSS_IMPORT_RE = re.compile(r"@import[^;{]*", re.IGNORECASE)
 # A function whose name ENDS in this (case-insensitively) is read as an
 # image-set: ``image-set(`` and ``-webkit-image-set(``, and also
-# ``redimage-set(`` and ``#fffimage-set(``. The whole-identifier match a
-# browser makes is not available here, because the comment stripper
-# deletes a comment without leaving a separator: ``red/**/image-set(``
-# -- two tokens and a live fetch in a browser -- arrives joined. So the
-# match is on the suffix, as ``url(`` is matched anywhere, and a real
-# ``ximage-set(`` (a function no engine defines) is over-rejected.
+# ``ximage-set(`` and ``#fffimage-set(``, which a browser does not read
+# as one. The suffix match dates from when the comment stripper joined
+# the tokens either side of a comment (``red/**/image-set(`` -- a live
+# fetch -- arrived as ``redimage-set(``). Since jimemo#5pww it leaves a
+# space there, so ``red/**/image-set(`` is matched as a whole name; the
+# suffix match still over-rejects a literal ``ximage-set(``, and
+# returning to a whole-identifier match is a separate decision.
 _CSS_IMAGE_SET_SUFFIX = "image-set"
 # The CSS ``image()`` function takes the SAME bare-string candidate
 # (``image("x.png")`` -- no ``url(`` is ever written), under the same
@@ -435,8 +436,10 @@ def _css_ident_run(text: str, start: int) -> Tuple[str, int]:
 
 
 def _css_comments_stripped(css: str) -> str:
-    """`css` with exactly the comments a BROWSER would consume removed,
-    and every other byte kept verbatim.
+    """`css` with exactly the comments a BROWSER would consume replaced
+    by one space each, and every other byte kept verbatim. The space is
+    the token boundary the comment was to a browser: ``red/**/image-set(``
+    is an ident and then a function, not ``redimage-set(`` (jimemo#5pww).
 
     Deleting ``/*...*/`` with a regex is unsound, because ``/*`` is only
     a comment opener in some of the places it appears. Each of these
@@ -480,7 +483,16 @@ def _css_comments_stripped(css: str) -> str:
             # An unterminated comment runs to EOF (CSS Syntax 3 4.3.2):
             # the browser sees no declaration after it, so neither does
             # the scan -- the one place this reports LESS than the regex.
-            position = index if close < 0 else close + 2
+            if close < 0:
+                position = index
+                continue
+            # A consumed comment separates the tokens either side of it
+            # (``red/**/image-set(`` is an ident, then a function), so it
+            # leaves ONE space rather than nothing: deleting it outright
+            # would hand the scanners one joined identifier. An
+            # unterminated comment ends the input and needs none.
+            kept.append(" ")
+            position = close + 2
             continue
         if css.startswith(_CSS_CDO, position):
             kept.append(_CSS_CDO)
@@ -775,19 +787,17 @@ def _css_image_set_targets(text: str) -> Iterator[Optional[str]]:
 
     ``#`` or ``@`` + a name is a hash token or at-keyword, so its ``(``
     opens an ordinary block and never a url token -- but it is still
-    read as an image-set when the name ends that way, because
-    ``#fff/**/image-set(`` arrives joined (_CSS_IMAGE_SET_SUFFIX).
+    read as an image-set when the name ends that way
+    (_CSS_IMAGE_SET_SUFFIX).
     ``<!--`` is one CDO token, so ``x<!--image-set(`` is a real
     image-set function. A string that runs to EOF unclosed ends the
     scan: a browser reads no token after it either, so there is
     nothing later to miss — at image-set depth 0 it yields None first.
 
-    The comment-split name ``image-/**/set("x" 1x)`` is reported for
-    the same reason: the name arrives joined. A browser reads two
-    tokens there and fetches nothing, so this over-rejects, in the safe
-    direction, a spelling no real stylesheet uses; telling the two
-    apart would mean changing what the stripper emits for url( and
-    @import as well."""
+    The comment-split name ``image-/**/set("x" 1x)`` is not reported:
+    the stripper leaves a space for the comment, so the name arrives as
+    ``image-`` and then ``set(``, the two tokens a browser reads, and a
+    browser fetches nothing there."""
     opens: List[bool] = []
     inside = 0  # how many entries of `opens` are image-set opens
     index = len(text)

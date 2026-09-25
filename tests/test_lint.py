@@ -763,10 +763,16 @@ def test_style_attribute_text_align_is_fine():
     assert errors == []
 
 
-def test_style_comment_obfuscated_url_errors():
-    # Comments are stripped before scanning, so a /**/ split cannot
-    # hide the construct.
+def test_style_comment_split_url_name_is_not_a_url_token():
+    # A browser reads url/**/( as the ident ``url`` and then a ``(``
+    # block: an ident becomes a url token only when ``(`` follows it
+    # immediately (CSS Syntax 3, 4.3.4), so nothing is fetched. The
+    # stripper leaves a space for the comment and the scan agrees
+    # (jimemo#5pww; before it the name arrived joined and was reported).
     errors, _ = _lint("<style>.x{background:url/**/(https://evil.example/x)}</style>")
+    assert errors == []
+    # A comment AFTER the ( is still inside a real url token.
+    errors, _ = _lint("<style>.x{background:url(/**/https://evil.example/x)}</style>")
     assert any("evil.example" in e for e in errors)
 
 
@@ -938,9 +944,10 @@ def test_style_escaped_paren_inside_url_token_errors():
     assert any("local path" in e for e in errors)
 
 
-def test_style_comment_joined_import_errors():
-    # Deleting the comment joins the tokens either side of it, so this
-    # arrives as @importurl(#g) — which @import\b did not match.
+def test_style_comment_split_import_errors():
+    # The comment separates @import from url(, as it does for a browser
+    # (the stripper leaves a space since jimemo#5pww; before, it arrived
+    # as @importurl(#g), which @import\b did not match).
     errors, _ = _lint("<style>@import/**/url(#g);</style>")
     assert any("@import" in e for e in errors)
 
@@ -1673,15 +1680,14 @@ def test_image_set_type_hint_string_is_not_a_candidate():
     assert lint.css_reference_errors(css) == []
 
 
-def test_image_set_comment_split_name_is_reported():
-    # A browser reads image-/**/set( as two tokens, not an image-set
-    # call, and fetches nothing. The comment stripper deletes a comment
-    # without leaving a separator, so the name arrives joined and the
-    # candidate is reported: an over-rejection, in the safe direction,
-    # of a spelling no real stylesheet uses. Pinned so that a change to
-    # it is a decision (see _css_image_set_targets' docstring).
+def test_image_set_comment_split_name_is_not_an_image_set():
+    # A browser reads image-/**/set( as two tokens, the ident image-
+    # and a set( function, and fetches nothing. The stripper leaves a
+    # space for the comment, so the scan sees the same two tokens
+    # (jimemo#5pww, approved on the docket 2026-09-22; before it the
+    # name arrived joined and was reported).
     css = f'a{{background:image-/**/set("{EVIL_PNG}" 1x)}}'
-    assert lint.css_reference_errors(css) == [_remote(EVIL_PNG)]
+    assert lint.css_reference_errors(css) == []
 
 
 def test_image_set_escape_hidden_name_is_an_error():
@@ -1709,11 +1715,10 @@ def test_image_set_unterminated_construct_fails_closed():
 
 
 def test_image_set_is_matched_on_the_end_of_the_name():
-    # A browser matches the whole identifier, but the comment stripper
-    # joins the tokens either side of a deleted comment, so
-    # ``red/**/image-set(`` -- two tokens and a live fetch -- arrives as
-    # ``redimage-set(``. The name is therefore matched on its suffix
-    # (as ``url(`` is matched anywhere), which over-rejects a literal
+    # ``red/**/image-set(`` and ``#fff/**/image-set(`` are an ident or
+    # hash and then a real image-set: a live fetch, reported because
+    # the stripper leaves a space for the comment (jimemo#5pww). The
+    # name is still matched on its suffix, which over-rejects a literal
     # ``ximage-set(``, a function no engine defines.
     for before in ("red/**/", "#fff/**/", "x", "-", "#"):
         css = f'a{{background:{before}image-set("{EVIL_PNG}" 1x)}}'
